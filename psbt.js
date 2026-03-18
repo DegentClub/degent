@@ -202,8 +202,18 @@ const PSBT = (() => {
     // Sighash type hint for the signer
     const sighashType = uint32LE(SIGHASH_SINGLE_ANYONECANPAY);
 
-    // Tap internal key — x-only public key (32 bytes from the P2TR address)
-    const { program: xOnlyPubkey } = bech32Decode(inscriptionAddress);
+    // Tap internal key — only for P2TR (taproot v1) addresses
+    const decoded = bech32Decode(inscriptionAddress);
+
+    let inputMap = concat(
+      kvPair(PSBT_IN_WITNESS_UTXO, null, witnessUtxo),
+      kvPair(PSBT_IN_SIGHASH_TYPE, null, sighashType)
+    );
+    if (decoded.version === 1) {
+      inputMap = concat(inputMap,
+        kvPair(PSBT_IN_TAP_INTERNAL_KEY, null, decoded.program)
+      );
+    }
 
     // Assemble PSBT
     return bytesToHex(concat(
@@ -212,9 +222,7 @@ const PSBT = (() => {
       kvPair(PSBT_GLOBAL_UNSIGNED_TX, null, unsignedTx),
       SEPARATOR,
       // ── Input 0 map ──
-      kvPair(PSBT_IN_WITNESS_UTXO, null, witnessUtxo),
-      kvPair(PSBT_IN_SIGHASH_TYPE, null, sighashType),
-      kvPair(PSBT_IN_TAP_INTERNAL_KEY, null, xOnlyPubkey),
+      inputMap,
       SEPARATOR,
       // ── Output 0 map ──
       SEPARATOR

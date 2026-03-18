@@ -556,6 +556,14 @@ async function confirmListing() {
 
   const inscriptionAddress = insc.address || state.address;
   const sellerAddress = inscriptionAddress;
+  const utxoValue = insc.outputValue;
+
+  if (!utxoValue || utxoValue <= 0) {
+    setListStatus('error', 'Cannot determine inscription UTXO value. Try refreshing.');
+    return;
+  }
+
+  console.log(`Listing: ${insc.inscriptionId}, address=${inscriptionAddress}, utxo=${txid}:${vout}, value=${utxoValue}`);
 
   listConfirmBtn.disabled = true;
   listPriceInput.disabled = true;
@@ -566,7 +574,7 @@ async function confirmListing() {
     const psbtHex = PSBT.buildSellerPsbt({
       txid,
       vout,
-      utxoValue: insc.outputValue,
+      utxoValue,
       inscriptionAddress,
       sellerAddress,
       priceSats: price,
@@ -628,8 +636,12 @@ async function confirmListing() {
 
   } catch (err) {
     console.error('Listing sign error:', err);
+    const msg = (err.message || '').toLowerCase();
     if (err.code === 4001) {
       setListStatus('error', 'Signing rejected by user.');
+    } else if (msg.includes('invalid psbt') || msg.includes('deserialize')) {
+      setListStatus('error', 'Invalid PSBT — your wallet may not support this inscription\'s address type. Check console for details.');
+      console.error('PSBT debug:', { inscriptionAddress, utxoValue, txid, vout, price });
     } else {
       setListStatus('error', err.message || 'Failed to sign PSBT.');
     }
