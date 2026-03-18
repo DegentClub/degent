@@ -56,7 +56,7 @@ const buyStatus = $('#buy-status');
 const ORD_CONTENT_BASE = 'https://ordinals.com';
 
 // ── Listings Store (IndexedDB + Server Sync) ──
-const DB_NAME = 'ordinals_marketplace';
+const DB_NAME = 'degent_marketplace';
 const DB_VERSION = 1;
 const STORE_NAME = 'listings';
 
@@ -324,7 +324,7 @@ async function connectWallet() {
 
     // Authenticate: sign a message to prove address ownership
     const timestamp = Date.now();
-    const authMessage = `Sign in to Ordinals Market\nAddress: ${state.address}\nTimestamp: ${timestamp}`;
+    const authMessage = `Sign in to Degent Marketplace\nAddress: ${state.address}\nTimestamp: ${timestamp}`;
     const signature = await window.unisat.signMessage(authMessage);
 
     if (!signature) {
