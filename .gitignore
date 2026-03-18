@@ -1,0 +1,5 @@
+node_modules/
+market.db
+market.db-wal
+market.db-shm
+*.db-journal
