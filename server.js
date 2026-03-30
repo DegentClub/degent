@@ -3,8 +3,15 @@ const Database = require('better-sqlite3');
 const cors = require('cors');
 const path = require('path');
 
+const fs = require('fs');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// ── Collection ──
+const collectionData = JSON.parse(fs.readFileSync(path.join(__dirname, 'collection.json'), 'utf8'));
+const collectionMap = new Map(collectionData.map(item => [item.inscription_id, item]));
+console.log(`Loaded collection: ${collectionMap.size} items`);
 
 // ── Middleware ──
 app.use(cors());
@@ -67,21 +74,36 @@ function rowToListing(row) {
 
 // ── Routes ──
 
-// GET /api/listings — all active listings
+// GET /api/collection — serve collection metadata
+app.get('/api/collection', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.json(collectionData);
+});
+
+// GET /api/listings — all active listings (filtered to collection only)
 app.get('/api/listings', (req, res) => {
   try {
     const rows = stmts.getAll.all();
-    res.json(rows.map(rowToListing));
+    const listings = rows
+      .filter(row => collectionMap.has(row.id))
+      .map(row => {
+        const listing = rowToListing(row);
+        const meta = collectionMap.get(row.id);
+        if (meta) listing.name = meta.name;
+        return listing;
+      });
+    res.json(listings);
   } catch (err) {
     console.error('GET /api/listings error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/listings/count — active listing count
+// GET /api/listings/count — active listing count (collection only)
 app.get('/api/listings/count', (req, res) => {
   try {
-    const { count } = stmts.countActive.get();
+    const rows = stmts.getAll.all();
+    const count = rows.filter(row => collectionMap.has(row.id)).length;
     res.json({ count });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -94,6 +116,9 @@ app.get('/api/listings/create', (req, res) => {
     const b = JSON.parse(decodeURIComponent(escape(Buffer.from(req.query.data, 'base64').toString('binary'))));
     if (!b.inscriptionId || !b.priceSats || !b.sellerAddress || !b.sellerSigHex || !b.signedPsbtHex || !b.location) {
       return res.status(400).json({ error: 'Missing required fields' });
+    }
+    if (!collectionMap.has(b.inscriptionId)) {
+      return res.status(403).json({ error: 'Inscription is not part of the Degent collection' });
     }
     const priceSats = typeof b.priceSats === 'string' ? parseInt(b.priceSats) : b.priceSats;
     if (priceSats < 546) {
@@ -121,12 +146,18 @@ app.get('/api/listings/create', (req, res) => {
   }
 });
 
-// GET /api/listings/:id — single listing
+// GET /api/listings/:id — single listing (collection only)
 app.get('/api/listings/:id', (req, res) => {
   try {
+    if (!collectionMap.has(req.params.id)) {
+      return res.status(403).json({ error: 'Inscription is not part of the Degent collection' });
+    }
     const row = stmts.getById.get(req.params.id);
     if (!row) return res.status(404).json({ error: 'Listing not found' });
-    res.json(rowToListing(row));
+    const listing = rowToListing(row);
+    const meta = collectionMap.get(req.params.id);
+    if (meta) listing.name = meta.name;
+    res.json(listing);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -137,6 +168,9 @@ app.post('/api/listings', (req, res) => {
   const b = req.body;
   if (!b.inscriptionId || !b.priceSats || !b.sellerAddress || !b.sellerSigHex || !b.signedPsbtHex || !b.location) {
     return res.status(400).json({ error: 'Missing required fields' });
+  }
+  if (!collectionMap.has(b.inscriptionId)) {
+    return res.status(403).json({ error: 'Inscription is not part of the Degent collection' });
   }
   if (b.priceSats < 546) {
     return res.status(400).json({ error: 'Price must be >= 546 sats (dust limit)' });

@@ -11,7 +11,35 @@ const state = {
   activeTab: 'my-inscriptions',
   listingTarget: null,
   buyTarget: null,
+  collection: [],
+  collectionMap: new Map(),
 };
+
+function getCollectionName(inscriptionId) {
+  const meta = state.collectionMap.get(inscriptionId);
+  return meta ? meta.name : null;
+}
+
+function isInCollection(inscriptionId) {
+  return state.collectionMap.has(inscriptionId);
+}
+
+async function loadCollection() {
+  try {
+    const resp = await fetch('/api/collection');
+    if (!resp.ok) throw new Error('Failed to load collection');
+    state.collection = await resp.json();
+    state.collectionMap = new Map(state.collection.map(item => [item.inscription_id, item]));
+    console.log(`Collection loaded: ${state.collectionMap.size} items`);
+  } catch (err) {
+    console.error('Failed to load collection:', err);
+    const hero = document.getElementById('hero');
+    if (hero) {
+      const sub = hero.querySelector('.hero-sub');
+      if (sub) sub.textContent = 'Error: Could not load collection data. Please refresh the page.';
+    }
+  }
+}
 
 const FEE_RATE = 1;
 const EST_VBYTES = 255;
@@ -171,18 +199,28 @@ async function idbGet(inscriptionId) {
 // ── Public listing functions (IndexedDB + server sync) ──
 async function getListings() {
   const local = await idbGetAll();
-  if (!await checkServer()) return local;
+  if (!await checkServer()) {
+    return local
+      .filter(l => isInCollection(l.inscriptionId))
+      .map(l => { l.name = l.name || getCollectionName(l.inscriptionId); return l; });
+  }
 
   // Merge: server listings + local-only listings
   const remote = await serverGetListings();
   const merged = new Map();
   remote.forEach(l => merged.set(l.inscriptionId, l));
   local.forEach(l => merged.set(l.inscriptionId, l)); // local wins on conflict
-  return [...merged.values()];
+  return [...merged.values()]
+    .filter(l => isInCollection(l.inscriptionId))
+    .map(l => { l.name = l.name || getCollectionName(l.inscriptionId); return l; });
 }
 
 async function addListing(listing) {
+  if (!isInCollection(listing.inscriptionId)) {
+    throw new Error('Inscription is not part of the Degent collection');
+  }
   listing.status = 'active';
+  listing.name = getCollectionName(listing.inscriptionId);
   await idbPut(listing);
   if (await checkServer()) {
     await syncUpload(listing);
@@ -257,9 +295,9 @@ function buildPreviewHtml(insc, size) {
   const previewUrl = `${ORD_CONTENT_BASE}/preview/${inscriptionId}`;
 
   if (isImage && !isSvg) {
-    return `<img src="${contentUrl}" alt="Inscription #${insc.inscriptionNumber}" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\'preview-placeholder\\'>Preview unavailable</div>'">`;
+    return `<img src="${contentUrl}" alt="Degent #${insc.inscriptionNumber}" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\'preview-placeholder\\'>Preview unavailable</div>'">`;
   } else if (isSvg || isHtml) {
-    return `<iframe src="${previewUrl}" sandbox="allow-scripts" loading="lazy" title="Inscription #${insc.inscriptionNumber}"></iframe>`;
+    return `<iframe src="${previewUrl}" sandbox="allow-scripts" loading="lazy" title="Degent #${insc.inscriptionNumber}"></iframe>`;
   } else if (isText) {
     return `<div class="preview-placeholder" style="font-family:var(--mono);font-size:0.7rem;">Text Inscription</div>`;
   }
@@ -372,22 +410,35 @@ async function loadInscriptions(reset = false) {
 
   try {
     const result = await window.unisat.getInscriptions(state.cursor, state.pageSize);
-
-    state.total = result.total;
-    state.inscriptions.push(...result.list);
+    const totalFromWallet = result.total;
     state.cursor += result.list.length;
 
+    // Filter to collection items only
+    const collectionItems = result.list.filter(insc => isInCollection(insc.inscriptionId));
+    state.inscriptions.push(...collectionItems);
+    state.total = state.inscriptions.length;
+
     showView('inscriptions');
-    renderInscriptions(result.list, !reset);
+    renderInscriptions(collectionItems, !reset);
     updateStatsUI();
     updateMarketBadge();
 
-    if (state.cursor < state.total) {
+    const morePages = state.cursor < totalFromWallet;
+
+    // If no Degents found yet but wallet has more pages, auto-fetch next page
+    if (state.inscriptions.length === 0 && morePages) {
+      state.loading = false;
+      return loadInscriptions(false);
+    }
+
+    // Show Load More only if we have results AND more pages
+    if (morePages && state.inscriptions.length > 0) {
       loadMoreWrap.classList.remove('hidden');
     } else {
       loadMoreWrap.classList.add('hidden');
     }
 
+    // Show empty state only if all wallet pages exhausted with 0 Degents
     if (state.inscriptions.length === 0) {
       emptyState.classList.remove('hidden');
       inscriptionsGrid.classList.add('hidden');
@@ -428,6 +479,8 @@ async function renderInscriptions(items, append = false) {
       listedBadge = `<div class="card-listed-badge"><span>LISTED</span><span class="listed-price">${formatNumber(listing.priceSats)} sats</span></div>`;
     }
 
+    const collName = getCollectionName(insc.inscriptionId) || `#${formatNumber(insc.inscriptionNumber)}`;
+
     card.innerHTML = `
       <div class="card-preview">
         ${buildPreviewHtml(insc)}
@@ -435,7 +488,7 @@ async function renderInscriptions(items, append = false) {
         ${listedBadge}
       </div>
       <div class="card-body">
-        <div class="card-number">#${formatNumber(insc.inscriptionNumber)}</div>
+        <div class="card-number">${collName}</div>
         <div class="card-id">${insc.inscriptionId}</div>
         <div class="card-value">${formatNumber(insc.outputValue)} sats</div>
       </div>
@@ -498,7 +551,7 @@ async function refreshMyGrid() {
 function openListModal(insc, existingPrice = null) {
   state.listingTarget = insc;
 
-  $('#list-modal-name').textContent = `Inscription #${formatNumber(insc.inscriptionNumber)}`;
+  $('#list-modal-name').textContent = getCollectionName(insc.inscriptionId) || `Degent #${formatNumber(insc.inscriptionNumber)}`;
   $('#list-modal-id').textContent = insc.inscriptionId;
 
   const thumb = $('#list-modal-thumb');
@@ -677,13 +730,15 @@ async function renderMarket() {
     const shortType = contentType.split('/').pop() || '?';
     const isOwnListing = state.address && listing.sellerAddress === state.address;
 
+    const collName = getCollectionName(listing.inscriptionId) || listing.name || `#${formatNumber(listing.inscriptionNumber)}`;
+
     card.innerHTML = `
       <div class="card-preview">
         ${buildPreviewHtml(listing)}
         <span class="card-content-type">${shortType}</span>
       </div>
       <div class="card-body">
-        <div class="card-number">#${formatNumber(listing.inscriptionNumber)}</div>
+        <div class="card-number">${collName}</div>
         <div class="card-id">${listing.inscriptionId}</div>
         <div class="market-seller">${isOwnListing ? 'You' : truncateAddress(listing.sellerAddress)}</div>
       </div>
@@ -745,7 +800,7 @@ function openBuyModal(listing) {
 
   state.buyTarget = listing;
 
-  $('#buy-modal-name').textContent = `Inscription #${formatNumber(listing.inscriptionNumber)}`;
+  $('#buy-modal-name').textContent = getCollectionName(listing.inscriptionId) || listing.name || `Degent #${formatNumber(listing.inscriptionNumber)}`;
   $('#buy-modal-id').textContent = listing.inscriptionId;
   $('#buy-modal-thumb').innerHTML = buildPreviewHtml(listing, 'thumb');
 
@@ -989,14 +1044,14 @@ async function openDetail(insc, source) {
 
   const preview = $('#detail-preview');
   if (isImage && !isSvg) {
-    preview.innerHTML = `<img src="${contentUrl}" alt="Inscription #${insc.inscriptionNumber}">`;
+    preview.innerHTML = `<img src="${contentUrl}" alt="Degent #${insc.inscriptionNumber}">`;
   } else if (isSvg || isHtml) {
-    preview.innerHTML = `<iframe src="${previewUrl}" sandbox="allow-scripts" title="Inscription"></iframe>`;
+    preview.innerHTML = `<iframe src="${previewUrl}" sandbox="allow-scripts" title="Degent"></iframe>`;
   } else {
     preview.innerHTML = `<div class="preview-placeholder" style="padding:2rem;color:var(--text-muted);">${contentType || 'No preview'}</div>`;
   }
 
-  $('#detail-title').textContent = `Inscription #${formatNumber(insc.inscriptionNumber)}`;
+  $('#detail-title').textContent = getCollectionName(insc.inscriptionId) || `Degent #${formatNumber(insc.inscriptionNumber)}`;
   $('#detail-id').textContent = inscriptionId;
   $('#detail-number').textContent = formatNumber(insc.inscriptionNumber);
   $('#detail-content-type').textContent = contentType || '—';
@@ -1228,6 +1283,7 @@ if (hasUnisat()) {
 
 // ── Init ──
 async function init() {
+  await loadCollection();
   await updateMarketBadge();
 
   if (!hasUnisat()) return;
