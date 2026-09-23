@@ -3,25 +3,73 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0f0f10;
+  --foreground: #e8e6e1;
+  --gold: #d4a843;
+  --btc: #f7931a;
+  color-scheme: dark;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+html,
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-body), system-ui, sans-serif;
 }
 
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
+h1,
+h2,
+h3 {
+  font-family: var(--font-display), Georgia, serif;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+/* Range inputs: gold thumb on a dark track */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 2px;
+  background: #26262a;
+  border-radius: 9999px;
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: var(--gold);
+  border: 2px solid #0f0f10;
+  cursor: pointer;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: var(--gold);
+  border: 2px solid #0f0f10;
+  cursor: pointer;
+}
+input[type="range"]:disabled::-webkit-slider-thumb {
+  background: #8a8a93;
+}
+
+@layer components {
+  .card {
+    @apply bg-ink-raised border border-ink-border rounded-lg shadow-card p-6;
+  }
+  .eyebrow {
+    @apply text-xs uppercase tracking-[0.2em] text-gold font-body;
+  }
+  .btn-primary {
+    @apply bg-gold text-ink font-body font-medium py-3 px-6 rounded-md hover:bg-gold-dim transition-colors disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .btn-ghost {
+    @apply border border-ink-border text-ink-text font-body py-2 px-4 rounded-md hover:border-gold hover:text-gold transition-colors;
+  }
+  .stat-label {
+    @apply text-xs uppercase tracking-wider text-ink-muted;
   }
 }
