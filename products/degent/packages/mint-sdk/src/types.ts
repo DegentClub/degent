@@ -212,11 +212,11 @@ export type ApiErrorCode =
   | 'rate_limited'
   | 'forbidden_origin'
   | 'content_mismatch'
-  | 'review_rejected'
   | 'reveal_invalid'
   | 'rescue_unavailable'
   | 'review_unavailable'
   | 'queue_full'
+  | 'upstream_unavailable'
   | 'internal';
 
 export interface ApiErrorBody {

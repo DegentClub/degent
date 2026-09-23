@@ -11,9 +11,7 @@ afterEach(() => {
   }
 });
 
-// jsdom does not implement object URLs.
-if (typeof URL.createObjectURL !== 'function') {
-  let n = 0;
-  URL.createObjectURL = () => `blob:test/${++n}`;
-  URL.revokeObjectURL = () => undefined;
-}
+// jsdom's object URLs do not interoperate with the Blob global in this environment: stub them.
+let n = 0;
+URL.createObjectURL = () => `blob:test/${++n}`;
+URL.revokeObjectURL = () => undefined;

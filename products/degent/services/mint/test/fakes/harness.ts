@@ -51,7 +51,8 @@ export interface HarnessOptions {
 export function makeHarness(opts: HarnessOptions = {}) {
   const clock = new FakeClock();
   const chain = new FakeChain(NET);
-  const signer = new InMemoryPolicySigner(PARENT_KEY, NET, DEFAULT_POLICY, { warn: () => {} });
+  const policy = structuredClone(DEFAULT_POLICY);
+  const signer = new InMemoryPolicySigner(PARENT_KEY, NET, policy, { warn: () => {} });
   const collectionAddress = signer.collectionAddress();
   const collectionScriptHex = bytesToHex(addressToScript(collectionAddress, NET));
 
@@ -70,7 +71,7 @@ export function makeHarness(opts: HarnessOptions = {}) {
     standardConcurrency: 3,
     confirmations: 1,
     latePaymentWindowSeconds: 86_400,
-    policy: DEFAULT_POLICY,
+    policy,
     ...opts.settings,
   };
   const store = new MemoryOrderStore();

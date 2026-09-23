@@ -154,12 +154,7 @@ describe('e2e: rescue path', () => {
     const h = makeHarness();
     const b = await browserMintToPayment(h);
     fundCommit(h, b);
-    // Sabotage: the stored parent UTXO no longer matches what the signer expects (value drift).
-    const cur = (await h.parents.current())!;
-    await h.parents.initialise({ ...cur, value: cur.value + 1n }, { force: true });
-    // make the fake chain agree so attachParent can build it; the policy must still refuse
-    // because output 0 value != parent input value is impossible via attachParent, so instead
-    // change the policy band to exclude the quoted fee rate.
+    // Tighten the signer's fee band after the order was quoted: the signer must refuse.
     h.settings.policy.bands.standard.maxFeeRate = 1.5;
     const rep = await h.worker.tick();
     expect(rep.transitions.map((t) => t.to)).toEqual(['paid', 'queued', 'revealing', 'rescue_available']);
@@ -176,7 +171,7 @@ describe('e2e: tampering is rejected', () => {
     await h.ready;
     const b = await browserCreate(h);
     const tampered = Uint8Array.from(b.bytes);
-    tampered[tampered.length - 100] ^= 0xff;
+    tampered[tampered.length - 100]! ^= 0xff;
     const res = await api(h, 'PUT', `/v1/orders/${b.orderId}/content`, { bytes: tampered, token: b.token });
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe('content_mismatch');

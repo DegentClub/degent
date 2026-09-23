@@ -47,13 +47,13 @@ export interface PolicyConfig {
 export const DUST_P2TR = 330n;
 
 export const DEFAULT_POLICY: PolicyConfig = Object.freeze({
-  bands: {
-    standard: { minFeeRate: 1, maxFeeRate: 2_000 },
-    block: { minFeeRate: 1, maxFeeRate: 500 },
-  },
+  bands: Object.freeze({
+    standard: Object.freeze({ minFeeRate: 1, maxFeeRate: 2_000 }),
+    block: Object.freeze({ minFeeRate: 1, maxFeeRate: 500 }),
+  }),
   feeRateTolerance: 0.02,
-  maxWeight: { standard: 400_000, block: 3_990_000 },
-});
+  maxWeight: Object.freeze({ standard: 400_000, block: 3_990_000 }),
+}) as PolicyConfig;
 
 const eq = (a: Uint8Array | undefined, b: Uint8Array) =>
   !!a && a.length === b.length && a.every((x, i) => x === b[i]);

@@ -1,0 +1,482 @@
+# Platform event contract (AsyncAPI 3). Owned by team-platform via @bsh/events (component: events).
+# Contract first: change this file, then platform/events/src/platform-topics.ts; test/asyncapi.test.ts checks they agree.
+asyncapi: 3.0.0
+info:
+  title: Blockspace platform events
+  version: 1.0.0
+  description: |-
+    Events shared across block.space, scribb.it and degent.club. The code registry in @bsh/events
+    (platform/events/src/platform-topics.ts) mirrors this file; a test fails when they disagree.
+
+    Wire format: CloudEvents 1.0 structured mode (`application/cloudevents+json`); the envelope `type` is the
+    concrete channel address and the AMQP routing key on the `bsh.events` topic exchange; `data` is the
+    channel's payload schema. Delivery is at least once; consumers de-duplicate on (source, id).
+
+    Versioning: `x-topic-version` is the SemVer of each payload. Additive changes bump minor. A breaking change
+    publishes a new channel with a `.v<major>` suffix side by side (e.g. `collection.minted.v2`).
+    Consumers must ignore unknown properties.
+
+    Legacy names (`block.indexed.*`, `batch.*`, `collection.*`) predate the `<product>.<aggregate>.<event>` rule and
+    are kept for compatibility with the running estate.
+defaultContentType: application/cloudevents+json
+servers:
+  rabbitmq:
+    host: rabbitmq.skrybit.pve:5672
+    protocol: amqp
+    protocolVersion: 0.9.1
+    description: Legacy platform bus (RabbitMQ). Topic exchange bsh.events; dead letters on bsh.events.dlx.
+channels:
+  blockIndexedNetwork:
+    address: block.indexed.{network}
+    title: block.indexed.{network}
+    description: A block has been fully indexed at the tip of the given network. Re-emitted for replacement blocks after a reorg.
+    parameters:
+      network:
+        description: Bitcoin network (testnet = testnet4).
+        enum:
+          - mainnet
+          - testnet
+          - signet
+          - regtest
+    messages:
+      BlockIndexed:
+        $ref: "#/components/messages/BlockIndexed"
+    bindings:
+      $ref: "#/components/channelBindings/eventsExchange"
+  collectionMinted:
+    address: collection.minted
+    title: collection.minted
+    description: An inscription belonging to a collection has been revealed on chain (confirmed).
+    messages:
+      CollectionMinted:
+        $ref: "#/components/messages/CollectionMinted"
+    bindings:
+      $ref: "#/components/channelBindings/eventsExchange"
+  collectionCertified:
+    address: collection.certified
+    title: collection.certified
+    description: A collection passed provenance certification (parent/child links and optional content hashes).
+    messages:
+      CollectionCertified:
+        $ref: "#/components/messages/CollectionCertified"
+    bindings:
+      $ref: "#/components/channelBindings/eventsExchange"
+  degentMintOrderStatus:
+    address: degent.mint.order.{status}
+    title: degent.mint.order.{status}
+    description: A degent.club mint order changed status. Mirrors the OrderStatusEvent of
+      contracts/asyncapi/degent-mint.yaml (canonical; owned by degent-mint).
+    parameters:
+      status:
+        description: The status the order moved to.
+        enum:
+          - awaiting_content
+          - reviewing
+          - approved
+          - rejected
+          - awaiting_payment
+          - paid
+          - queued
+          - revealing
+          - revealed
+          - confirmed
+          - verified
+          - delivered
+          - expired
+          - rescue_available
+          - failed
+    messages:
+      MintOrderStatusChanged:
+        $ref: "#/components/messages/MintOrderStatusChanged"
+    bindings:
+      $ref: "#/components/channelBindings/eventsExchange"
+  batchStatus:
+    address: batch.{status}
+    title: batch.{status}
+    description: A scribb.it inscription batch changed status in the ledger.
+    parameters:
+      status:
+        description: The status the batch moved to.
+        enum:
+          - created
+          - funded
+          - committed
+          - revealed
+          - confirmed
+          - failed
+          - cancelled
+    messages:
+      BatchStatusChanged:
+        $ref: "#/components/messages/BatchStatusChanged"
+    bindings:
+      $ref: "#/components/channelBindings/eventsExchange"
+operations:
+  publishBlockIndexedNetwork:
+    action: send
+    title: bitcoin-indexer publishes block.indexed.{network}
+    channel:
+      $ref: "#/channels/blockIndexedNetwork"
+    messages:
+      - $ref: "#/channels/blockIndexedNetwork/messages/BlockIndexed"
+  publishCollectionMinted:
+    action: send
+    title: degent-mint publishes collection.minted
+    channel:
+      $ref: "#/channels/collectionMinted"
+    messages:
+      - $ref: "#/channels/collectionMinted/messages/CollectionMinted"
+  publishCollectionCertified:
+    action: send
+    title: blockspace-certification publishes collection.certified
+    channel:
+      $ref: "#/channels/collectionCertified"
+    messages:
+      - $ref: "#/channels/collectionCertified/messages/CollectionCertified"
+  publishDegentMintOrderStatus:
+    action: send
+    title: degent-mint publishes degent.mint.order.{status}
+    channel:
+      $ref: "#/channels/degentMintOrderStatus"
+    messages:
+      - $ref: "#/channels/degentMintOrderStatus/messages/MintOrderStatusChanged"
+  publishBatchStatus:
+    action: send
+    title: scribbit-ledger publishes batch.{status}
+    channel:
+      $ref: "#/channels/batchStatus"
+    messages:
+      - $ref: "#/channels/batchStatus/messages/BatchStatusChanged"
+components:
+  schemas:
+    CloudEvent:
+      type: object
+      description: CloudEvents 1.0 structured-mode JSON envelope (@bsh/events EventEnvelope). `type` equals the concrete
+        channel address and the AMQP routing key.
+      required:
+        - specversion
+        - id
+        - source
+        - type
+        - time
+        - datacontenttype
+        - data
+      properties:
+        specversion:
+          const: "1.0"
+        id:
+          type: string
+          minLength: 1
+          description: Unique per source; stable across redeliveries. Consumers de-duplicate on (source, id).
+        source:
+          type: string
+          description: urn:bsh:<component-name>
+        type:
+          type: string
+        subject:
+          type: string
+        time:
+          type: string
+          format: date-time
+        datacontenttype:
+          const: application/json
+        dataschema:
+          type: string
+          format: uri
+        traceparent:
+          type: string
+          pattern: ^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$
+        data: {}
+    BlockIndexed:
+      type: object
+      required:
+        - network
+        - height
+        - hash
+        - previousHash
+        - time
+      properties:
+        network: &a2
+          type: string
+          enum:
+            - mainnet
+            - testnet
+            - signet
+            - regtest
+        height:
+          type: integer
+          minimum: 0
+        hash: &a1
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        previousHash: *a1
+        time:
+          type: string
+          format: date-time
+          description: Block header time.
+        txCount:
+          type: integer
+          minimum: 1
+        reorgDepth:
+          type: integer
+          minimum: 0
+          description: Blocks replaced by this one (0 or absent = no reorg).
+    CollectionMinted:
+      type: object
+      required:
+        - collectionId
+        - network
+        - inscriptionId
+        - txid
+        - mintedAt
+      properties:
+        collectionId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        network: *a2
+        inscriptionId: &a3
+          type: string
+          pattern: ^[0-9a-f]{64}i[0-9]+$
+        parentInscriptionId: *a3
+        txid: *a1
+        orderId:
+          type: string
+          minLength: 1
+        contentHash:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+          description: SHA-256 of the inscription content.
+        mintedAt: &a4
+          type: string
+          format: date-time
+    CollectionCertified:
+      type: object
+      required:
+        - collectionId
+        - network
+        - parentInscriptionId
+        - checks
+        - certifiedAt
+      properties:
+        collectionId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        network: *a2
+        parentInscriptionId: *a3
+        checks:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum:
+              - parent_link
+              - content_hash
+        inscriptionCount:
+          type: integer
+          minimum: 0
+        certifiedAt: *a4
+    MintOrderStatusChanged:
+      type: object
+      required:
+        - type
+        - eventId
+        - orderId
+        - network
+        - status
+        - previousStatus
+        - at
+        - lane
+      properties:
+        type:
+          type: string
+          pattern: ^degent\.mint\.order\.[a-z_]+$
+        eventId:
+          type: string
+          minLength: 1
+          description: "`<orderId>:<timeline index>`; stable across redeliveries."
+        orderId:
+          type: string
+          minLength: 1
+        network: *a2
+        status:
+          type: string
+          enum:
+            - awaiting_content
+            - reviewing
+            - approved
+            - rejected
+            - awaiting_payment
+            - paid
+            - queued
+            - revealing
+            - revealed
+            - confirmed
+            - verified
+            - delivered
+            - expired
+            - rescue_available
+            - failed
+        previousStatus:
+          type:
+            - string
+            - "null"
+          enum:
+            - awaiting_content
+            - reviewing
+            - approved
+            - rejected
+            - awaiting_payment
+            - paid
+            - queued
+            - revealing
+            - revealed
+            - confirmed
+            - verified
+            - delivered
+            - expired
+            - rescue_available
+            - failed
+            - null
+        at: *a4
+        lane:
+          type: string
+          enum:
+            - standard
+            - block
+        detail:
+          type: string
+        txid: *a1
+        inscriptionId: *a3
+    BatchStatusChanged:
+      type: object
+      required:
+        - batchId
+        - network
+        - status
+        - previousStatus
+        - at
+        - orderCount
+      properties:
+        batchId:
+          type: string
+          minLength: 1
+        network: *a2
+        status:
+          type: string
+          enum:
+            - created
+            - funded
+            - committed
+            - revealed
+            - confirmed
+            - failed
+            - cancelled
+        previousStatus:
+          type:
+            - string
+            - "null"
+          enum:
+            - created
+            - funded
+            - committed
+            - revealed
+            - confirmed
+            - failed
+            - cancelled
+            - null
+        at: *a4
+        orderCount:
+          type: integer
+          minimum: 0
+        feeSats:
+          type: integer
+          minimum: 0
+        txids:
+          type: array
+          items: *a1
+        detail:
+          type: string
+  messages:
+    BlockIndexed:
+      name: BlockIndexed
+      title: block.indexed.{network}
+      summary: A block has been fully indexed at the tip of the given network. Re-emitted for replacement blocks after a reorg.
+      contentType: application/cloudevents+json
+      x-topic-version: 1.0.0
+      x-producer: bitcoin-indexer
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/CloudEvent"
+          - type: object
+            properties:
+              data:
+                $ref: "#/components/schemas/BlockIndexed"
+    CollectionMinted:
+      name: CollectionMinted
+      title: collection.minted
+      summary: An inscription belonging to a collection has been revealed on chain (confirmed).
+      contentType: application/cloudevents+json
+      x-topic-version: 1.0.0
+      x-producer: degent-mint
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/CloudEvent"
+          - type: object
+            properties:
+              data:
+                $ref: "#/components/schemas/CollectionMinted"
+    CollectionCertified:
+      name: CollectionCertified
+      title: collection.certified
+      summary: A collection passed provenance certification (parent/child links and optional content hashes).
+      contentType: application/cloudevents+json
+      x-topic-version: 1.0.0
+      x-producer: blockspace-certification
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/CloudEvent"
+          - type: object
+            properties:
+              data:
+                $ref: "#/components/schemas/CollectionCertified"
+    MintOrderStatusChanged:
+      name: MintOrderStatusChanged
+      title: degent.mint.order.{status}
+      summary: A degent.club mint order changed status. Mirrors the OrderStatusEvent of contracts/asyncapi/degent-mint.yaml
+        (canonical; owned by degent-mint).
+      contentType: application/cloudevents+json
+      x-topic-version: 1.0.0
+      x-producer: degent-mint
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/CloudEvent"
+          - type: object
+            properties:
+              data:
+                $ref: "#/components/schemas/MintOrderStatusChanged"
+    BatchStatusChanged:
+      name: BatchStatusChanged
+      title: batch.{status}
+      summary: A scribb.it inscription batch changed status in the ledger.
+      contentType: application/cloudevents+json
+      x-topic-version: 1.0.0
+      x-producer: scribbit-ledger
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/CloudEvent"
+          - type: object
+            properties:
+              data:
+                $ref: "#/components/schemas/BatchStatusChanged"
+  channelBindings:
+    eventsExchange:
+      amqp:
+        is: routingKey
+        exchange:
+          name: bsh.events
+          type: topic
+          durable: true
+          autoDelete: false
+          vhost: /
+        bindingVersion: 0.3.0

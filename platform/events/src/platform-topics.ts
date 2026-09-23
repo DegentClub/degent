@@ -1,0 +1,230 @@
+import type { JsonSchema } from './schema.js';
+import { defineTopic, TopicRegistry } from './topics.js';
+
+/**
+ * Platform topic catalogue. MUST agree with contracts/asyncapi/platform-events.yaml (enforced by
+ * test/asyncapi.test.ts): same channel addresses, parameters, payload schemas, versions and producers.
+ * Contract first: edit the YAML, then mirror it here.
+ */
+export const CONTRACT_PATH = 'contracts/asyncapi/platform-events.yaml';
+const SCHEMA_BASE = `https://blockspace.holdings/${CONTRACT_PATH}#/components/schemas/`;
+
+/** CloudEvents `source` for a component: `urn:bsh:<component-name>`. */
+export const sourceFor = (component: string): string => `urn:bsh:${component}`;
+
+export const NETWORKS = ['mainnet', 'testnet', 'signet', 'regtest'] as const;
+export type Network = (typeof NETWORKS)[number];
+
+export const MINT_ORDER_STATUSES = [
+  'awaiting_content',
+  'reviewing',
+  'approved',
+  'rejected',
+  'awaiting_payment',
+  'paid',
+  'queued',
+  'revealing',
+  'revealed',
+  'confirmed',
+  'verified',
+  'delivered',
+  'expired',
+  'rescue_available',
+  'failed',
+] as const;
+export type MintOrderStatus = (typeof MINT_ORDER_STATUSES)[number];
+
+export const BATCH_STATUSES = ['created', 'funded', 'committed', 'revealed', 'confirmed', 'failed', 'cancelled'] as const;
+export type BatchStatus = (typeof BATCH_STATUSES)[number];
+
+const hex64 = { type: 'string', pattern: '^[0-9a-f]{64}$' } satisfies JsonSchema;
+const inscriptionId = { type: 'string', pattern: '^[0-9a-f]{64}i[0-9]+$' } satisfies JsonSchema;
+const network = { type: 'string', enum: [...NETWORKS] } satisfies JsonSchema;
+const dateTime = { type: 'string', format: 'date-time' } satisfies JsonSchema;
+const networkParam = { description: 'Bitcoin network (testnet = testnet4).', enum: NETWORKS };
+
+// ------------------------------------------------------------------------------------ block.indexed.{network}
+
+export interface BlockIndexed {
+  network: Network;
+  height: number;
+  hash: string;
+  previousHash: string;
+  time: string;
+  txCount?: number;
+  reorgDepth?: number;
+}
+
+export const blockIndexed = defineTopic<BlockIndexed>({
+  name: 'block.indexed.{network}',
+  version: '1.0.0',
+  producer: 'bitcoin-indexer',
+  description: 'A block has been fully indexed at the tip of the given network. Re-emitted for replacement blocks after a reorg.',
+  params: { network: networkParam },
+  dataschema: `${SCHEMA_BASE}BlockIndexed`,
+  schema: {
+    type: 'object',
+    required: ['network', 'height', 'hash', 'previousHash', 'time'],
+    properties: {
+      network,
+      height: { type: 'integer', minimum: 0 },
+      hash: hex64,
+      previousHash: hex64,
+      time: { ...dateTime, description: 'Block header time.' },
+      txCount: { type: 'integer', minimum: 1 },
+      reorgDepth: { type: 'integer', minimum: 0, description: 'Blocks replaced by this one (0 or absent = no reorg).' },
+    },
+  },
+});
+
+// ------------------------------------------------------------------------------------ collection.*
+
+export interface CollectionMinted {
+  collectionId: string;
+  network: Network;
+  inscriptionId: string;
+  parentInscriptionId?: string;
+  txid: string;
+  orderId?: string;
+  contentHash?: string;
+  mintedAt: string;
+}
+
+export const collectionMinted = defineTopic<CollectionMinted>({
+  name: 'collection.minted',
+  version: '1.0.0',
+  producer: 'degent-mint',
+  description: 'An inscription belonging to a collection has been revealed on chain (confirmed).',
+  dataschema: `${SCHEMA_BASE}CollectionMinted`,
+  schema: {
+    type: 'object',
+    required: ['collectionId', 'network', 'inscriptionId', 'txid', 'mintedAt'],
+    properties: {
+      collectionId: { type: 'string', minLength: 1, maxLength: 128 },
+      network,
+      inscriptionId,
+      parentInscriptionId: inscriptionId,
+      txid: hex64,
+      orderId: { type: 'string', minLength: 1 },
+      contentHash: { ...hex64, description: 'SHA-256 of the inscription content.' },
+      mintedAt: dateTime,
+    },
+  },
+});
+
+export interface CollectionCertified {
+  collectionId: string;
+  network: Network;
+  parentInscriptionId: string;
+  checks: Array<'parent_link' | 'content_hash'>;
+  inscriptionCount?: number;
+  certifiedAt: string;
+}
+
+export const collectionCertified = defineTopic<CollectionCertified>({
+  name: 'collection.certified',
+  version: '1.0.0',
+  producer: 'blockspace-certification',
+  description: 'A collection passed provenance certification (parent/child links and optional content hashes).',
+  dataschema: `${SCHEMA_BASE}CollectionCertified`,
+  schema: {
+    type: 'object',
+    required: ['collectionId', 'network', 'parentInscriptionId', 'checks', 'certifiedAt'],
+    properties: {
+      collectionId: { type: 'string', minLength: 1, maxLength: 128 },
+      network,
+      parentInscriptionId: inscriptionId,
+      checks: { type: 'array', minItems: 1, items: { type: 'string', enum: ['parent_link', 'content_hash'] } },
+      inscriptionCount: { type: 'integer', minimum: 0 },
+      certifiedAt: dateTime,
+    },
+  },
+});
+
+// ------------------------------------------------------------------------------------ degent.mint.order.{status}
+
+export interface MintOrderStatusChanged {
+  type: string;
+  eventId: string;
+  orderId: string;
+  network: Network;
+  status: MintOrderStatus;
+  previousStatus: MintOrderStatus | null;
+  at: string;
+  lane: 'standard' | 'block';
+  detail?: string;
+  txid?: string;
+  inscriptionId?: string;
+}
+
+export const degentMintOrder = defineTopic<MintOrderStatusChanged>({
+  name: 'degent.mint.order.{status}',
+  version: '1.0.0',
+  producer: 'degent-mint',
+  description:
+    'A degent.club mint order changed status. Mirrors the OrderStatusEvent of contracts/asyncapi/degent-mint.yaml (canonical; owned by degent-mint).',
+  params: { status: { description: 'The status the order moved to.', enum: MINT_ORDER_STATUSES } },
+  dataschema: `${SCHEMA_BASE}MintOrderStatusChanged`,
+  schema: {
+    type: 'object',
+    required: ['type', 'eventId', 'orderId', 'network', 'status', 'previousStatus', 'at', 'lane'],
+    properties: {
+      type: { type: 'string', pattern: '^degent\\.mint\\.order\\.[a-z_]+$' },
+      eventId: { type: 'string', minLength: 1, description: '`<orderId>:<timeline index>`; stable across redeliveries.' },
+      orderId: { type: 'string', minLength: 1 },
+      network,
+      status: { type: 'string', enum: [...MINT_ORDER_STATUSES] },
+      previousStatus: { type: ['string', 'null'], enum: [...MINT_ORDER_STATUSES, null] },
+      at: dateTime,
+      lane: { type: 'string', enum: ['standard', 'block'] },
+      detail: { type: 'string' },
+      txid: hex64,
+      inscriptionId,
+    },
+  },
+});
+
+// ------------------------------------------------------------------------------------ batch.{status}
+
+export interface BatchStatusChanged {
+  batchId: string;
+  network: Network;
+  status: BatchStatus;
+  previousStatus: BatchStatus | null;
+  at: string;
+  orderCount: number;
+  feeSats?: number;
+  txids?: string[];
+  detail?: string;
+}
+
+export const batchStatus = defineTopic<BatchStatusChanged>({
+  name: 'batch.{status}',
+  version: '1.0.0',
+  producer: 'scribbit-ledger',
+  description: 'A scribb.it inscription batch changed status in the ledger.',
+  params: { status: { description: 'The status the batch moved to.', enum: BATCH_STATUSES } },
+  dataschema: `${SCHEMA_BASE}BatchStatusChanged`,
+  schema: {
+    type: 'object',
+    required: ['batchId', 'network', 'status', 'previousStatus', 'at', 'orderCount'],
+    properties: {
+      batchId: { type: 'string', minLength: 1 },
+      network,
+      status: { type: 'string', enum: [...BATCH_STATUSES] },
+      previousStatus: { type: ['string', 'null'], enum: [...BATCH_STATUSES, null] },
+      at: dateTime,
+      orderCount: { type: 'integer', minimum: 0 },
+      feeSats: { type: 'integer', minimum: 0 },
+      txids: { type: 'array', items: hex64 },
+      detail: { type: 'string' },
+    },
+  },
+});
+
+export const PLATFORM_TOPICS = [blockIndexed, collectionMinted, collectionCertified, degentMintOrder, batchStatus] as const;
+
+/** Fresh registry pre-loaded with every platform topic. */
+export function platformRegistry(): TopicRegistry {
+  return new TopicRegistry(PLATFORM_TOPICS);
+}

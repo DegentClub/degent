@@ -3,7 +3,7 @@ import type { AppConfig } from './config';
 import type { Services } from './services/types';
 import { MintContext, type MintContextValue } from './flow/context';
 import { flowReducer } from './flow/reducer';
-import { initialState } from './flow/state';
+import { initialState, type FlowState } from './flow/state';
 import { createKeyVault, type KeyVault } from './flow/keyVault';
 import { browserStore, loadRecovery, type KeyValueStore } from './lib/recovery';
 import { errorText } from './components/ui';
@@ -22,11 +22,13 @@ export interface AppProps {
   services: Services;
   store?: KeyValueStore | null;
   vault?: KeyVault;
+  /** Start somewhere other than the welcome screen (tests). */
+  initial?: FlowState;
 }
 
-export function App({ app, services, store = browserStore(), vault: vaultProp }: AppProps) {
+export function App({ app, services, store = browserStore(), vault: vaultProp, initial }: AppProps) {
   const vaultRef = useRef<KeyVault>(vaultProp ?? createKeyVault());
-  const [state, dispatch] = useReducer(flowReducer, store, (s) => initialState(loadRecovery(s)));
+  const [state, dispatch] = useReducer(flowReducer, store, (s) => initial ?? initialState(loadRecovery(s)));
   const mainRef = useRef<HTMLElement>(null);
 
   useEffect(() => {

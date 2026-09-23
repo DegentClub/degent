@@ -96,15 +96,16 @@ export class MintWorker {
     this.running = true;
     this.report = { transitions: [], errors: [] };
     try {
+      // Chain progress first, so lane slots and parent confirmation are current before dispatch.
+      await this.trackConfirmations();
+      await this.verifyAndDeliver();
+      await this.watchRescues();
       await this.detectPayments();
       await this.expireUnpaid();
       await this.enqueuePaid();
       await this.recoverRevealing();
       await this.rescueTimeouts();
       await this.dispatch();
-      await this.trackConfirmations();
-      await this.verifyAndDeliver();
-      await this.watchRescues();
       return this.report;
     } finally {
       this.running = false;

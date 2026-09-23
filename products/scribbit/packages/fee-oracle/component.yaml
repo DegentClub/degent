@@ -1,0 +1,16 @@
+# Component manifest - validated against schemas/component.schema.json by `pnpm validate`.
+name: scribbit-fee-oracle
+package: "@bsh/fee-oracle"
+kind: library
+product: scribbit
+owner: team-scribbit
+summary: Multi-source Bitcoin fee oracle (mempool.space, Esplora, bitcoind, Libre Relay block lane) with median aggregation, TTL cache and optional Hono server.
+lifecycle: beta
+depends_on: []
+provides: [contracts/openapi/scribbit-fees.yaml]
+secrets: ["services/scribbit-fee-oracle/bitcoind-rpc-password", "services/scribbit-fee-oracle/libre-relay-rpc-password"]
+stores: ["memory:fee_cache"]
+env_schema: ./env.schema.json
+slo: { availability: "99.9", p95_ms: 200 }
+docs: ./README.md
+commands: { dev: dev, test: test, typecheck: typecheck }
