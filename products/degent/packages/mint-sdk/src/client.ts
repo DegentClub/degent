@@ -4,15 +4,29 @@
  */
 import type {
   ApiErrorBody,
+  AuthChallengeRequest,
+  AuthChallengeResponse,
+  AuthVerifyRequest,
+  AuthVerifyResponse,
+  CastVoteRequest,
   CreateOrderRequest,
   CreateOrderResponse,
+  ExplorerQuery,
+  ExplorerResponse,
   FeesResponse,
   HealthResponse,
+  HolderResponse,
   Order,
   QueueResponse,
+  RegisterMember,
+  RegisterSummary,
   RescueResponse,
+  ReviewQueueResponse,
   ServiceConfig,
+  StatsResponse,
   SubmitRevealRequest,
+  VerifyMembershipResponse,
+  VotesResponse,
 } from './types.js';
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -49,6 +63,22 @@ export interface MintClient {
   submitReveal(orderId: string, orderToken: string, req: SubmitRevealRequest): Promise<Order>;
   getOrder(orderId: string): Promise<Order>;
   getRescue(orderId: string, orderToken: string): Promise<RescueResponse>;
+
+  // Holder sign-in (SIWB) and member approval (ADR-0005)
+  authChallenge(req: AuthChallengeRequest): Promise<AuthChallengeResponse>;
+  authVerify(req: AuthVerifyRequest): Promise<AuthVerifyResponse>;
+  /** Orders in `member_review`. Requires a holder session token. */
+  reviewQueue(sessionToken: string): Promise<ReviewQueueResponse>;
+  castVote(orderId: string, sessionToken: string, req: CastVoteRequest): Promise<VotesResponse>;
+  getVotes(orderId: string): Promise<VotesResponse>;
+
+  // Register, explorer, stats (public)
+  register(): Promise<RegisterSummary>;
+  registerMember(n: number): Promise<RegisterMember>;
+  registerHolder(address: string): Promise<HolderResponse>;
+  registerVerify(inscriptionId: string): Promise<VerifyMembershipResponse>;
+  explorer(query?: ExplorerQuery): Promise<ExplorerResponse>;
+  stats(): Promise<StatsResponse>;
 }
 
 function isErrorBody(v: unknown): v is ApiErrorBody {
@@ -115,5 +145,21 @@ export function createMintClient(opts: MintClientOptions): MintClient {
     submitReveal: (orderId, token, req) => call('POST', `/v1/orders/${id(orderId)}/reveal`, { json: req }, token),
     getOrder: (orderId) => call('GET', `/v1/orders/${id(orderId)}`),
     getRescue: (orderId, token) => call('GET', `/v1/orders/${id(orderId)}/rescue`, undefined, token),
+    authChallenge: (req) => call('POST', '/v1/auth/challenge', { json: req }),
+    authVerify: (req) => call('POST', '/v1/auth/verify', { json: req }),
+    reviewQueue: (token) => call('GET', '/v1/review', undefined, token),
+    castVote: (orderId, token, req) => call('POST', `/v1/orders/${id(orderId)}/votes`, { json: req }, token),
+    getVotes: (orderId) => call('GET', `/v1/orders/${id(orderId)}/votes`),
+    register: () => call('GET', '/v1/register'),
+    registerMember: (n) => call('GET', `/v1/register/${encodeURIComponent(String(n))}`),
+    registerHolder: (address) => call('GET', `/v1/register/holder/${encodeURIComponent(address)}`),
+    registerVerify: (inscriptionId) => call('GET', `/v1/register/verify/${encodeURIComponent(inscriptionId)}`),
+    explorer: (query = {}) => {
+      const qs = new URLSearchParams();
+      for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== '') qs.set(k, String(v));
+      const q = qs.toString();
+      return call('GET', `/v1/explorer${q ? `?${q}` : ''}`);
+    },
+    stats: () => call('GET', '/v1/stats'),
   };
 }

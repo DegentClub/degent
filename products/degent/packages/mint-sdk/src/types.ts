@@ -18,6 +18,9 @@ export const ORDER_STATUSES = [
   'rejected',
   'awaiting_payment',
   'paid',
+  'confirming',
+  'member_review',
+  'declined',
   'queued',
   'revealing',
   'revealed',
@@ -139,6 +142,10 @@ export interface Order {
   rescued: boolean;
   serviceFeeAddress: string | null;
   queue: QueueInfo | null;
+  /** Public member-approval tally (ADR-0005). Null before the commit is confirmed. */
+  approval: ApprovalInfo | null;
+  /** Degent number assigned when the members approved (4112 + rank). Null until then. */
+  degentNumber: number | null;
   timeline: OrderEvent[];
   createdAt: string;
   updatedAt: string;
@@ -201,6 +208,12 @@ export interface QueueResponse {
 
 export type ApiErrorCode =
   | 'bad_request'
+  | 'not_a_holder'
+  | 'already_voted'
+  | 'self_vote'
+  | 'vote_invalid'
+  | 'auth_failed'
+  | 'review_closed'
   | 'unauthorized'
   | 'forbidden'
   | 'validation_failed'
@@ -236,4 +249,182 @@ export interface OrderStatusEvent {
   detail?: string;
   txid?: string;
   inscriptionId?: string;
+}
+
+// ---------------------------------------------------------------- member approval (ADR-0005)
+
+export type VoteChoice = 'approve' | 'decline';
+
+/** Public tally shown on the order and the review queue. Counts only; never voter addresses. */
+export interface ApprovalInfo {
+  approvals: number;
+  declines: number;
+  approvalQuorum: number;
+  declineQuorum: number;
+  /** When member_review started (ISO 8601); the review SLA counts from here. */
+  reviewStartedAt: string | null;
+  /** When the SLA lapses and self-rescue is offered instead (ISO 8601). */
+  reviewDeadline: string | null;
+}
+
+/** One member's vote as stored and as returned by GET /v1/orders/{id}/votes (address omitted). */
+export interface PublicVote {
+  /** Degent number the voter voted with (their membership), never their address. */
+  degent: number;
+  vote: VoteChoice;
+  at: string;
+  /** BIP-322 simple signature (base64) over `message`, so anyone can verify the vote. */
+  signature: string;
+  message: string;
+}
+
+export interface VotesResponse {
+  orderId: string;
+  status: OrderStatus;
+  approval: ApprovalInfo;
+  votes: PublicVote[];
+}
+
+export interface CastVoteRequest {
+  vote: VoteChoice;
+  /** Exactly `voteStatement(vote, orderId, ref)`; the service rebuilds and compares it. */
+  message: string;
+  /** BIP-322 simple signature (base64) of `message` by the holder's address. */
+  signature: string;
+}
+
+/** What a reviewer sees in the queue: the public order plus its tally. */
+export interface ReviewItem {
+  order: Order;
+  approval: ApprovalInfo;
+  /** True when the signed-in member has already voted on this order. */
+  voted: VoteChoice | null;
+}
+
+export interface ReviewQueueResponse {
+  items: ReviewItem[];
+  /** Degent numbers the signed-in member holds. */
+  memberDegents: number[];
+}
+
+// ---------------------------------------------------------------- holder auth (SIWB via @bsh/identity)
+
+export interface AuthChallengeRequest {
+  address: string;
+}
+
+export interface AuthChallengeResponse {
+  /** SIWB message to sign with the wallet (BIP-322 simple). */
+  message: string;
+  expiresAt: string;
+}
+
+export interface AuthVerifyRequest {
+  address: string;
+  message: string;
+  signature: string;
+}
+
+export interface AuthVerifyResponse {
+  /** Bearer session token (compact JWS). Send as `Authorization: Bearer <token>`. */
+  token: string;
+  address: string;
+  degents: number[];
+  expiresAt: string;
+}
+
+// ---------------------------------------------------------------- register, explorer, stats
+
+export type MembershipVia = 'gallery' | 'child';
+
+export interface RegisterMember {
+  n: number;
+  id: string;
+  /** Global inscription number when known. */
+  number: number | null;
+  via: MembershipVia;
+  bytes: number;
+  height: number | null;
+  sat: number | null;
+  owner: string | null;
+  /** ord content URL (rendering) for the explorer grid. */
+  contentUrl: string;
+}
+
+export interface RegisterSummary {
+  parent: string | null;
+  gallery: string | null;
+  count: number;
+  bytes: number;
+  /** Members approved by vote but not yet delivered on chain (pending children). */
+  pending: number;
+  updatedAt: string;
+}
+
+export interface HolderResponse {
+  address: string;
+  holder: boolean;
+  degents: number[];
+}
+
+export interface VerifyMembershipResponse {
+  id: string;
+  member: boolean;
+  via: MembershipVia | null;
+  n: number | null;
+}
+
+export type ExplorerSort = 'n' | 'bytes' | 'height';
+
+export interface ExplorerQuery {
+  offset?: number;
+  limit?: number;
+  sort?: ExplorerSort;
+  order?: 'asc' | 'desc';
+  /** Matches a Degent number, an inscription id prefix or an owner address prefix. */
+  q?: string;
+}
+
+export interface ExplorerResponse {
+  items: RegisterMember[];
+  total: number;
+  offset: number;
+  limit: number;
+  sort: ExplorerSort;
+  order: 'asc' | 'desc';
+}
+
+export interface HistogramBucket {
+  /** Inclusive lower bound of the bucket, in the unit of the series. */
+  from: number;
+  /** Exclusive upper bound; null for the last, open bucket. */
+  to: number | null;
+  count: number;
+}
+
+export interface WeekBucket {
+  /** ISO date (Monday) of the week. */
+  week: string;
+  count: number;
+}
+
+export interface StatsResponse {
+  minted: number;
+  charter: number;
+  totalBytes: number;
+  medianBytes: number;
+  /** Members with a known timestamp bucketed per ISO week; empty when heights are unknown. */
+  mintsPerWeek: WeekBucket[];
+  sizeHistogram: HistogramBucket[];
+  approvals: {
+    inReview: number;
+    approved: number;
+    declined: number;
+    /** Approved orders per ISO week. */
+    perWeek: WeekBucket[];
+    /** Median seconds from member_review to the approval quorum, null when nothing was approved yet. */
+    medianSecondsToQuorum: number | null;
+  };
+  topHolders: Array<{ owner: string; count: number }>;
+  updatedAt: string;
 }

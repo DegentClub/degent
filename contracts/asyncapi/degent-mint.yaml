@@ -11,6 +11,11 @@ info:
     Event type == routing key == `degent.mint.order.{status}`. Payloads never contain half-signed reveals,
     order tokens, keys or raw transactions.
 
+    Status enum: a SUPERSET of the platform's canonical `degent.mint.order.{status}` enum
+    (deps/scribbit/contracts/asyncapi/platform-events.yaml). ADR-0005 added `confirming`, `member_review` and
+    `declined` here first; the platform PR adding them is listed under ADR-0005 "Follow-ups" and
+    `pnpm contracts:diff` prints the delta until it lands. Consumers must ignore unknown statuses.
+
     Transport: in-process bus in dev/tests; RabbitMQ topic exchange `degent.mint` in production (persistent
     messages, `message_id` = eventId, `content_type` = application/json). Bind with e.g.
     `degent.mint.order.*` or `degent.mint.order.delivered`.
@@ -38,6 +43,9 @@ channels:
           - rejected
           - awaiting_payment
           - paid
+          - confirming
+          - member_review
+          - declined
           - queued
           - revealing
           - revealed
@@ -104,8 +112,8 @@ components:
     OrderStatus:
       type: string
       enum:
-        [awaiting_content, reviewing, approved, rejected, awaiting_payment, paid, queued, revealing, revealed,
-         confirmed, verified, delivered, expired, rescue_available, failed]
+        [awaiting_content, reviewing, approved, rejected, awaiting_payment, paid, confirming, member_review, declined,
+         queued, revealing, revealed, confirmed, verified, delivered, expired, rescue_available, failed]
     OrderStatusEvent:
       type: object
       additionalProperties: false
@@ -132,7 +140,7 @@ components:
         txid:
           type: string
           pattern: '^[0-9a-f]{64}$'
-          description: Commit txid on `paid`; reveal (or rescue) txid on `revealed`, `confirmed`, `delivered`.
+          description: Commit txid on `paid` and `member_review`; reveal (or rescue) txid on `revealed`, `confirmed`, `delivered`.
         inscriptionId:
           type: string
           pattern: '^[0-9a-f]{64}i[0-9]+$'

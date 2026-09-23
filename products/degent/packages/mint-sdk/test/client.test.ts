@@ -37,6 +37,18 @@ describe('createMintClient', () => {
     await c.submitReveal('o1', 'tok', { commitTxid: 'c'.repeat(64), commitVout: 0, halfSignedRevealPsbt: 'cHNidP8=' });
     await c.getOrder('o1');
     await c.getRescue('o1', 'tok');
+    await c.authChallenge({ address: 'bc1p' });
+    await c.authVerify({ address: 'bc1p', message: 'm', signature: 's' });
+    await c.reviewQueue('sess');
+    await c.castVote('o1', 'sess', { vote: 'approve', message: 'm', signature: 's' });
+    await c.getVotes('o1');
+    await c.register();
+    await c.registerMember(4113);
+    await c.registerHolder('bc1p');
+    await c.registerVerify('a'.repeat(64) + 'i0');
+    await c.explorer({ offset: 20, limit: 10, sort: 'bytes', order: 'desc', q: 'bc1' });
+    await c.explorer();
+    await c.stats();
     expect(calls.map((x) => `${x.init?.method} ${x.url}`)).toEqual([
       'GET https://mint.example/v1/health',
       'GET https://mint.example/v1/config',
@@ -47,9 +59,22 @@ describe('createMintClient', () => {
       'POST https://mint.example/v1/orders/o1/reveal',
       'GET https://mint.example/v1/orders/o1',
       'GET https://mint.example/v1/orders/o1/rescue',
+      'POST https://mint.example/v1/auth/challenge',
+      'POST https://mint.example/v1/auth/verify',
+      'GET https://mint.example/v1/review',
+      'POST https://mint.example/v1/orders/o1/votes',
+      'GET https://mint.example/v1/orders/o1/votes',
+      'GET https://mint.example/v1/register',
+      'GET https://mint.example/v1/register/4113',
+      'GET https://mint.example/v1/register/holder/bc1p',
+      `GET https://mint.example/v1/register/verify/${'a'.repeat(64)}i0`,
+      'GET https://mint.example/v1/explorer?offset=20&limit=10&sort=bytes&order=desc&q=bc1',
+      'GET https://mint.example/v1/explorer',
+      'GET https://mint.example/v1/stats',
     ]);
     const auth = calls.map((x) => (x.init?.headers as Record<string, string>).authorization ?? null);
-    expect(auth).toEqual([null, null, null, null, null, 'Bearer tok', 'Bearer tok', null, 'Bearer tok']);
+    expect(auth.slice(0, 9)).toEqual([null, null, null, null, null, 'Bearer tok', 'Bearer tok', null, 'Bearer tok']);
+    expect(auth.slice(9)).toEqual([null, null, 'Bearer sess', 'Bearer sess', null, null, null, null, null, null, null, null]);
     const put = calls[5]!.init!;
     expect((put.headers as Record<string, string>)['content-type']).toBe('application/octet-stream');
     expect(put.body).toEqual(new Uint8Array([1, 2, 3]));
