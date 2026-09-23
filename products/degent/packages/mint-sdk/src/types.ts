@@ -144,6 +144,16 @@ export interface Order {
   updatedAt: string;
 }
 
+/**
+ * POST /v1/orders response. `orderToken` is a random 256-bit bearer secret returned ONCE (the
+ * service stores only its SHA-256). It authorises PUT /content, POST /reveal and GET /rescue for
+ * this order. Keep it with the local recovery bundle; it cannot be recovered from the service.
+ */
+export interface CreateOrderResponse {
+  order: Order;
+  orderToken: string;
+}
+
 export interface SubmitRevealRequest {
   commitTxid: string;
   commitVout: number;
@@ -191,6 +201,8 @@ export interface QueueResponse {
 
 export type ApiErrorCode =
   | 'bad_request'
+  | 'unauthorized'
+  | 'forbidden'
   | 'validation_failed'
   | 'not_found'
   | 'conflict'

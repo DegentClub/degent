@@ -8,3 +8,4 @@ export type * from './art-review.js';
 export type * from './parent-utxo.js';
 export type * from './clock.js';
 export type * from './event-bus.js';
+export type * from './reveal-vault.js';

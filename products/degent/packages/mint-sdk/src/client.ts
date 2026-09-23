@@ -5,6 +5,7 @@
 import type {
   ApiErrorBody,
   CreateOrderRequest,
+  CreateOrderResponse,
   FeesResponse,
   HealthResponse,
   Order,
@@ -42,11 +43,12 @@ export interface MintClient {
   config(): Promise<ServiceConfig>;
   fees(): Promise<FeesResponse>;
   queue(): Promise<QueueResponse>;
-  createOrder(req: CreateOrderRequest): Promise<Order>;
-  uploadContent(orderId: string, bytes: Uint8Array): Promise<Order>;
-  submitReveal(orderId: string, req: SubmitRevealRequest): Promise<Order>;
+  /** Returns the order and its one-time `orderToken` (store it; it is never shown again). */
+  createOrder(req: CreateOrderRequest): Promise<CreateOrderResponse>;
+  uploadContent(orderId: string, orderToken: string, bytes: Uint8Array): Promise<Order>;
+  submitReveal(orderId: string, orderToken: string, req: SubmitRevealRequest): Promise<Order>;
   getOrder(orderId: string): Promise<Order>;
-  getRescue(orderId: string): Promise<RescueResponse>;
+  getRescue(orderId: string, orderToken: string): Promise<RescueResponse>;
 }
 
 function isErrorBody(v: unknown): v is ApiErrorBody {
@@ -63,8 +65,14 @@ export function createMintClient(opts: MintClientOptions): MintClient {
   const f: FetchLike = opts.fetch ?? ((input, init) => globalThis.fetch(input, init));
   const base = opts.baseUrl.replace(/\/+$/, '');
 
-  async function call<T>(method: string, path: string, body?: { json: unknown } | { bytes: Uint8Array }): Promise<T> {
+  async function call<T>(
+    method: string,
+    path: string,
+    body?: { json: unknown } | { bytes: Uint8Array },
+    orderToken?: string,
+  ): Promise<T> {
     const headers: Record<string, string> = { accept: 'application/json', ...(opts.headers ?? {}) };
+    if (orderToken !== undefined) headers.authorization = `Bearer ${orderToken}`;
     let payload: BodyInit | undefined;
     if (body && 'json' in body) {
       headers['content-type'] = 'application/json';
@@ -103,9 +111,9 @@ export function createMintClient(opts: MintClientOptions): MintClient {
     fees: () => call('GET', '/v1/fees'),
     queue: () => call('GET', '/v1/queue'),
     createOrder: (req) => call('POST', '/v1/orders', { json: req }),
-    uploadContent: (orderId, bytes) => call('PUT', `/v1/orders/${id(orderId)}/content`, { bytes }),
-    submitReveal: (orderId, req) => call('POST', `/v1/orders/${id(orderId)}/reveal`, { json: req }),
+    uploadContent: (orderId, token, bytes) => call('PUT', `/v1/orders/${id(orderId)}/content`, { bytes }, token),
+    submitReveal: (orderId, token, req) => call('POST', `/v1/orders/${id(orderId)}/reveal`, { json: req }, token),
     getOrder: (orderId) => call('GET', `/v1/orders/${id(orderId)}`),
-    getRescue: (orderId) => call('GET', `/v1/orders/${id(orderId)}/rescue`),
+    getRescue: (orderId, token) => call('GET', `/v1/orders/${id(orderId)}/rescue`, undefined, token),
   };
 }

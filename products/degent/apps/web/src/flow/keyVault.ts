@@ -1,8 +1,12 @@
 /**
- * In-memory holder for the ephemeral reveal key K_e (ADR-0002 §2). Never serialised, never put in
- * React state, never sent anywhere. `discard` zeroes the bytes before dropping the reference.
+ * In-memory holder for the ephemeral reveal key K_e (ADR-0002 §2) and the order's bearer token.
+ * Neither is put in React state or logged. K_e is never serialised or sent anywhere; `discard`
+ * zeroes it before dropping the reference. The token outlives K_e (it authorises rescue) and is
+ * persisted only inside the recovery bundle.
  */
 export interface KeyVault {
+  putToken(orderId: string, token: string): void;
+  token(orderId: string): string | null;
   put(orderId: string, privkey: Uint8Array): void;
   get(orderId: string): Uint8Array | null;
   has(orderId: string): boolean;
@@ -12,8 +16,15 @@ export interface KeyVault {
 
 export function createKeyVault(): KeyVault {
   const keys = new Map<string, Uint8Array>();
+  const tokens = new Map<string, string>();
   const wipe = (k: Uint8Array) => k.fill(0);
   return {
+    putToken(orderId, token) {
+      tokens.set(orderId, token);
+    },
+    token(orderId) {
+      return tokens.get(orderId) ?? null;
+    },
     put(orderId, privkey) {
       const prev = keys.get(orderId);
       if (prev) wipe(prev);

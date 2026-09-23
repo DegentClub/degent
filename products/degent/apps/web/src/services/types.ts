@@ -41,18 +41,28 @@ export interface RescueTx {
   txid: string;
 }
 
+/**
+ * POST /v1/orders returns a random `orderToken` exactly once. It authorises the order's mutating
+ * calls (`Authorization: Bearer <token>`). The front end keeps it in memory and persists it ONLY
+ * inside the local recovery bundle. Never in URLs, never in logs.
+ */
+export interface CreatedOrder {
+  order: Order;
+  orderToken: string;
+}
+
 export interface MintApi {
   getConfig(): Promise<ServiceConfig>;
   getFees(): Promise<FeeSnapshot>;
   getQueue(): Promise<QueueSnapshot>;
-  createOrder(req: CreateOrderRequest): Promise<Order>;
+  createOrder(req: CreateOrderRequest): Promise<CreatedOrder>;
   /** PUT /v1/orders/{id}/content (application/octet-stream). Starts the automated art review. */
-  uploadContent(orderId: string, bytes: Uint8Array, contentType: string): Promise<Order>;
+  uploadContent(orderId: string, orderToken: string, bytes: Uint8Array): Promise<Order>;
   /** POST /v1/orders/{id}/reveal with the half-signed reveal. */
-  submitReveal(orderId: string, req: SubmitRevealRequest): Promise<Order>;
+  submitReveal(orderId: string, orderToken: string, req: SubmitRevealRequest): Promise<Order>;
   getOrder(orderId: string): Promise<Order>;
   /** GET /v1/orders/{id}/rescue: the parent-less [commit] -> [child] reveal, fully signed. */
-  getRescue(orderId: string): Promise<RescueTx>;
+  getRescue(orderId: string, orderToken: string): Promise<RescueTx>;
 }
 
 // ---------------------------------------------------------------- wallet

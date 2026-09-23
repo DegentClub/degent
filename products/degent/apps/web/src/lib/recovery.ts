@@ -2,7 +2,7 @@
  * Local recovery bundle (ADR-0002 §2 step 5). Saved BEFORE the wallet is asked to sign the funding
  * transaction, so the user can always rebuild the parent-less rescue reveal even if this site or
  * the service disappears. Contains no private key: the half-signed reveal is only spendable into
- * the user's own ordinals address.
+ * the user's own ordinals address. It DOES contain the order's bearer token, so it must stay private.
  */
 import type { Network } from '@bsh/degent-mint-sdk';
 
@@ -22,8 +22,15 @@ export interface RecoveryBundle {
   contentType: string;
   contentSha256: string;
   halfSignedRevealPsbt: string;
+  /** Bearer token for this order's mutating API calls (rescue). Keep private. */
+  orderToken: string;
   note: string;
+  warning: string;
 }
+
+export const RECOVERY_WARNING =
+  'Keep this bundle private. Anyone with it can interfere with your mint (for example trigger the ' +
+  'rescue path early and forfeit the parent link). It cannot redirect your Degent or your funds.';
 
 export const RECOVERY_NOTE =
   'Half-signed Degent reveal (SIGHASH_SINGLE|ANYONECANPAY). If the mint service is unavailable, ' +
@@ -52,6 +59,7 @@ export function isRecoveryBundle(v: unknown): v is RecoveryBundle {
     b.version === 1 &&
     typeof b.orderId === 'string' &&
     typeof b.halfSignedRevealPsbt === 'string' &&
+    typeof b.orderToken === 'string' &&
     typeof b.commitTxid === 'string'
   );
 }

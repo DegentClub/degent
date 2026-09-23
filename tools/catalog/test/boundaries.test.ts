@@ -55,6 +55,17 @@ describe("boundaries", () => {
     expect(checkBoundaries(loadWorkspace(root)).diagnostics).toEqual([]);
   });
 
+  it("skips nested package / workspace roots such as test fixtures", () => {
+    const root = fixture("valid");
+    const nested = path.join(root, "platform/core/test/fixtures/mini");
+    mkdirSync(path.join(nested, "pkg/src"), { recursive: true });
+    writeFileSync(path.join(nested, "pnpm-workspace.yaml"), "packages: [pkg]\n");
+    writeFileSync(path.join(nested, "pkg/package.json"), "{}\n");
+    writeFileSync(path.join(nested, "pkg/src/index.ts"), 'import "@bsh/degent-sdk";\n');
+    writeFileSync(path.join(nested, "stray.ts"), 'import "@bsh/degent-sdk";\n');
+    expect(checkBoundaries(loadWorkspace(root)).diagnostics).toEqual([]);
+  });
+
   it("rejects @bsh imports missing from depends_on, in every form, with file:line", () => {
     const res = checkBoundaries(workspace("undeclared-import"));
     expect(rules(res.diagnostics)).toEqual(["undeclared-import", "unknown-workspace-import"]);

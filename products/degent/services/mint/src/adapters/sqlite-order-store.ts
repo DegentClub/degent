@@ -1,12 +1,15 @@
 /**
  * node:sqlite OrderStore (Node >= 22.5). One row per order with the record as JSON plus indexed
  * columns for status and version; WAL mode; optimistic concurrency via `WHERE version = ?`.
+ * Also implements SecretBlobStore over a separate `reveals` table holding only ciphertext
+ * (wrapped by EncryptedRevealVault), so order rows never contain the half-signed reveal.
  */
 import { DatabaseSync } from 'node:sqlite';
 import type { OrderStatus } from '@bsh/degent-mint-sdk';
 import type { OrderRecord } from '../domain/order.js';
 import { StaleWriteError } from '../domain/errors.js';
 import type { OrderStore } from '../ports/order-store.js';
+import type { SecretBlobStore } from '../ports/reveal-vault.js';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS orders (
@@ -19,13 +22,17 @@ CREATE TABLE IF NOT EXISTS orders (
   data        TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS orders_status ON orders(status, created_at);
+CREATE TABLE IF NOT EXISTS reveals (
+  order_id   TEXT PRIMARY KEY,
+  ciphertext BLOB NOT NULL
+);
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
 `;
 
-export class SqliteOrderStore implements OrderStore {
+export class SqliteOrderStore implements OrderStore, SecretBlobStore {
   private readonly db: DatabaseSync;
 
   constructor(path: string) {
@@ -71,6 +78,21 @@ export class SqliteOrderStore implements OrderStore {
 
   async setMeta(key: string, value: string): Promise<void> {
     this.db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
+  }
+
+  async putBlob(key: string, blob: Uint8Array): Promise<void> {
+    this.db
+      .prepare('INSERT INTO reveals (order_id, ciphertext) VALUES (?, ?) ON CONFLICT(order_id) DO UPDATE SET ciphertext = excluded.ciphertext')
+      .run(key, blob);
+  }
+
+  async getBlob(key: string): Promise<Uint8Array | null> {
+    const row = this.db.prepare('SELECT ciphertext FROM reveals WHERE order_id = ?').get(key) as { ciphertext: Uint8Array } | undefined;
+    return row ? new Uint8Array(row.ciphertext) : null;
+  }
+
+  async deleteBlob(key: string): Promise<void> {
+    this.db.prepare('DELETE FROM reveals WHERE order_id = ?').run(key);
   }
 
   close(): void {

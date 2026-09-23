@@ -33,10 +33,10 @@ describe('createMintClient', () => {
       revealPubkey: 'b'.repeat(64),
       feeRate: 2,
     });
-    await c.uploadContent('ord/1', new Uint8Array([1, 2, 3]));
-    await c.submitReveal('o1', { commitTxid: 'c'.repeat(64), commitVout: 0, halfSignedRevealPsbt: 'cHNidP8=' });
+    await c.uploadContent('ord/1', 'tok', new Uint8Array([1, 2, 3]));
+    await c.submitReveal('o1', 'tok', { commitTxid: 'c'.repeat(64), commitVout: 0, halfSignedRevealPsbt: 'cHNidP8=' });
     await c.getOrder('o1');
-    await c.getRescue('o1');
+    await c.getRescue('o1', 'tok');
     expect(calls.map((x) => `${x.init?.method} ${x.url}`)).toEqual([
       'GET https://mint.example/v1/health',
       'GET https://mint.example/v1/config',
@@ -48,6 +48,8 @@ describe('createMintClient', () => {
       'GET https://mint.example/v1/orders/o1',
       'GET https://mint.example/v1/orders/o1/rescue',
     ]);
+    const auth = calls.map((x) => (x.init?.headers as Record<string, string>).authorization ?? null);
+    expect(auth).toEqual([null, null, null, null, null, 'Bearer tok', 'Bearer tok', null, 'Bearer tok']);
     const put = calls[5]!.init!;
     expect((put.headers as Record<string, string>)['content-type']).toBe('application/octet-stream');
     expect(put.body).toEqual(new Uint8Array([1, 2, 3]));
@@ -59,7 +61,7 @@ describe('createMintClient', () => {
   it('raises a typed ApiError from the structured error body', async () => {
     const { f } = fakeFetch(() => json(409, { error: { code: 'rescue_unavailable', message: 'not yet', details: { status: 'queued' } } }));
     const c = createMintClient({ baseUrl: 'http://x', fetch: f });
-    const err = await c.getRescue('o1').catch((e) => e);
+    const err = await c.getRescue('o1', 'tok').catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err).toMatchObject({ status: 409, code: 'rescue_unavailable', message: 'not yet', details: { status: 'queued' } });
   });

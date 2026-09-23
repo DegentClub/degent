@@ -1,6 +1,10 @@
 /**
  * Internal order record: the public `Order` plus fields that never leave the service
- * (half-signed PSBT, raw reveal hex, lease bookkeeping, optimistic-concurrency version).
+ * (token hash, raw reveal hex, lease bookkeeping, optimistic-concurrency version).
+ *
+ * The half-signed reveal PSBT is deliberately NOT part of this record: a 0x83 half-signed reveal
+ * can be restructured by whoever holds it before broadcast, so it lives encrypted in the separate
+ * RevealVault (ports/reveal-vault.ts) and is never logged, emitted or returned.
  */
 import type { Lane, Order, OrderStatus, QueueInfo } from '@bsh/degent-mint-sdk';
 
@@ -10,7 +14,10 @@ export interface OrderRecord extends Omit<Order, 'queue'> {
   version: number;
   /** When the current quote/phase expires (awaiting_content, approved, awaiting_payment). */
   expiresAt: string;
-  halfSignedPsbt: string | null;
+  /** SHA-256 hex of the order's bearer token (the token itself is returned once, never stored). */
+  orderTokenHash: string;
+  /** True once a verified half-signed reveal is stored in the RevealVault. */
+  hasReveal: boolean;
   paidAt: string | null;
   /** Monotonic lane ordering key assigned when queued (paidAt ms, then id). */
   queuedAt: string | null;

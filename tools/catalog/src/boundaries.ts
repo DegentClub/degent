@@ -9,7 +9,7 @@
  *  - relative-escape            a relative/absolute import resolves outside the package root
  *  - depends-on-cross-product / depends-on-platform-to-product   the same policies, at manifest level
  */
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import type { CheckResult, Diagnostic } from "./types.js";
@@ -58,7 +58,10 @@ export function extractImports(source: string, fileName = "file.ts"): ImportRef[
   return out;
 }
 
-/** Source files of a package, skipping build output and nested workspace packages. */
+/**
+ * Source files of a package, skipping build output, nested workspace packages and any nested directory that is
+ * its own package or workspace root (e.g. test fixture mini-repos): those are separate units, not this package.
+ */
 export function listSourceFiles(pkg: WorkspacePackage, otherRoots: ReadonlySet<string>): string[] {
   const out: string[] = [];
   const rec = (abs: string): void => {
@@ -72,6 +75,7 @@ export function listSourceFiles(pkg: WorkspacePackage, otherRoots: ReadonlySet<s
       const child = path.join(abs, e.name);
       if (e.isDirectory()) {
         if (e.name.startsWith(".") || IGNORED_DIRS.has(e.name) || otherRoots.has(child)) continue;
+        if (existsSync(path.join(child, "package.json")) || existsSync(path.join(child, "pnpm-workspace.yaml"))) continue;
         rec(child);
       } else if (e.isFile() && SOURCE_EXTENSIONS.has(path.extname(e.name))) {
         out.push(child);
