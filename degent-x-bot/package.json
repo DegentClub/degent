@@ -1,7 +1,7 @@
 {
   "name": "degent-x-bot",
   "version": "1.0.0",
-  "description": "DEGENT X BOT — Autonomous Twitter Agent for @degentclub",
+  "description": "DEGENT X BOT \u2014 Autonomous Twitter Agent for @degentclub",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
@@ -9,7 +9,9 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
@@ -32,6 +34,7 @@
     "uuid": "^11.0.0"
   },
   "devDependencies": {
-    "drizzle-kit": "^0.30.0"
+    "drizzle-kit": "^0.30.0",
+    "vitest": "^3.2.7"
   }
 }

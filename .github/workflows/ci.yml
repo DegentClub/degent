@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    name: Unit tests (degent-x-bot)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: degent-x-bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: degent-x-bot/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - name: Syntax check every source file
+        run: find src -name '*.js' -print0 | xargs -0 -n1 node --check
+
+  compose-config:
+    name: docker compose config validates
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: degent-x-bot
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuses to start without passwords
+        run: |
+          touch .env
+          if docker compose config > /dev/null 2>&1; then
+            echo "compose should fail without POSTGRES_PASSWORD / REDIS_PASSWORD"; exit 1
+          fi
+      - name: Renders with passwords and publishes no db/redis ports
+        run: |
+          printf 'POSTGRES_PASSWORD=ci\nREDIS_PASSWORD=ci\n' > .env
+          docker compose config > rendered.yml
+          if grep -E 'published: "?(5432|6379)' rendered.yml; then
+            echo "postgres/redis must not publish host ports"; exit 1
+          fi
