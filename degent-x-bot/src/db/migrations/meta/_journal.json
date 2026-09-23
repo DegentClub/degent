@@ -8,6 +8,13 @@
       "when": 1775094233848,
       "tag": "0000_military_rhino",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790197698903,
+      "tag": "0001_telegram_gate",
+      "breakpoints": true
     }
   ]
 }

@@ -177,6 +177,33 @@ const botConfig = pgTable('bot_config', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
 });
 
+// --- Telegram holders gate (src/telegram-gate) -----------------------------
+
+// One-time signing challenges. A nonce is consumed exactly once.
+const gateChallenges = pgTable('gate_challenges', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  telegramUserId: bigint('telegram_user_id', { mode: 'number' }).notNull(),
+  address: varchar('address', { length: 100 }).notNull(),
+  nonce: varchar('nonce', { length: 64 }).notNull().unique(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  usedAt: timestamp('used_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+});
+
+// Verified members. One wallet <-> one Telegram account, enforced by the
+// unique constraints. Only the address and the Telegram id are stored.
+const gateMembers = pgTable('gate_members', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  telegramUserId: bigint('telegram_user_id', { mode: 'number' }).notNull().unique(),
+  address: varchar('address', { length: 100 }).notNull().unique(),
+  degents: jsonb('degents').$type().notNull().default([]), // inscription numbers held at last check
+  status: varchar('status', { length: 20 }).notNull().default('active'), // 'active' | 'revoked'
+  verifiedAt: timestamp('verified_at', { withTimezone: true }).defaultNow(),
+  lastCheckedAt: timestamp('last_checked_at', { withTimezone: true }).defaultNow(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  inviteIssuedAt: timestamp('invite_issued_at', { withTimezone: true }),
+});
+
 module.exports = {
   contentQueue,
   engagementLog,
@@ -185,4 +212,6 @@ module.exports = {
   dailyMetrics,
   telegramMedia,
   botConfig,
+  gateChallenges,
+  gateMembers,
 };
