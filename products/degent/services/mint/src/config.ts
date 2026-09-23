@@ -124,7 +124,7 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
     problems.push('refusing to start on mainnet with the in-memory dev policy signer (SIGNER=memory)');
   const parentKeyFile = str('PARENT_KEY_FILE');
   if (parentKeyFile && net === 'mainnet') problems.push('PARENT_KEY_FILE is dev-only and not accepted on mainnet');
-  if (!parentKeyFile && signer === 'memory' && !dev) problems.push(`PARENT_KEY_FILE is required on ${net} with SIGNER=memory`);
+  if (!parentKeyFile && signer === 'memory' && !dev && net !== 'mainnet') problems.push(`PARENT_KEY_FILE is required on ${net} with SIGNER=memory`);
 
   const collectionAddress = str('COLLECTION_ADDRESS');
   if (collectionAddress && addressKind(collectionAddress, net) !== 'tr')

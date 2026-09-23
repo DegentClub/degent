@@ -6,7 +6,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p .",
-    "dev": "tsx watch src/main.ts",
+    "dev": "NETWORK=${NETWORK:-regtest} tsx watch src/main.ts",
     "start": "tsx src/main.ts"
   },
   "dependencies": {

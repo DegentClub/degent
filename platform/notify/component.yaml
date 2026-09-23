@@ -1,0 +1,10 @@
+name: notify
+package: "@bsh/notify"
+kind: library
+product: platform
+owner: team-platform
+summary: Notification core - topic subscriptions fanned out to signed webhooks, email and Telegram with retries and idempotency keys.
+lifecycle: beta
+depends_on: ["@bsh/events"]
+docs: ./README.md
+commands: { test: test, typecheck: typecheck }

@@ -1,0 +1,32 @@
+{
+  "name": "@bsh/scribbit-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "scribbit": "./bin/scribbit.mjs"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p .",
+    "scribbit": "tsx src/bin.ts",
+    "dev": "tsx src/bin.ts --help"
+  },
+  "dependencies": {
+    "@bsh/inscription": "workspace:*",
+    "@bsh/fee-oracle": "workspace:*",
+    "tsx": "^4.23.15"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "vitest": "^5.0.1",
+    "@types/node": "^22",
+    "@noble/curves": "^2.4.0",
+    "@scure/base": "^2.4.0"
+  },
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}
