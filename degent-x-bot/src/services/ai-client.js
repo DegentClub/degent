@@ -51,10 +51,11 @@ function toOpenRouterModel(model) {
 
 // Load the agent brain markdown (hot-reloadable)
 function loadBrainPrompt() {
+  // Canonical location is degent-x-bot/brain/. BRAIN_PATH overrides it.
   const brainPaths = [
+    process.env.BRAIN_PATH,
     path.join(__dirname, '../../brain/DEGENT_X_BOT_BRAIN.md'),
-    path.join(__dirname, '../../../DEGENT_X_BOT_BRAIN.md'),
-  ];
+  ].filter(Boolean);
   for (const p of brainPaths) {
     try {
       return fs.readFileSync(p, 'utf-8');

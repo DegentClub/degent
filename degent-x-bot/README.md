@@ -109,7 +109,7 @@ src/
 
 ## The Agent Brain
 
-The bot's personality, voice, and strategy are defined in `brain/DGENT_TWITTER_AGENT_BRAIN.md`. This file is loaded at runtime for every AI generation call. Edit it to tune the bot's behavior without code changes.
+The bot's personality, voice, and strategy are defined in `brain/DEGENT_X_BOT_BRAIN.md`. This file is loaded at runtime for every AI generation call. Edit it to tune the bot's behavior without code changes.
 
 ## Job Schedule
 
