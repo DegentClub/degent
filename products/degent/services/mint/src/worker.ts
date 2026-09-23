@@ -3,11 +3,15 @@
  * reads state, advances every order as far as the chain allows, and returns. `run()` just calls
  * tick on an interval. One tick at a time: the parent UTXO chain is strictly serial.
  *
- *   awaiting_payment --(commit seen with exact value/script)--> paid --> queued
+ *   awaiting_payment --(commit seen with exact value/script)--> paid --> confirming
+ *   confirming --(commit has N confirmations)--> member_review   (ADR-0005: members vote via the API)
+ *   member_review --(approval quorum, in ApprovalService)--> queued | --(decline quorum)--> declined
+ *   member_review past reviewSla --> rescue_available            (no funds stranded by a silent club)
  *   queued --(lane slot + parent lease)--> revealing --attachParent/policy-sign/finalize/broadcast--> revealed
  *   revealed --(N confirmations)--> confirmed --(ord bytes sha256 == order)--> verified --> delivered
- *   pre-paid past expiry --> expired ; paid/queued/revealing past rescueAfter --> rescue_available
- *   rescue_available --(commit spent on chain)--> revealed (rescued unless it was our parent reveal)
+ *   pre-paid past expiry --> expired ; paid/confirming (from paidAt) and queued/revealing (from
+ *   approval) past rescueAfter --> rescue_available
+ *   rescue_available | declined --(commit spent on chain)--> revealed (rescued unless it was our parent reveal)
  *
  * Lane rules:
  *   block:    one reveal in flight (revealing or revealed-unconfirmed) => one per block.
@@ -26,8 +30,9 @@ import { sha256Hex } from '@bsh/degent-mint-sdk';
 import type { OrderService } from './application/order-service.js';
 import type { Logger } from './application/logger.js';
 import { silentLogger } from './application/logger.js';
+import { reviewDeadline } from './domain/approval.js';
 import { PolicyViolation, StaleWriteError } from './domain/errors.js';
-import type { OrderRecord } from './domain/order.js';
+import { RESCUE_OFFERED, type OrderRecord } from './domain/order.js';
 import type { LaneBroadcasters } from './ports/broadcaster.js';
 import type { ChainPort } from './ports/chain.js';
 import type { Clock } from './ports/clock.js';
@@ -102,8 +107,10 @@ export class MintWorker {
       await this.watchRescues();
       await this.detectPayments();
       await this.expireUnpaid();
-      await this.enqueuePaid();
+      await this.advancePaid();
+      await this.confirmCommits();
       await this.recoverRevealing();
+      await this.reviewTimeouts();
       await this.rescueTimeouts();
       await this.dispatch();
       return this.report;
@@ -177,9 +184,39 @@ export class MintWorker {
     });
   }
 
-  private async enqueuePaid(): Promise<void> {
-    await this.each('enqueue', ['paid'], async (r) => {
-      await this.move(r, 'queued', { detail: `${r.lane} lane`, patch: { queuedAt: r.paidAt ?? this.d.clock.now().toISOString() } });
+  /** paid -> confirming: the commit is on the network; the members only see it once it is mined. */
+  private async advancePaid(): Promise<void> {
+    await this.each('advance-paid', ['paid'], async (r) => {
+      await this.move(r, 'confirming', { detail: 'waiting for the commit to confirm before member review' });
+    });
+  }
+
+  /** confirming -> member_review once the commit has the configured confirmations. Opens the vote. */
+  private async confirmCommits(): Promise<void> {
+    let tip: number | null = null;
+    await this.each('confirm-commit', ['confirming'], async (r) => {
+      if (!r.commitOutpoint) return;
+      const tx = await this.d.chain.getTx(r.commitOutpoint.txid);
+      if (!tx?.confirmed || tx.blockHeight === null) return;
+      tip ??= await this.d.chain.getTipHeight();
+      if (tip - tx.blockHeight + 1 < this.s.confirmations) return;
+      const at = this.d.clock.now().toISOString();
+      await this.move(r, 'member_review', {
+        detail: `commit confirmed in block ${tx.blockHeight}; awaiting ${this.s.approval.approvalQuorum} member approvals`,
+        txid: tx.txid,
+        patch: { reviewStartedAt: at },
+      });
+    });
+  }
+
+  /** member_review past the review SLA -> rescue_available: a silent club never strands funds. */
+  private async reviewTimeouts(): Promise<void> {
+    await this.each('review-timeout', ['member_review'], async (r) => {
+      if (!r.reviewStartedAt) return;
+      if (this.nowMs() < Date.parse(reviewDeadline(r.reviewStartedAt, this.s.approval))) return;
+      await this.move(r, 'rescue_available', {
+        detail: `no member decision within ${this.s.approval.reviewSlaSeconds}s; self-rescue (no parent) is available`,
+      });
     });
   }
 
@@ -253,8 +290,11 @@ export class MintWorker {
 
   private async rescueTimeouts(): Promise<void> {
     const after = this.s.collection.rescueAfterSeconds * 1000;
-    await this.each('rescue-timeout', ['paid', 'queued', 'revealing'], async (r) => {
-      if (!r.paidAt || this.nowMs() - Date.parse(r.paidAt) < after) return;
+    await this.each('rescue-timeout', ['paid', 'confirming', 'queued', 'revealing'], async (r) => {
+      // Before approval the clock runs from payment; after it, from the approval (the members'
+      // deliberation time is not the lane's fault).
+      const since = r.approvedAt ?? r.paidAt;
+      if (!since || this.nowMs() - Date.parse(since) < after) return;
       if (r.status === 'revealing') {
         if (r.revealTxid && (await this.d.chain.getTx(r.revealTxid))) {
           await this.onRevealSeen(r, null);
@@ -411,7 +451,7 @@ export class MintWorker {
   }
 
   private async watchRescues(): Promise<void> {
-    await this.each('watch-rescue', ['rescue_available'], async (r) => {
+    await this.each('watch-rescue', RESCUE_OFFERED, async (r) => {
       if (!r.commitOutpoint) return;
       const spends = await this.d.chain.getTxOutspends(r.commitOutpoint.txid);
       const spend = spends?.[r.commitOutpoint.vout];

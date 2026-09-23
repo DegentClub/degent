@@ -22,7 +22,7 @@ function record(id: string, status: OrderRecord['status'] = 'awaiting_content', 
     commitOutpoint: null, revealTxid: null, inscriptionId: null, rescued: false, serviceFeeAddress: null,
     timeline: [{ status, at: createdAt }], createdAt, updatedAt: createdAt, version: 0, expiresAt: createdAt,
     orderTokenHash: 'c'.repeat(64), hasReveal: false, paidAt: null, queuedAt: null, revealHex: null, revealWeight: null,
-    broadcastAttempts: 0, lastError: null, parentOutpoint: null,
+    broadcastAttempts: 0, lastError: null, parentOutpoint: null, reviewStartedAt: null, approvedAt: null, degentNumber: null,
   };
 }
 

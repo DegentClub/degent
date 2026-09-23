@@ -22,7 +22,8 @@ import type {
 import { BLOCK_INTERVAL_MINUTES, isSha256Hex, sha256Hex, tierForSize, validateContentMeta } from '@bsh/degent-mint-sdk';
 import { checkRecipientAddress } from '../domain/address.js';
 import { DomainError, conflict, invalid, notFound } from '../domain/errors.js';
-import { IN_FLIGHT, WAITING_FOR_LANE, toPublicOrder, type OrderRecord } from '../domain/order.js';
+import { approvalInfo } from '../domain/approval.js';
+import { IN_FLIGHT, RESCUE_OFFERED, WAITING_FOR_LANE, toPublicOrder, type OrderRecord } from '../domain/order.js';
 import { computeQuote, inscriptionContent } from '../domain/quote.js';
 import { transition as checkTransition } from '../domain/state-machine.js';
 import type { ArtReview } from '../ports/art-review.js';
@@ -32,6 +33,7 @@ import type { ContentStore } from '../ports/content-store.js';
 import type { EventBus } from '../ports/event-bus.js';
 import type { OrderStore } from '../ports/order-store.js';
 import type { RevealVault } from '../ports/reveal-vault.js';
+import type { VoteStore } from '../ports/vote-store.js';
 import type { MintSettings } from './settings.js';
 
 export interface OrderServiceDeps {
@@ -42,12 +44,14 @@ export interface OrderServiceDeps {
   review: ArtReview;
   events: EventBus;
   clock: Clock;
+  votes: VoteStore;
   chain?: ChainPort;
   newId?: () => string;
   newToken?: () => string;
 }
 
 const hashToken = (t: string) => createHash('sha256').update(t, 'utf8').digest();
+const APPROVED_COUNT_KEY = 'approval.approvedCount';
 
 export class OrderService {
   constructor(private readonly d: OrderServiceDeps) {}
@@ -173,8 +177,23 @@ export class OrderService {
     };
   }
 
+  /** Public tally, present from member_review on (null before the commit is confirmed). */
+  async approvalOf(r: OrderRecord) {
+    if (!r.reviewStartedAt) return null;
+    return approvalInfo(r, await this.d.votes.listByOrder(r.id), this.d.settings.approval);
+  }
+
   async publicOrder(r: OrderRecord): Promise<Order> {
-    return toPublicOrder(r, await this.queueInfo(r));
+    return toPublicOrder(r, await this.queueInfo(r), await this.approvalOf(r));
+  }
+
+  /** Persisted, monotonic count of approved orders: the next Degent number is gallerySize + count + 1. */
+  async approvedCount(): Promise<number> {
+    return Number((await this.d.store.getMeta(APPROVED_COUNT_KEY)) ?? '0');
+  }
+
+  async setApprovedCount(n: number): Promise<void> {
+    await this.d.store.setMeta(APPROVED_COUNT_KEY, String(n));
   }
 
   // ---------------------------------------------------------------- API use cases
@@ -255,6 +274,9 @@ export class OrderService {
       broadcastAttempts: 0,
       lastError: null,
       parentOutpoint: null,
+      reviewStartedAt: null,
+      approvedAt: null,
+      degentNumber: null,
     };
     await this.d.store.create(record);
     await this.d.events.publish({
@@ -367,7 +389,9 @@ export class OrderService {
 
   async getRescue(orderId: string, authorization: string | undefined): Promise<RescueResponse> {
     const r = await this.authorize(orderId, authorization);
-    if (r.status !== 'rescue_available')
+    // rescue_available (timeouts, policy refusal) and declined (the members said no: the user keeps
+    // their inscription without the parent link) both offer the parent-less reveal.
+    if (!RESCUE_OFFERED.includes(r.status))
       throw new DomainError('rescue_unavailable', 409, `rescue is not available in status ${r.status}`, { status: r.status });
     const psbt = await this.d.reveals.get(r.id);
     if (!psbt) throw new DomainError('internal', 500, 'stored reveal missing');

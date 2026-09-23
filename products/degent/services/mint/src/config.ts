@@ -3,7 +3,7 @@
  * and refuses unsafe combinations (mainnet with the in-memory dev signer, dev defaults off regtest).
  */
 import type { CollectionConfig, Network } from '@bsh/degent-mint-sdk';
-import { DEFAULT_CONFIG, MAX_UPLOAD_BYTES } from '@bsh/degent-mint-sdk';
+import { DEFAULT_APPROVAL_QUORUM, DEFAULT_CONFIG, DEFAULT_DECLINE_QUORUM, DEFAULT_REVIEW_SLA_SECONDS, GALLERY_SIZE, MAX_UPLOAD_BYTES } from '@bsh/degent-mint-sdk';
 import { DEFAULT_POLICY } from './domain/policy.js';
 import { addressKind } from './domain/address.js';
 import type { MintSettings } from './application/settings.js';
@@ -28,6 +28,12 @@ export interface MintConfig {
   workerIntervalMs: number;
   rateLimitPerMinute: number;
   trustProxy: boolean;
+  /** Roster JSON (the Gallery); relative paths resolve from the service directory. */
+  rosterFile: string;
+  holderRegistry: 'memory' | 'roster-chain';
+  /** Ed25519 session signing key (hex); null => regtest dev key. */
+  sessionKey: string | null;
+  sessionKid: string;
 }
 
 export class ConfigError extends Error {
@@ -160,6 +166,26 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
   const rescueAfterSeconds = int('RESCUE_AFTER_SECONDS', DEFAULT_CONFIG.rescueAfterSeconds, 600, 7 * 86_400);
   const quoteTtlSeconds = int('QUOTE_TTL_SECONDS', DEFAULT_CONFIG.quoteTtlSeconds, 60, 86_400);
 
+  // Member approval (ADR-0005)
+  const approvalQuorum = int('APPROVAL_QUORUM', DEFAULT_APPROVAL_QUORUM, 1, 100);
+  const declineQuorum = int('DECLINE_QUORUM', DEFAULT_DECLINE_QUORUM, 1, 100);
+  const reviewSlaSeconds = int('REVIEW_SLA_SECONDS', DEFAULT_REVIEW_SLA_SECONDS, 3600, 90 * 86_400);
+  const siwbDomain = str('SIWB_DOMAIN') ?? (dev ? 'localhost:8787' : null);
+  if (!siwbDomain) problems.push(`SIWB_DOMAIN is required on ${net} (the host holder sign-ins are bound to)`);
+  else if (!/^[a-z0-9.-]+(?::\d{1,5})?$/.test(siwbDomain)) problems.push('SIWB_DOMAIN must be a lower-case host[:port]');
+  const siwbUri = str('SIWB_URI') ?? (dev ? `http://${siwbDomain}` : null);
+  const sessionKey = str('SESSION_KEY');
+  if (sessionKey && !/^[0-9a-fA-F]{64}$/.test(sessionKey)) problems.push('SESSION_KEY must be 32 bytes of hex (64 characters)');
+  if (!sessionKey && !dev) problems.push(`SESSION_KEY is required on ${net} (dev default is regtest-only)`);
+  const sessionKid = str('SESSION_KID') ?? 'k1';
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(sessionKid)) problems.push('SESSION_KID must be 1-64 of [A-Za-z0-9._-]');
+  const holderRaw = str('HOLDER_REGISTRY') ?? (dev ? 'memory' : 'roster-chain');
+  if (holderRaw !== 'memory' && holderRaw !== 'roster-chain') problems.push('HOLDER_REGISTRY must be "memory" or "roster-chain"');
+  if (holderRaw === 'memory' && net === 'mainnet') problems.push('HOLDER_REGISTRY=memory is dev-only and refused on mainnet');
+  const galleryInscriptionId = str('GALLERY_INSCRIPTION_ID');
+  if (galleryInscriptionId && !/^[0-9a-f]{64}i\d+$/.test(galleryInscriptionId)) problems.push('GALLERY_INSCRIPTION_ID must look like <txid>i<index>');
+  const ordPublicUrl = url('ORD_PUBLIC_URL', ordUrl ?? 'https://ordinals.com');
+
   const out: MintConfig = {
     settings: {
       network: net,
@@ -186,6 +212,16 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
           block: { ...DEFAULT_POLICY.bands.block, minFeeRate },
         },
       },
+      approval: { approvalQuorum, declineQuorum, reviewSlaSeconds, gallerySize: GALLERY_SIZE },
+      auth: {
+        domain: siwbDomain ?? 'localhost:8787',
+        uri: siwbUri,
+        challengeTtlSeconds: int('SIWB_CHALLENGE_TTL_SECONDS', 300, 30, 3600),
+        sessionTtlSeconds: int('SESSION_TTL_SECONDS', 3600, 60, 30 * 86_400),
+        audience: 'degent',
+      },
+      ordPublicUrl: ordPublicUrl ?? 'https://ordinals.com',
+      galleryInscriptionId,
     },
     port: int('PORT', 8787, 1, 65_535),
     host: str('HOST') ?? '127.0.0.1',
@@ -205,6 +241,10 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
     workerIntervalMs: int('WORKER_INTERVAL_MS', 15_000, 1_000, 600_000),
     rateLimitPerMinute: int('RATE_LIMIT_PER_MINUTE', 60, 1, 100_000),
     trustProxy: str('TRUST_PROXY') === 'true',
+    rosterFile: str('ROSTER_FILE') ?? 'data/roster.json',
+    holderRegistry: holderRaw === 'roster-chain' ? 'roster-chain' : 'memory',
+    sessionKey,
+    sessionKid,
   };
   if (problems.length) throw new ConfigError(problems);
   return out;

@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { ORDER_STATUSES } from '@bsh/degent-mint-sdk';
-import { api, browserMintToPayment, fundCommit, makeHarness } from './fakes/harness.js';
+import { api, browserMintToPayment, fundAndApprove, fundToReview, makeHarness, signIn, signVote } from './fakes/harness.js';
 
 const root = new URL('../../../../../', import.meta.url).pathname;
 const openapi = parse(readFileSync(join(root, 'contracts/openapi/degent-mint.yaml'), 'utf8'));
@@ -95,15 +95,33 @@ describe('OpenAPI contract', () => {
     await expectOk('get', '/v1/queue', '/v1/queue', 200);
     const b = await browserMintToPayment(h);
     await expectOk('get', `/v1/orders/${b.orderId}`, '/v1/orders/{id}', 200);
-    fundCommit(h, b);
-    await h.worker.tick();
+    await fundToReview(h, b);
     await expectOk('get', `/v1/orders/${b.orderId}`, '/v1/orders/{id}', 200);
+    await expectOk('get', `/v1/orders/${b.orderId}/votes`, '/v1/orders/{id}/votes', 200);
+    // holder sign-in, review queue, a vote
+    const address = (await import('./fakes/harness.js')).regtestAddress(101);
+    const ch = await expectOk('post', '/v1/auth/challenge', '/v1/auth/challenge', 200, { json: { address } });
+    const { signBip322Simple } = await import('@bsh/identity');
+    const signature = signBip322Simple(new Uint8Array(32).fill(101), 'p2tr', ch.body.message);
+    const v = await expectOk('post', '/v1/auth/verify', '/v1/auth/verify', 200, { json: { address, message: ch.body.message, signature } });
+    await expectOk('get', '/v1/review', '/v1/review', 200, { token: v.body.token });
+    const order = (await api(h, 'GET', `/v1/orders/${b.orderId}`)).body;
+    await expectOk('post', `/v1/orders/${b.orderId}/votes`, '/v1/orders/{id}/votes', 200, { json: signVote(101, order, 'approve'), token: v.body.token });
+    await expectOk('get', `/v1/orders/${b.orderId}`, '/v1/orders/{id}', 200);
+    void signIn;
+    // register + explorer + stats
+    await expectOk('get', '/v1/register', '/v1/register', 200);
+    await expectOk('get', '/v1/register/1', '/v1/register/{n}', 200);
+    await expectOk('get', `/v1/register/holder/${address}`, '/v1/register/holder/{address}', 200);
+    await expectOk('get', `/v1/register/verify/${h.roster[0]!.inscriptionId}`, '/v1/register/verify/{inscriptionId}', 200);
+    await expectOk('get', '/v1/explorer?limit=2&sort=bytes&order=desc', '/v1/explorer', 200);
+    await expectOk('get', '/v1/stats', '/v1/stats', 200);
     const e = await api(h, 'GET', `/v1/orders/${b.orderId}/rescue`, { token: b.token });
     errs.push(...check(e.body, schemas.Error));
     h.clock.advance(7 * 3600);
     // one more order to reach rescue_available
     const c = await browserMintToPayment(h, { recipientSeed: 3 });
-    fundCommit(h, c);
+    await fundAndApprove(h, c);
     h.broadcasters.standard.mode = 'retryable';
     await h.worker.tick();
     h.clock.advance(7 * 3600);
@@ -125,7 +143,7 @@ describe('AsyncAPI contract', () => {
   it('every emitted event validates against OrderStatusEvent', async () => {
     const h = makeHarness();
     const b = await browserMintToPayment(h);
-    fundCommit(h, b);
+    await fundAndApprove(h, b);
     await h.worker.tick();
     h.chain.mine();
     await h.worker.tick();
@@ -143,6 +161,14 @@ describe('AsyncAPI contract', () => {
 describe('degent.mint.order.{status} stays compatible with the platform topic (deps/scribbit/contracts/asyncapi/platform-events.yaml)', () => {
   // The platform schema is canonical for the shared topic; this contract's OrderStatusEvent is the producer's
   // view and must not drift from it. Both files are plain YAML with local $refs only.
+  // ADR-0005 added statuses here first: our enum must be a SUPERSET of the platform's, and the only extra
+  // members allowed are the ones the platform PR listed under ADR-0005 "Follow-ups". `pnpm contracts:diff`
+  // prints the delta; once the pin carries them the sets are equal.
+  const ADR_0005_ADDITIONS = ['confirming', 'member_review', 'declined'];
+  const superset = (ours: unknown[], theirs: unknown[], what: string) => {
+    expect(theirs.filter((x) => !ours.includes(x)), `${what}: platform values missing here`).toEqual([]);
+    expect(ours.filter((x) => !theirs.includes(x) && !ADR_0005_ADDITIONS.includes(x as string)), `${what}: unexpected extra values`).toEqual([]);
+  };
   const deref = (doc: any, n: any): any =>
     n?.$ref ? deref(doc, n.$ref.replace(/^#\//, '').split('/').reduce((x: any, k: string) => x?.[k], doc)) : n;
   const ours = asyncapi.channels.orderStatus;
@@ -153,16 +179,17 @@ describe('degent.mint.order.{status} stays compatible with the platform topic (d
   const enumOf = (doc: any, node: any): unknown[] =>
     (deref(doc, node).enum ?? deref(doc, node).oneOf?.flatMap((b: any) => deref(doc, b).enum ?? (b.type === 'null' ? [null] : []))) as unknown[];
 
-  it('the platform declares the channel with the same address and status parameter enum', () => {
+  it('the platform declares the channel with the same address; our status parameter enum is a superset of its enum', () => {
     expect(theirs).toBeDefined();
-    expect(theirs.parameters.status.enum).toEqual(ours.parameters.status.enum);
-    expect(theirs.parameters.status.enum).toEqual([...ORDER_STATUSES]);
+    superset(ours.parameters.status.enum, theirs.parameters.status.enum, 'channel status parameter');
+    expect(ours.parameters.status.enum).toEqual([...ORDER_STATUSES]);
   });
 
-  it('same required fields, same property set, same status / previousStatus / network / lane enums', () => {
+  it('same required fields, same property set, superset status / previousStatus enums, same network / lane enums', () => {
     expect([...ourEvent.required].sort()).toEqual([...theirEvent.required].sort());
     expect(Object.keys(ourEvent.properties).sort()).toEqual(Object.keys(theirEvent.properties).sort());
-    for (const k of ['status', 'previousStatus', 'network', 'lane']) {
+    for (const k of ['status', 'previousStatus']) superset(enumOf(asyncapi, ourEvent.properties[k]), enumOf(platformEvents, theirEvent.properties[k]), k);
+    for (const k of ['network', 'lane']) {
       expect(enumOf(asyncapi, ourEvent.properties[k]), k).toEqual(enumOf(platformEvents, theirEvent.properties[k]));
     }
     expect(ourEvent.properties.type.pattern).toBe(theirEvent.properties.type.pattern);
@@ -174,14 +201,19 @@ describe('degent.mint.order.{status} stays compatible with the platform topic (d
     for (const ex of examples) expect(check(ex.payload, theirEvent)).toEqual([]);
   });
 
-  it('every event the service emits validates against the platform schema', async () => {
+  it('every event the service emits validates against the platform schema, except the statuses the platform has not adopted yet', async () => {
     const h = makeHarness();
     const b = await browserMintToPayment(h);
-    fundCommit(h, b);
+    await fundAndApprove(h, b);
     await h.worker.tick();
     h.chain.mine();
     await h.worker.tick();
-    expect(h.events.events.length).toBeGreaterThanOrEqual(9);
-    for (const e of h.events.events) expect(check(e, theirEvent)).toEqual([]);
+    expect(h.events.events.length).toBeGreaterThanOrEqual(11);
+    const platformStatuses: unknown[] = enumOf(platformEvents, theirEvent.properties.status);
+    for (const e of h.events.events) {
+      const pending = [e.status, e.previousStatus].some((x) => ADR_0005_ADDITIONS.includes(x as string) && !platformStatuses.includes(x));
+      if (pending) continue;
+      expect(check(e, theirEvent)).toEqual([]);
+    }
   });
 });

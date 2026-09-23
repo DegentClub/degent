@@ -37,6 +37,9 @@ const testnetEnv = {
   COLLECTION_ADDRESS: addr('testnet'),
   REVEAL_ENCRYPTION_KEY: '44'.repeat(32),
   CORS_ORIGINS: 'https://degent.club, https://staging.degent.club',
+  SIWB_DOMAIN: 'degent.club',
+  SESSION_KEY: '55'.repeat(32),
+  ROSTER_FILE: 'data/roster.json',
 };
 
 describe('loadConfig', () => {
@@ -50,11 +53,25 @@ describe('loadConfig', () => {
     expect(c.revealEncryptionKey).toBeNull();
     expect(c.corsOrigins).toEqual([]);
     expect(c.settings.collection.rescueAfterSeconds).toBe(21_600);
+    expect(c.settings.approval).toEqual({ approvalQuorum: 3, declineQuorum: 3, reviewSlaSeconds: 14 * 86_400, gallerySize: 4112 });
+    expect(c.settings.auth.domain).toBe('localhost:8787');
+    expect(c.holderRegistry).toBe('memory');
+  });
+
+  it('member approval settings are configurable and validated', () => {
+    const c = loadConfig({ ...testnetEnv, APPROVAL_QUORUM: '5', DECLINE_QUORUM: '2', REVIEW_SLA_SECONDS: '86400', HOLDER_REGISTRY: 'roster-chain' });
+    expect(c.settings.approval).toMatchObject({ approvalQuorum: 5, declineQuorum: 2, reviewSlaSeconds: 86_400 });
+    const p = problems({ ...testnetEnv, SIWB_DOMAIN: 'Degent.Club', SESSION_KEY: 'nope', HOLDER_REGISTRY: 'ord', REVIEW_SLA_SECONDS: '10' });
+    expect(p.join('\n')).toMatch(/SIWB_DOMAIN/);
+    expect(p.join('\n')).toMatch(/SESSION_KEY/);
+    expect(p.join('\n')).toMatch(/HOLDER_REGISTRY/);
+    expect(p.join('\n')).toMatch(/REVIEW_SLA_SECONDS/);
+    expect(problems({ ...testnetEnv, NETWORK: 'mainnet', HOLDER_REGISTRY: 'memory' }).join('\n')).toContain('HOLDER_REGISTRY=memory is dev-only');
   });
 
   it('fails fast listing every missing variable off regtest', () => {
     const p = problems({ NETWORK: 'testnet' });
-    for (const k of ['DATABASE_PATH', 'CONTENT_DIR', 'ESPLORA_URL', 'ORD_URL', 'PARENT_INSCRIPTION_ID', 'COLLECTION_ADDRESS', 'REVEAL_ENCRYPTION_KEY', 'PARENT_KEY_FILE'])
+    for (const k of ['DATABASE_PATH', 'CONTENT_DIR', 'ESPLORA_URL', 'ORD_URL', 'PARENT_INSCRIPTION_ID', 'COLLECTION_ADDRESS', 'REVEAL_ENCRYPTION_KEY', 'PARENT_KEY_FILE', 'SIWB_DOMAIN', 'SESSION_KEY'])
       expect(p.join('\n')).toContain(k);
   });
 
@@ -98,6 +115,8 @@ describe('buildRuntime (composition root)', () => {
     expect(rt.signer.collectionAddress()).toBe(addr('testnet'));
     const res = await rt.app.request('/v1/config');
     expect((await res.json()).network).toBe('testnet');
+    const reg = await rt.app.request('/v1/register');
+    expect((await reg.json()).count).toBe(4112);
     rt.close();
   });
 

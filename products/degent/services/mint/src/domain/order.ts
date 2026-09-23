@@ -6,9 +6,9 @@
  * can be restructured by whoever holds it before broadcast, so it lives encrypted in the separate
  * RevealVault (ports/reveal-vault.ts) and is never logged, emitted or returned.
  */
-import type { Lane, Order, OrderStatus, QueueInfo } from '@bsh/degent-mint-sdk';
+import type { ApprovalInfo, Lane, Order, OrderStatus, QueueInfo } from '@bsh/degent-mint-sdk';
 
-export interface OrderRecord extends Omit<Order, 'queue'> {
+export interface OrderRecord extends Omit<Order, 'queue' | 'approval'> {
   lane: Lane;
   /** Optimistic concurrency: incremented on every save; stores reject stale writes. */
   version: number;
@@ -27,10 +27,14 @@ export interface OrderRecord extends Omit<Order, 'queue'> {
   lastError: string | null;
   /** Parent outpoint this order's reveal spends (set while revealing / after). */
   parentOutpoint: { txid: string; vout: number } | null;
+  /** When member_review began (commit confirmed); the review SLA counts from here. */
+  reviewStartedAt: string | null;
+  /** When the approval quorum was reached (also the lane ordering key via queuedAt). */
+  approvedAt: string | null;
 }
 
 /** Public projection. Never includes the PSBT, raw hex or internal bookkeeping. */
-export function toPublicOrder(r: OrderRecord, queue: QueueInfo | null): Order {
+export function toPublicOrder(r: OrderRecord, queue: QueueInfo | null, approval: ApprovalInfo | null): Order {
   return {
     id: r.id,
     network: r.network,
@@ -49,6 +53,8 @@ export function toPublicOrder(r: OrderRecord, queue: QueueInfo | null): Order {
     rescued: r.rescued,
     serviceFeeAddress: r.serviceFeeAddress,
     queue,
+    approval,
+    degentNumber: r.degentNumber,
     timeline: r.timeline,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
@@ -62,6 +68,9 @@ export const ACTIVE_STATUSES: readonly OrderStatus[] = [
   'approved',
   'awaiting_payment',
   'paid',
+  'confirming',
+  'member_review',
+  'declined',
   'queued',
   'revealing',
   'revealed',
@@ -70,6 +79,13 @@ export const ACTIVE_STATUSES: readonly OrderStatus[] = [
   'rescue_available',
 ];
 
-/** States in which an order occupies (or waits for) a lane slot. */
-export const WAITING_FOR_LANE: readonly OrderStatus[] = ['paid', 'queued'];
+/**
+ * States in which an order occupies (or waits for) a lane slot. Orders in member_review are not
+ * counted: they only take a slot once the members approve (ADR-0005), so the queue ETA stays honest.
+ */
+export const WAITING_FOR_LANE: readonly OrderStatus[] = ['queued'];
+/** States in which the members can still decide (votes accepted). */
+export const IN_MEMBER_REVIEW: readonly OrderStatus[] = ['member_review'];
+/** States that offer self-rescue right now. */
+export const RESCUE_OFFERED: readonly OrderStatus[] = ['rescue_available', 'declined'];
 export const IN_FLIGHT: readonly OrderStatus[] = ['revealing', 'revealed'];

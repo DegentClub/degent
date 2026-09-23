@@ -6,7 +6,9 @@ import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
 import type { ApiErrorBody, FeesResponse, HealthResponse, ServiceConfig } from '@bsh/degent-mint-sdk';
+import type { ApprovalService } from './application/approval-service.js';
 import type { OrderService } from './application/order-service.js';
+import type { RegisterService } from './application/register-service.js';
 import type { Logger } from './application/logger.js';
 import { silentLogger } from './application/logger.js';
 import { DomainError, StaleWriteError } from './domain/errors.js';
@@ -18,6 +20,8 @@ import type { Clock } from './ports/clock.js';
 
 export interface AppOptions {
   orders: OrderService;
+  approval: ApprovalService;
+  register: RegisterService;
   fees: FeePort;
   chain?: ChainPort;
   parents?: ParentUtxoProvider;
@@ -231,6 +235,34 @@ export function createApp(o: AppOptions): Hono {
   app.get('/v1/orders/:id/rescue', async (c) =>
     c.json(await o.orders.getRescue(orderId(c), c.req.header('authorization'))),
   );
+
+  // ---------------------------------------------------------------- member approval (ADR-0005)
+
+  app.post('/v1/auth/challenge', bodyLimit({ maxSize: JSON_BODY_LIMIT, onError: tooLarge(JSON_BODY_LIMIT) }), async (c) =>
+    c.json(await o.approval.challenge(await readJson(c))),
+  );
+  app.post('/v1/auth/verify', bodyLimit({ maxSize: JSON_BODY_LIMIT, onError: tooLarge(JSON_BODY_LIMIT) }), async (c) =>
+    c.json(await o.approval.verify(await readJson(c))),
+  );
+  app.get('/v1/review', async (c) => {
+    const session = await o.approval.authorizeHolder(c.req.header('authorization'));
+    return c.json(await o.approval.reviewQueue(session));
+  });
+  app.get('/v1/orders/:id/votes', async (c) => c.json(await o.approval.votes(orderId(c))));
+  app.post('/v1/orders/:id/votes', bodyLimit({ maxSize: JSON_BODY_LIMIT, onError: tooLarge(JSON_BODY_LIMIT) }), async (c) => {
+    const id = orderId(c);
+    const session = await o.approval.authorizeHolder(c.req.header('authorization'));
+    return c.json(await o.approval.castVote(id, session, await readJson(c)));
+  });
+
+  // ---------------------------------------------------------------- the Register (public, read-only)
+
+  app.get('/v1/register', async (c) => c.json(await o.register.summary()));
+  app.get('/v1/register/holder/:address', async (c) => c.json(await o.register.holder(c.req.param('address'))));
+  app.get('/v1/register/verify/:inscriptionId', async (c) => c.json(await o.register.verify(c.req.param('inscriptionId'))));
+  app.get('/v1/register/:n', async (c) => c.json(await o.register.member(c.req.param('n'))));
+  app.get('/v1/explorer', async (c) => c.json(await o.register.explorer(c.req.query())));
+  app.get('/v1/stats', async (c) => c.json(await o.register.stats()));
 
   return app;
 }

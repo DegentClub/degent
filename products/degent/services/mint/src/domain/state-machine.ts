@@ -4,10 +4,15 @@
  *
  *   awaiting_content -> reviewing -> approved | rejected
  *   approved -> awaiting_payment (half-signed reveal verified + stored)
- *   awaiting_payment -> paid (commit seen) -> queued (lane) -> revealing -> revealed (mempool)
+ *   awaiting_payment -> paid (commit seen) -> confirming (commit unconfirmed)
+ *   confirming -> member_review (commit confirmed; existing members vote, ADR-0005)
+ *   member_review -> queued (approval quorum; Degent number assigned) | declined (decline quorum)
+ *   queued (lane) -> revealing -> revealed (mempool)
  *   revealed -> confirmed -> verified (ord content hash matches) -> delivered
  *   any pre-paid state -> expired
- *   paid | queued | revealing -> rescue_available (after rescueAfterSeconds)
+ *   paid | confirming | queued | revealing -> rescue_available (after rescueAfterSeconds)
+ *   member_review -> rescue_available (after the review SLA, reviewSlaSeconds: no funds stranded)
+ *   declined -> revealed (the user self-rescued: inscription without the parent, not a Degent)
  *
  * Service-specific edges beyond the ADR diagram, each with a reason:
  *   revealing -> queued          broadcast failed; parent lease released, retried next tick
@@ -27,7 +32,10 @@ export const TRANSITIONS: Readonly<Record<OrderStatus, readonly OrderStatus[]>> 
   approved: ['awaiting_payment', 'expired'],
   rejected: [],
   awaiting_payment: ['paid', 'expired', 'failed'],
-  paid: ['queued', 'rescue_available'],
+  paid: ['confirming', 'rescue_available'],
+  confirming: ['member_review', 'rescue_available'],
+  member_review: ['queued', 'declined', 'rescue_available'],
+  declined: ['revealed'],
   queued: ['revealing', 'rescue_available'],
   revealing: ['revealed', 'queued', 'rescue_available'],
   revealed: ['confirmed'],
@@ -41,6 +49,8 @@ export const TRANSITIONS: Readonly<Record<OrderStatus, readonly OrderStatus[]>> 
 
 /** States in which the user has not paid yet (ADR: "any pre-paid state -> expired"). */
 export const PRE_PAID: readonly OrderStatus[] = ['awaiting_content', 'reviewing', 'approved', 'awaiting_payment'];
+/** States between payment and the lane where a timeout may hand the order to self-rescue. */
+export const RESCUABLE: readonly OrderStatus[] = ['paid', 'confirming', 'member_review', 'queued', 'revealing'];
 /** Terminal states: no outgoing edges. */
 export const TERMINAL: readonly OrderStatus[] = (Object.keys(TRANSITIONS) as OrderStatus[]).filter(
   (s) => TRANSITIONS[s].length === 0,

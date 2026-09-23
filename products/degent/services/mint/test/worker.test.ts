@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Order } from '@bsh/degent-mint-sdk';
-import { api, browserCreate, browserMintToPayment, browserUpload, fundCommit, makeHarness, regtestAddress, type Harness } from './fakes/harness.js';
+import { api, browserCreate, browserMintToPayment, browserUpload, fundAndApprove, fundCommit, fundToReview, makeHarness, membersApprove, regtestAddress, type Harness } from './fakes/harness.js';
 import { png } from './fakes/images.js';
 
 const status = async (h: Harness, id: string) => ((await api(h, 'GET', `/v1/orders/${id}`)).body as Order).status;
@@ -29,9 +29,55 @@ describe('worker: expiry and payment', () => {
     h.clock.advance(1000);
     await h.worker.tick();
     expect(await status(h, b.orderId)).toBe('expired');
-    fundCommit(h, b);
+    await fundAndApprove(h, b);
     await h.worker.tick();
     expect(await status(h, b.orderId)).toBe('revealed');
+  });
+
+  it('an unconfirmed commit waits in confirming; the configured confirmations open member review', async () => {
+    const h = makeHarness({ settings: { confirmations: 2 } });
+    const b = await browserMintToPayment(h);
+    fundCommit(h, b);
+    await h.worker.tick();
+    expect(await status(h, b.orderId)).toBe('confirming');
+    h.chain.mine();
+    await h.worker.tick();
+    expect(await status(h, b.orderId)).toBe('confirming');
+    h.chain.mine();
+    await h.worker.tick();
+    expect(await status(h, b.orderId)).toBe('member_review');
+    const o = (await api(h, 'GET', `/v1/orders/${b.orderId}`)).body as Order;
+    expect(o.approval!.reviewStartedAt).toBe(h.clock.now().toISOString());
+    expect(o.approval!.reviewDeadline).toBe(new Date(h.clock.now().getTime() + 14 * 86_400 * 1000).toISOString());
+  });
+
+  it('a commit stuck unconfirmed past the rescue timeout offers self-rescue', async () => {
+    const h = makeHarness();
+    const b = await browserMintToPayment(h);
+    fundCommit(h, b);
+    await h.worker.tick();
+    h.clock.advance(6 * 3600 + 1);
+    await h.worker.tick();
+    expect(await status(h, b.orderId)).toBe('rescue_available');
+  });
+
+  it('the rescue clock restarts at approval: 14 days of review do not count against the lane', async () => {
+    const h = makeHarness();
+    const b = await browserMintToPayment(h);
+    await fundToReview(h, b);
+    h.clock.advance(10 * 86_400);
+    await h.worker.tick();
+    expect(await status(h, b.orderId)).toBe('member_review');
+    h.broadcasters.standard.mode = 'retryable';
+    await membersApprove(h, b.orderId);
+    await h.worker.tick();
+    expect(await status(h, b.orderId)).toBe('revealing');
+    h.clock.advance(6 * 3600 - 10);
+    await h.worker.tick();
+    expect(await status(h, b.orderId)).toBe('revealing');
+    h.clock.advance(20);
+    await h.worker.tick();
+    expect(await status(h, b.orderId)).toBe('rescue_available');
   });
 
   it('service fee not paid -> rescue offered, never co-signed', async () => {
@@ -51,8 +97,8 @@ describe('worker: lanes', () => {
     const h = makeHarness();
     const a = await browserMintToPayment(h, { bytes: blockArt(1), recipientSeed: 1 });
     const b = await browserMintToPayment(h, { bytes: blockArt(2), recipientSeed: 2 });
-    fundCommit(h, a);
-    fundCommit(h, b);
+    await fundAndApprove(h, a);
+    await fundAndApprove(h, b);
     await h.worker.tick();
     expect(await status(h, a.orderId)).toBe('revealed');
     expect(await status(h, b.orderId)).toBe('queued');
@@ -72,7 +118,7 @@ describe('worker: lanes', () => {
     const h = makeHarness(); // standardConcurrency = 3
     const orders = [];
     for (let i = 0; i < 4; i++) orders.push(await browserMintToPayment(h, { recipientSeed: 10 + i }));
-    for (const o of orders) fundCommit(h, o);
+    for (const o of orders) await fundAndApprove(h, o);
     await h.worker.tick();
     const st = await Promise.all(orders.map((o) => status(h, o.orderId)));
     expect(st.filter((s) => s === 'revealed')).toHaveLength(3);
@@ -87,11 +133,14 @@ describe('worker: lanes', () => {
   it('standard reveals never chain on an unconfirmed block-lane parent', async () => {
     const h = makeHarness();
     const blk = await browserMintToPayment(h, { bytes: blockArt(3), recipientSeed: 3 });
-    fundCommit(h, blk);
+    await fundAndApprove(h, blk);
     await h.worker.tick();
     expect(await status(h, blk.orderId)).toBe('revealed');
     const std = await browserMintToPayment(h, { recipientSeed: 4 });
-    fundCommit(h, std);
+    // fundAndApprove mines nothing: the block reveal stays unconfirmed while the standard order is approved.
+    fundCommit(h, std, { confirmed: true });
+    await h.worker.tick();
+    await membersApprove(h, std.orderId);
     await h.worker.tick();
     expect(await status(h, std.orderId)).toBe('queued');
     h.chain.mine();
@@ -104,7 +153,7 @@ describe('worker: broadcast failures and recovery', () => {
   it('retryable failure keeps the lease and rebroadcasts the same tx', async () => {
     const h = makeHarness();
     const b = await browserMintToPayment(h);
-    fundCommit(h, b);
+    await fundAndApprove(h, b);
     h.broadcasters.standard.mode = 'retryable';
     await h.worker.tick();
     await h.worker.tick();
@@ -122,10 +171,10 @@ describe('worker: broadcast failures and recovery', () => {
   it('permanent rejection releases the lease and requeues', async () => {
     const h = makeHarness();
     const b = await browserMintToPayment(h);
-    fundCommit(h, b);
+    await fundAndApprove(h, b);
     h.broadcasters.standard.mode = 'permanent';
     const rep = await h.worker.tick();
-    expect(rep.transitions.map((t) => t.to)).toEqual(['paid', 'queued', 'revealing', 'queued']);
+    expect(rep.transitions.map((t) => t.to)).toEqual(['revealing', 'queued']);
     expect(await h.parents.leasedBy()).toBeNull();
     expect((await h.parents.current())!.txid).toBe(h.parentTxid);
     h.broadcasters.standard.mode = 'ok';
@@ -136,7 +185,7 @@ describe('worker: broadcast failures and recovery', () => {
   it('a reveal evicted from the mempool is re-pushed', async () => {
     const h = makeHarness();
     const b = await browserMintToPayment(h);
-    fundCommit(h, b);
+    await fundAndApprove(h, b);
     await h.worker.tick();
     const rec = await h.store.get(b.orderId);
     h.chain.evict(rec!.revealTxid!);
@@ -148,7 +197,10 @@ describe('worker: broadcast failures and recovery', () => {
   it('waits for the configured confirmations', async () => {
     const h = makeHarness({ settings: { confirmations: 2 } });
     const b = await browserMintToPayment(h);
-    fundCommit(h, b);
+    fundCommit(h, b, { confirmed: true });
+    h.chain.mine(); // second confirmation of the commit
+    await h.worker.tick();
+    await membersApprove(h, b.orderId);
     await h.worker.tick();
     h.chain.mine();
     await h.worker.tick();
@@ -170,7 +222,7 @@ describe('worker: broadcast failures and recovery', () => {
   it('emits one degent.mint.order.* event per transition with previousStatus', async () => {
     const h = makeHarness();
     const b = await browserMintToPayment(h);
-    fundCommit(h, b);
+    await fundAndApprove(h, b);
     await h.worker.tick();
     const evs = h.events.events.filter((e) => e.orderId === b.orderId);
     expect(evs.map((e) => [e.previousStatus, e.status])).toEqual([
@@ -179,7 +231,9 @@ describe('worker: broadcast failures and recovery', () => {
       ['reviewing', 'approved'],
       ['approved', 'awaiting_payment'],
       ['awaiting_payment', 'paid'],
-      ['paid', 'queued'],
+      ['paid', 'confirming'],
+      ['confirming', 'member_review'],
+      ['member_review', 'queued'],
       ['queued', 'revealing'],
       ['revealing', 'revealed'],
     ]);

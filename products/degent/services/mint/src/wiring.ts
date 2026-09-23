@@ -3,13 +3,22 @@
  * with a regtest config to prove the wiring is sound.
  */
 import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { hexToBytes, bytesToHex } from '@noble/hashes/utils.js';
+import { InMemoryNonceStore, type NonceStore, type SigningKey } from '@bsh/identity';
 import { addressToScript } from '@bsh/inscription';
 import type { Hono } from 'hono';
 import { createApp } from './app.js';
 import type { MintConfig } from './config.js';
 import { ConfigError } from './config.js';
 import { OrderService } from './application/order-service.js';
+import { ApprovalService } from './application/approval-service.js';
+import { RegisterService } from './application/register-service.js';
+import { parseRoster } from './domain/roster.js';
+import { MemoryHolderRegistry } from './adapters/memory-holder-registry.js';
+import { RosterChainHolderRegistry } from './adapters/roster-chain-holder-registry.js';
+import { MemoryVoteStore, SqliteNonceStore, SqliteVoteStore } from './adapters/vote-stores.js';
 import { jsonLogger, type Logger } from './application/logger.js';
 import { MintWorker } from './worker.js';
 import { MemoryOrderStore } from './adapters/memory-order-store.js';
@@ -26,13 +35,23 @@ import { ClaudeArtReview } from './adapters/claude-art-review.js';
 import { MemoryEventBus, systemClock } from './adapters/system.js';
 import type { Broadcaster } from './ports/broadcaster.js';
 import type { ChainPort } from './ports/chain.js';
+import type { HolderRegistry } from './ports/holder-registry.js';
 import type { OrderStore } from './ports/order-store.js';
 import type { SecretBlobStore } from './ports/reveal-vault.js';
+import type { VoteStore } from './ports/vote-store.js';
+
+/** Regtest-only session key: never used off regtest (config refuses a missing SESSION_KEY there). */
+export const REGTEST_DEV_SESSION_KEY = '22'.repeat(32);
+
+const serviceDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 export interface Runtime {
   app: Hono;
   worker: MintWorker;
   orders: OrderService;
+  approval: ApprovalService;
+  register: RegisterService;
+  holders: HolderRegistry;
   parents: StoreParentUtxoProvider;
   chain: ChainPort;
   events: MemoryEventBus;
@@ -62,13 +81,19 @@ export function buildRuntime(cfg: MintConfig, log: Logger = jsonLogger()): Runti
 
   let store: OrderStore & Partial<SecretBlobStore>;
   let blobs: SecretBlobStore;
+  let votes: VoteStore;
+  let nonces: NonceStore;
   if (cfg.databasePath) {
     const sqlite = new SqliteOrderStore(cfg.databasePath);
     store = sqlite;
     blobs = sqlite;
+    votes = new SqliteVoteStore(sqlite.database);
+    nonces = new SqliteNonceStore(sqlite.database);
   } else {
     store = new MemoryOrderStore();
     blobs = new MemorySecretBlobStore();
+    votes = new MemoryVoteStore();
+    nonces = new InMemoryNonceStore();
   }
   const content = cfg.contentDir ? new FsContentStore(cfg.contentDir) : new MemoryContentStore();
   const reveals = new EncryptedRevealVault(blobs, cfg.revealEncryptionKey ?? REGTEST_DEV_REVEAL_KEY);
@@ -95,9 +120,27 @@ export function buildRuntime(cfg: MintConfig, log: Logger = jsonLogger()): Runti
 
   const events = new MemoryEventBus();
   const parents = new StoreParentUtxoProvider(store);
-  const orders = new OrderService({ settings, store, content, reveals, review, events, clock: systemClock, chain });
+  const orders = new OrderService({ settings, store, content, reveals, review, events, clock: systemClock, chain, votes });
+
+  // The Register: the Gallery roster plus holders from the chain (ADR-0005 §4).
+  const rosterPath = resolve(serviceDir, cfg.rosterFile);
+  const roster = parseRoster(JSON.parse(readFileSync(rosterPath, 'utf8')));
+  let holders: HolderRegistry;
+  if (cfg.holderRegistry === 'roster-chain') {
+    holders = new RosterChainHolderRegistry(roster, { esploraUrl: cfg.esploraUrl, ordUrl: cfg.ordUrl, clock: systemClock });
+  } else {
+    holders = new MemoryHolderRegistry();
+    log.warn('HOLDER_REGISTRY=memory: nobody is a member until addresses are added (dev only)', {});
+  }
+  const sessionKey: SigningKey = { kid: cfg.sessionKid, secretKey: hexToBytes(cfg.sessionKey ?? REGTEST_DEV_SESSION_KEY) };
+  if (!cfg.sessionKey) log.warn('using the regtest dev session key', {});
+  const approval = new ApprovalService({ orders, store, votes, holders, clock: systemClock, sessionKey, nonces, log });
+  const register = new RegisterService({ settings, roster, store, holders, clock: systemClock });
+
   const app = createApp({
     orders,
+    approval,
+    register,
     fees,
     chain,
     parents,
@@ -108,7 +151,7 @@ export function buildRuntime(cfg: MintConfig, log: Logger = jsonLogger()): Runti
     log,
   });
   const worker = new MintWorker({ orders, store, content, reveals, chain, parents, signer, broadcasters, clock: systemClock, log });
-  return { app, worker, orders, parents, chain, events, signer, close: () => store.close?.() };
+  return { app, worker, orders, approval, register, holders, parents, chain, events, signer, close: () => store.close?.() };
 }
 
 /** Seed the parent location from PARENT_OUTPOINT when the store has none yet. */

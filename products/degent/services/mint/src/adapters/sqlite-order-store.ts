@@ -95,6 +95,11 @@ export class SqliteOrderStore implements OrderStore, SecretBlobStore {
     this.db.prepare('DELETE FROM reveals WHERE order_id = ?').run(key);
   }
 
+  /** The underlying connection, for the vote and nonce stores that share this database file. */
+  get database(): DatabaseSync {
+    return this.db;
+  }
+
   close(): void {
     this.db.close();
   }

@@ -7,8 +7,14 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { p2tr } from '@scure/btc-signer';
 import { addressToScript, buildHalfSignedReveal, commitAddress, networkParams } from '@bsh/inscription';
-import type { CreateOrderResponse, Order, Tier } from '@bsh/degent-mint-sdk';
-import { DEFAULT_CONFIG, MAX_UPLOAD_BYTES, sha256Hex } from '@bsh/degent-mint-sdk';
+import { signBip322Simple } from '@bsh/identity';
+import type { AuthVerifyResponse, CreateOrderResponse, Order, Tier, VoteChoice, VotesResponse } from '@bsh/degent-mint-sdk';
+import { DEFAULT_APPROVAL_QUORUM, DEFAULT_CONFIG, DEFAULT_DECLINE_QUORUM, DEFAULT_REVIEW_SLA_SECONDS, GALLERY_SIZE, MAX_UPLOAD_BYTES, sha256Hex, voteReference, voteStatement } from '@bsh/degent-mint-sdk';
+import { ApprovalService } from '../../src/application/approval-service.js';
+import { RegisterService } from '../../src/application/register-service.js';
+import { MemoryHolderRegistry } from '../../src/adapters/memory-holder-registry.js';
+import { MemoryVoteStore } from '../../src/adapters/vote-stores.js';
+import type { RosterMember } from '../../src/domain/roster.js';
 import { createApp } from '../../src/app.js';
 import { OrderService } from '../../src/application/order-service.js';
 import type { MintSettings } from '../../src/application/settings.js';
@@ -31,9 +37,31 @@ export const NET = 'regtest' as const;
 export const TEST_KEY = '11'.repeat(32);
 export const PARENT_KEY = new Uint8Array(32).fill(7);
 
+export function regtestKey(seed: number): Uint8Array {
+  return new Uint8Array(32).fill(seed);
+}
+
 export function regtestAddress(seed: number): string {
-  const key = new Uint8Array(32).fill(seed);
-  return p2tr(schnorr.getPublicKey(key), undefined, networkParams(NET)).address!;
+  return p2tr(schnorr.getPublicKey(regtestKey(seed)), undefined, networkParams(NET)).address!;
+}
+
+/** Club members for tests: seeds 101.. hold Gallery Degents #1.. (one each), seed 200 holds #100 and #101. */
+export const MEMBER_SEEDS = [101, 102, 103, 104, 105] as const;
+export const SESSION_KEY = { kid: 'test', secretKey: new Uint8Array(32).fill(9) };
+export const SIWB_DOMAIN = 'degent.club';
+
+/** A tiny Gallery roster (5 members) so register tests do not need the 1 MB data file. */
+export function tinyRoster(): RosterMember[] {
+  return [1, 2, 3, 4, 5].map((n) => ({
+    n,
+    inscriptionId: `${sha256Hex(new TextEncoder().encode(`roster-${n}`))}i0`,
+    inscriptionNumber: 93_000_000 + n,
+    sat: 1_000_000_000_000 + n,
+    sizeKb: 300 + n,
+    bytes: (300 + n) * 1024,
+    height: n === 1 ? null : 880_000 + n,
+    timestamp: n === 1 ? null : new Date(Date.UTC(2025, 0, 1 + n * 8)).toISOString(),
+  }));
 }
 
 export function fakeTxid(n: number): string {
@@ -46,6 +74,7 @@ export interface HarnessOptions {
   rateLimit?: { windowMs: number; max: number };
   settings?: Partial<MintSettings>;
   parentValue?: bigint;
+  roster?: RosterMember[];
 }
 
 export function makeHarness(opts: HarnessOptions = {}) {
@@ -72,6 +101,10 @@ export function makeHarness(opts: HarnessOptions = {}) {
     confirmations: 1,
     latePaymentWindowSeconds: 86_400,
     policy,
+    approval: { approvalQuorum: DEFAULT_APPROVAL_QUORUM, declineQuorum: DEFAULT_DECLINE_QUORUM, reviewSlaSeconds: DEFAULT_REVIEW_SLA_SECONDS, gallerySize: GALLERY_SIZE },
+    auth: { domain: SIWB_DOMAIN, uri: null, challengeTtlSeconds: 300, sessionTtlSeconds: 3600, audience: 'degent' },
+    ordPublicUrl: 'https://ord.test',
+    galleryInscriptionId: null,
     ...opts.settings,
   };
   const store = new MemoryOrderStore();
@@ -80,6 +113,11 @@ export function makeHarness(opts: HarnessOptions = {}) {
   const reveals = new EncryptedRevealVault(blobs, TEST_KEY);
   const events = new MemoryEventBus();
   const review = opts.review ?? new RulesArtReview(settings.collection);
+  const votes = new MemoryVoteStore();
+  const holders = new MemoryHolderRegistry();
+  MEMBER_SEEDS.forEach((seed, i) => holders.set(regtestAddress(seed), [i + 1]));
+  holders.set(regtestAddress(200), [100, 101]);
+  const roster = opts.roster ?? tinyRoster();
   let n = 0;
   const orders = new OrderService({
     settings,
@@ -90,8 +128,11 @@ export function makeHarness(opts: HarnessOptions = {}) {
     events,
     clock,
     chain,
+    votes,
     newId: () => `dgt_test${String(++n).padStart(4, '0')}`,
   });
+  const approval = new ApprovalService({ orders, store, votes, holders, clock, sessionKey: SESSION_KEY });
+  const register = new RegisterService({ settings, roster, store, holders, clock, statsCacheSeconds: 0 });
   const parents = new StoreParentUtxoProvider(store);
   const ready = parents.initialise({
     txid: parentTxid,
@@ -104,6 +145,8 @@ export function makeHarness(opts: HarnessOptions = {}) {
   const fees = new StaticFees({ standard: { slow: 1, normal: 2, fast: 5 }, block: { min: 1, recommended: 3 } }, () => clock.now());
   const app = createApp({
     orders,
+    approval,
+    register,
     fees,
     chain,
     parents,
@@ -115,7 +158,7 @@ export function makeHarness(opts: HarnessOptions = {}) {
   const broadcasters = { standard: new FakeBroadcaster('standard', chain), block: new FakeBroadcaster('block', chain) };
   const worker = new MintWorker({ orders, store, content, reveals, chain, parents, signer, broadcasters, clock });
 
-  return { clock, chain, signer, settings, store, content, blobs, reveals, events, orders, parents, app, broadcasters, worker, ready, collectionScriptHex, parentTxid, parentValue };
+  return { clock, chain, signer, settings, store, content, blobs, reveals, events, orders, approval, register, votes, holders, roster, parents, app, broadcasters, worker, ready, collectionScriptHex, parentTxid, parentValue };
 }
 
 export type Harness = ReturnType<typeof makeHarness>;
@@ -223,6 +266,61 @@ export function fundCommit(h: Harness, b: BrowserMint, opts: { value?: bigint; c
     vout: [{ value: opts.value ?? BigInt(quote.commitValueSats), scriptHex: bytesToHex(addressToScript(quote.commitAddress!, NET)) }],
     confirmed: opts.confirmed ?? false,
   });
+}
+
+// ----------------------------------------------------------------------------- members (ADR-0005)
+
+/** SIWB sign-in as the holder with `seed`: challenge -> BIP-322 sign -> verify. Returns the session. */
+export async function signIn(h: Harness, seed: number): Promise<AuthVerifyResponse> {
+  const address = regtestAddress(seed);
+  const ch = await api(h, 'POST', '/v1/auth/challenge', { json: { address } });
+  if (ch.status !== 200) throw new Error(`challenge failed: ${JSON.stringify(ch.body)}`);
+  const signature = signBip322Simple(regtestKey(seed), 'p2tr', ch.body.message);
+  const v = await api(h, 'POST', '/v1/auth/verify', { json: { address, message: ch.body.message, signature } });
+  if (v.status !== 200) throw new Error(`verify failed: ${JSON.stringify(v.body)}`);
+  return v.body as AuthVerifyResponse;
+}
+
+/** Sign the vote statement for `order` with the member's key (what the wallet does in the browser). */
+export function signVote(seed: number, order: Pick<Order, 'id' | 'inscriptionId' | 'contentSha256'>, vote: VoteChoice) {
+  const message = voteStatement(vote, order.id, voteReference(order));
+  return { vote, message, signature: signBip322Simple(regtestKey(seed), 'p2tr', message) };
+}
+
+/** Sign in as `seed` and cast a vote on the order. Returns the raw API response. */
+export async function castVote(h: Harness, seed: number, orderId: string, vote: VoteChoice, token?: string) {
+  const session = token ?? (await signIn(h, seed)).token;
+  const order = (await api(h, 'GET', `/v1/orders/${orderId}`)).body as Order;
+  return api(h, 'POST', `/v1/orders/${orderId}/votes`, { json: signVote(seed, order, vote), token: session });
+}
+
+/** Fund the commit (confirmed) and tick until the order sits in member_review. */
+export async function fundToReview(h: Harness, b: BrowserMint): Promise<Order> {
+  fundCommit(h, b, { confirmed: true });
+  await h.worker.tick();
+  const o = (await api(h, 'GET', `/v1/orders/${b.orderId}`)).body as Order;
+  if (o.status !== 'member_review') throw new Error(`expected member_review, got ${o.status}`);
+  return o;
+}
+
+/** The members approve: `quorum` distinct holders vote approve. Returns the last tally. */
+export async function membersApprove(h: Harness, orderId: string, quorum = h.settings.approval.approvalQuorum): Promise<VotesResponse> {
+  let last: VotesResponse | null = null;
+  for (const seed of MEMBER_SEEDS.slice(0, quorum)) {
+    const r = await castVote(h, seed, orderId, 'approve');
+    if (r.status !== 200) throw new Error(`vote failed: ${JSON.stringify(r.body)}`);
+    last = r.body as VotesResponse;
+  }
+  return last!;
+}
+
+/** Fund (confirmed), reach member_review, get approved: the order is `queued` afterwards. */
+export async function fundAndApprove(h: Harness, b: BrowserMint): Promise<Order> {
+  await fundToReview(h, b);
+  await membersApprove(h, b.orderId);
+  const o = (await api(h, 'GET', `/v1/orders/${b.orderId}`)).body as Order;
+  if (o.status !== 'queued') throw new Error(`expected queued, got ${o.status}`);
+  return o;
 }
 
 /** Everything up to awaiting_payment. */

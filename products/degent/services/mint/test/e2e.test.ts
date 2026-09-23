@@ -9,7 +9,7 @@ import { bytesToHex } from '@noble/hashes/utils.js';
 import { addressToScript, inscriptionIdFromReveal } from '@bsh/inscription';
 import type { Order, RescueResponse } from '@bsh/degent-mint-sdk';
 import { sha256Hex } from '@bsh/degent-mint-sdk';
-import { api, browserCreate, browserMintToPayment, browserReveal, browserUpload, fundCommit, makeHarness, NET, standardArt } from './fakes/harness.js';
+import { api, browserCreate, browserMintToPayment, browserReveal, browserUpload, fundAndApprove, fundCommit, fundToReview, makeHarness, membersApprove, NET, standardArt } from './fakes/harness.js';
 import { png } from './fakes/images.js';
 
 function parseRaw(rawHex: string) {
@@ -39,10 +39,28 @@ describe('e2e: parent-linked mint', () => {
     await h.worker.tick();
     expect((await getOrder(h, b.orderId)).status).toBe('awaiting_payment');
 
+    // Unconfirmed commit: seen, but the members only get to vote once it is mined.
     fundCommit(h, b);
-    const rep = await h.worker.tick();
+    let rep = await h.worker.tick();
     expect(rep.errors).toEqual([]);
-    expect(rep.transitions.map((t) => t.to)).toEqual(['paid', 'queued', 'revealing', 'revealed']);
+    expect(rep.transitions.map((t) => t.to)).toEqual(['paid', 'confirming']);
+    expect((await getOrder(h, b.orderId)).approval).toBeNull();
+    h.chain.mine();
+    rep = await h.worker.tick();
+    expect(rep.transitions.map((t) => t.to)).toEqual(['member_review']);
+    let o = await getOrder(h, b.orderId);
+    expect(o.approval).toMatchObject({ approvals: 0, declines: 0, approvalQuorum: 3, declineQuorum: 3 });
+    expect(o.degentNumber).toBeNull();
+    // Nothing is revealed while the club deliberates.
+    await h.worker.tick();
+    expect(h.broadcasters[tier].sent).toHaveLength(0);
+    // Three members approve: the order is queued with its Degent number, then revealed with the parent.
+    const tallyAfter = await membersApprove(h, b.orderId);
+    expect(tallyAfter.status).toBe('queued');
+    expect(tallyAfter.votes.map((v) => v.degent)).toEqual([1, 2, 3]);
+    rep = await h.worker.tick();
+    expect(rep.errors).toEqual([]);
+    expect(rep.transitions.map((t) => t.to)).toEqual(['revealing', 'revealed']);
 
     // Broadcaster captured exactly one tx on the right lane; it parses, and weight == quote.
     const lane = h.broadcasters[tier];
@@ -60,8 +78,9 @@ describe('e2e: parent-linked mint', () => {
     // fee = commit value - postage, exactly as quoted
     expect(BigInt(b.order.quote!.commitValueSats) - 546n).toBe(BigInt(b.order.quote!.revealFeeSats));
 
-    let o = await getOrder(h, b.orderId);
+    o = await getOrder(h, b.orderId);
     expect(o.status).toBe('revealed');
+    expect(o.degentNumber).toBe(4113);
     expect(o.revealTxid).toBe(tx.id);
     expect(o.inscriptionId).toBe(inscriptionIdFromReveal(tx.id, 0));
     // Parent chained: new parent UTXO is output 0 of this reveal.
@@ -80,8 +99,12 @@ describe('e2e: parent-linked mint', () => {
     expect(o.status).toBe('delivered');
     expect(o.rescued).toBe(false);
     expect(o.timeline.map((e) => e.status)).toEqual([
-      'awaiting_content', 'reviewing', 'approved', 'awaiting_payment', 'paid', 'queued', 'revealing', 'revealed', 'confirmed', 'verified', 'delivered',
+      'awaiting_content', 'reviewing', 'approved', 'awaiting_payment', 'paid', 'confirming', 'member_review', 'queued', 'revealing', 'revealed', 'confirmed', 'verified', 'delivered',
     ]);
+    // A delivered, parent-linked child is a Register member (via child), by the number the members assigned.
+    const reg = await api(h, 'GET', `/v1/register/verify/${o.inscriptionId}`);
+    expect(reg.body).toEqual({ id: o.inscriptionId, member: true, via: 'child', n: 4113 });
+    expect((await api(h, 'GET', '/v1/register/4113')).body).toMatchObject({ n: 4113, via: 'child', owner: b.recipientAddress, bytes: art.length });
     // Every transition was emitted as an event, none carrying the PSBT.
     const types = h.events.events.filter((e) => e.orderId === b.orderId).map((e) => e.type);
     expect(types).toEqual(o.timeline.map((e) => `degent.mint.order.${e.status}`));
@@ -92,8 +115,10 @@ describe('e2e: parent-linked mint', () => {
     const h = makeHarness();
     const a = await browserMintToPayment(h, { recipientSeed: 1 });
     const b = await browserMintToPayment(h, { recipientSeed: 2 });
-    fundCommit(h, a);
-    fundCommit(h, b);
+    await fundAndApprove(h, a);
+    await fundAndApprove(h, b);
+    expect((await getOrder(h, a.orderId)).degentNumber).toBe(4113);
+    expect((await getOrder(h, b.orderId)).degentNumber).toBe(4114);
     await h.worker.tick();
     const [t1, t2] = h.broadcasters.standard.sent.map((x) => parseRaw(x).tx);
     expect(t1 && t2).toBeTruthy();
@@ -108,7 +133,7 @@ describe('e2e: rescue path', () => {
   it('lane down for 6 h -> rescue_available -> GET /rescue -> user broadcasts -> delivered without parent', async () => {
     const h = makeHarness();
     const b = await browserMintToPayment(h);
-    fundCommit(h, b, { confirmed: true });
+    await fundAndApprove(h, b);
     h.broadcasters.standard.mode = 'retryable';
     await h.worker.tick();
     expect((await getOrder(h, b.orderId)).status).toBe('revealing');
@@ -153,15 +178,68 @@ describe('e2e: rescue path', () => {
   it('policy refusal offers self-rescue immediately', async () => {
     const h = makeHarness();
     const b = await browserMintToPayment(h);
-    fundCommit(h, b);
+    await fundAndApprove(h, b);
     // Tighten the signer's fee band after the order was quoted: the signer must refuse.
     h.settings.policy.bands.standard.maxFeeRate = 1.5;
     const rep = await h.worker.tick();
-    expect(rep.transitions.map((t) => t.to)).toEqual(['paid', 'queued', 'revealing', 'rescue_available']);
+    expect(rep.transitions.map((t) => t.to)).toEqual(['revealing', 'rescue_available']);
     expect(h.broadcasters.standard.sent).toHaveLength(0);
     expect(await h.parents.leasedBy()).toBeNull();
     const r = await api(h, 'GET', `/v1/orders/${b.orderId}/rescue`, { token: b.token });
     expect(r.status).toBe(200);
+  });
+});
+
+describe('e2e: the members decline', () => {
+  it('decline quorum -> declined -> self-rescue at once -> inscription lands without the parent (not a Degent)', async () => {
+    const h = makeHarness();
+    const b = await browserMintToPayment(h);
+    await fundToReview(h, b);
+    const { castVote } = await import('./fakes/harness.js');
+    for (const seed of [101, 102]) expect((await castVote(h, seed, b.orderId, 'decline')).status).toBe(200);
+    expect((await getOrder(h, b.orderId)).status).toBe('member_review');
+    const third = await castVote(h, 103, b.orderId, 'decline');
+    expect(third.body.status).toBe('declined');
+    const o = await getOrder(h, b.orderId);
+    expect(o.status).toBe('declined');
+    expect(o.degentNumber).toBeNull();
+    expect(o.approval).toMatchObject({ approvals: 0, declines: 3 });
+    // Rescue is offered immediately, no timeout to wait for.
+    const res = await api(h, 'GET', `/v1/orders/${b.orderId}/rescue`, { token: b.token });
+    expect(res.status).toBe(200);
+    const rescue = res.body as RescueResponse;
+    h.chain.acceptRaw(rescue.hex);
+    await h.worker.tick();
+    expect(await getOrder(h, b.orderId)).toMatchObject({ status: 'revealed', rescued: true, revealTxid: rescue.txid });
+    h.chain.mine();
+    h.chain.inscriptions.set(`${rescue.txid}i0`, b.bytes);
+    await h.worker.tick();
+    await h.worker.tick();
+    const after = await getOrder(h, b.orderId);
+    expect(after.status).toBe('delivered');
+    expect(after.rescued).toBe(true);
+    // ...and it is not in the Register.
+    expect((await api(h, 'GET', `/v1/register/verify/${after.inscriptionId}`)).body.member).toBe(false);
+    expect(h.broadcasters.standard.sent).toHaveLength(0);
+  });
+
+  it('review SLA lapses -> rescue_available (no funds stranded by a silent club)', async () => {
+    const h = makeHarness();
+    const b = await browserMintToPayment(h);
+    await fundToReview(h, b);
+    h.clock.advance(14 * 86_400 - 1);
+    await h.worker.tick();
+    expect((await getOrder(h, b.orderId)).status).toBe('member_review');
+    h.clock.advance(2);
+    await h.worker.tick();
+    const o = await getOrder(h, b.orderId);
+    expect(o.status).toBe('rescue_available');
+    expect((await api(h, 'GET', `/v1/orders/${b.orderId}/rescue`, { token: b.token })).status).toBe(200);
+    // Late votes are refused: the review is closed.
+    const { castVote } = await import('./fakes/harness.js');
+    const late = await castVote(h, 101, b.orderId, 'approve');
+    expect(late.status).toBe(409);
+    expect(late.body.error.code).toBe('review_closed');
   });
 });
 
@@ -204,7 +282,7 @@ describe('e2e: tampering is rejected', () => {
   it('ord serving different bytes marks the order failed', async () => {
     const h = makeHarness();
     const b = await browserMintToPayment(h);
-    fundCommit(h, b);
+    await fundAndApprove(h, b);
     await h.worker.tick();
     h.chain.mine();
     await h.worker.tick();

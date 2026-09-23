@@ -253,6 +253,9 @@ importers:
       '@bsh/events':
         specifier: workspace:*
         version: link:../../../../deps/scribbit/platform/events
+      '@bsh/identity':
+        specifier: workspace:*
+        version: link:../../../../deps/scribbit/platform/identity
       '@bsh/inscription':
         specifier: workspace:*
         version: link:../../../../deps/scribbit/platform/inscription
