@@ -1,9 +1,0 @@
-name: core
-package: "@bsh/dup"
-kind: library
-product: degent
-owner: team-degent
-summary: Fixture component core for catalog-tool tests.
-lifecycle: beta
-depends_on: []
-commands: { test: test, typecheck: typecheck }

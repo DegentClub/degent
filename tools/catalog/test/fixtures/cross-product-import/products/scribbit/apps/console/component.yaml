@@ -1,9 +1,0 @@
-name: scribbit-console
-package: "@bsh/scribbit-console"
-kind: app
-product: scribbit
-owner: team-scribbit
-summary: Fixture component scribbit-console for catalog-tool tests.
-lifecycle: beta
-depends_on: ["@bsh/degent-sdk"]
-commands: { test: test, typecheck: typecheck }

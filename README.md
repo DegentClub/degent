@@ -1,65 +1,76 @@
-# Blockspace Holdings monorepo
+# degent.club: own
 
-The shared platform and the three consumer products of Blockspace Holdings, in one pnpm workspace:
+**degent.club** is the Decentralized Gentlemen Club: a collection of 4,112 inscriptions and the automated,
+non-custodial mint that lets anyone add a Degent, up to a block-sized one, from the website with no human in the
+loop. This repository holds the product; the shared platform comes from
+[DegentClub/scribbit](https://github.com/DegentClub/scribbit) as a git submodule pinned to a commit at
+`deps/scribbit` ([ADR-0004](https://github.com/DegentClub/scribbit/blob/claude/wizardly-hypatia-5l6s56/docs/adr/0004-repo-split.md)).
 
-| Product | Slug | Verb | What it is | Status |
-|---|---|---|---|---|
-| [block.space](products/blockspace/README.md) | `blockspace` | measure | Bitcoin block-space explorer, fee Meter, portfolio, data API, certification | planned |
-| [scribb.it](products/scribbit/README.md) | `scribbit` | write | Inscription engine, ledger, console, mint suite, API and MCP server | planned |
-| [degent.club](products/degent/README.md) | `degent` | own | The Decentralized Gentlemen Club collection and its automated, non-custodial mint | beta |
-| [platform](platform/README.md) | `platform` | - | Shared libraries: inscription maths, wallet adapters | beta |
+| Repository | What it is |
+|---|---|
+| **DegentClub/degent** (this repo) | `degent-web` (mint front end), `degent-mint` (mint service), `degent-mint-sdk` (rules, types, API client), their contracts, ADR-0002 |
+| [DegentClub/scribbit](https://github.com/DegentClub/scribbit) | The platform: `@bsh/inscription`, `@bsh/wallet-kit`, `@bsh/events`, `@bsh/edge`, …, the catalog tool, scribb.it |
+| [DegentClub/blockspace](https://github.com/DegentClub/blockspace) | block.space: explorer, fee Meter, certification |
 
-Humans start here; agents start at [`AGENTS.md`](AGENTS.md) / [`CLAUDE.md`](CLAUDE.md). Infrastructure (the Nix
-fleet), chain nodes, data pipelines and forks live in separate repositories; see
-[ADR-0001](docs/adr/0001-monorepo-structure.md).
+Humans start here and at [`products/degent/README.md`](products/degent/README.md); agents start at
+[`AGENTS.md`](AGENTS.md) / [`CLAUDE.md`](CLAUDE.md).
 
 ## Quickstart
 
 ```bash
-corepack enable                 # pnpm version comes from package.json "packageManager"
+git clone --recurse-submodules https://github.com/DegentClub/degent.git   # or: git submodule update --init
+corepack enable                        # pnpm version comes from package.json "packageManager"
 pnpm install
-pnpm check                      # validate manifests + boundaries + typecheck + tests (what CI runs)
+pnpm check                             # validate manifests + boundaries + typecheck + tests (what CI runs)
 pnpm --filter @bsh/degent-web dev      # degent.club mint front end
 pnpm --filter @bsh/degent-mint dev     # mint service with in-memory adapters (regtest-safe)
 ```
 
-Every package answers to the same verbs: `pnpm --filter <pkg> test | typecheck | build | dev`.
-New component: copy a skeleton from [`templates/`](templates/README.md).
+Every package answers to the same verbs: `pnpm --filter <pkg> test | typecheck | build | dev`. `pnpm test` also
+runs the platform's tests at the pinned commit (they live in the workspace through the submodule).
 
 ## Layout
 
 ```
-platform/<name>/                   shared libraries (@bsh/<name>)
-products/<product>/apps/<name>/    deployable front ends
-products/<product>/services/<name>/ deployable back ends
-products/<product>/packages/<name>/ product-private libraries
-contracts/{openapi,asyncapi,schemas}/  the only coupling between products
-tools/catalog/                     manifest validator, boundary linter, catalog generator
-catalog/                           GENERATED catalog.json + CATALOG.md
-templates/                         copyable component skeletons (not workspace packages)
-docs/adr/                          architecture decision records
-schemas/component.schema.json      the component manifest schema
+products/degent/apps/web/          @bsh/degent-web        mint front end (React + Vite)
+products/degent/services/mint/     @bsh/degent-mint       order state machine, art review, policy signer, lanes
+products/degent/packages/mint-sdk/ @bsh/degent-mint-sdk   rules, domain types, typed API client
+contracts/openapi/degent-mint.yaml     HTTP API of degent-mint (provided here)
+contracts/asyncapi/degent-mint.yaml    degent.mint.* order events (provided here; compatible with the platform topic)
+deps/scribbit/                     SUBMODULE: the platform (platform/*), catalog tool (tools/catalog), platform contracts
+catalog/                           GENERATED catalog.json + CATALOG.md (platform components listed as external)
+docs/adr/                          ADR-0002 (mint architecture); platform ADRs are in deps/scribbit/docs/adr/
+schemas/component.schema.json      copy of the platform's manifest schema (refresh on pin bumps)
 ```
+
+## The platform submodule
+
+`pnpm-workspace.yaml` includes `deps/scribbit/platform/*` and `deps/scribbit/tools/*`, so `workspace:*` dependencies
+on `@bsh/inscription`, `@bsh/wallet-kit`, `@bsh/events` and the `@bsh/catalog-tool` behind `pnpm validate`,
+`pnpm lint:boundaries` and `pnpm catalog` all resolve from the pinned commit. To move to a newer platform commit:
+
+```bash
+git -C deps/scribbit fetch && git -C deps/scribbit checkout <commit> && pnpm install && pnpm check
+cp deps/scribbit/schemas/component.schema.json schemas/   # if the schema changed
+pnpm catalog && git add deps/scribbit schemas catalog pnpm-lock.yaml && git commit -m "Bump platform to <commit>"
+```
+
+The catalog tool treats the submodule's packages as **external** components: `catalog/catalog.json` lists them with
+`external: { repo, commit, root }`, so a machine can follow the link to the platform's own catalog.
+
+## Contracts
+
+- `contracts/openapi/degent-mint.yaml`: provided by `degent-mint` and `degent-mint-sdk`, consumed by `degent-web`.
+- `contracts/asyncapi/degent-mint.yaml`: `degent.mint.order.{status}` events, provided by `degent-mint`. The shared
+  topic is owned by the platform (`deps/scribbit/contracts/asyncapi/platform-events.yaml`); a test in
+  `products/degent/services/mint/test/contract.test.ts` asserts this contract stays compatible with it.
+- Consumes `events:block.indexed.{network}` from the chain indexers.
 
 ## The machine-readability model
 
-The repository is built so CI, AI agents and the infra Fleet API can understand it **without reading code**.
-Four layers, each checked in CI:
-
-1. **Manifests.** Every workspace package has a `component.yaml` next to its `package.json`: name, kind, product,
-   owner, lifecycle, `depends_on`, contracts it `provides`/`consumes`, stores, secret *paths*, SLO, runbook.
-   Schema: [`schemas/component.schema.json`](schemas/component.schema.json). `pnpm validate` checks each manifest
-   against the schema, against its `package.json`, and that every file it points at exists.
-2. **Catalog.** `pnpm catalog` compiles all manifests into [`catalog/catalog.json`](catalog/catalog.json)
-   (components with dependents, products, contracts with providers/consumers, a dependency edge list) and a human
-   table in [`catalog/CATALOG.md`](catalog/CATALOG.md). It is committed; `pnpm catalog --check` fails CI when stale.
-   `.github/CODEOWNERS` is generated from the same owners.
-3. **Boundaries.** `pnpm lint:boundaries` parses every import. A component may import only the `@bsh/*` packages in
-   its `depends_on`; products never import each other; `platform/` never imports `products/`; relative imports
-   never leave the package. Findings are `file:line` with a stable rule id.
-4. **Contracts.** Products talk to each other only through versioned OpenAPI / AsyncAPI / JSON Schema files in
-   [`contracts/`](contracts/README.md). Contract first, then code; breaking changes are gated by `oasdiff`.
-
-Design and rationale: [ADR-0001](docs/adr/0001-monorepo-structure.md) (structure) and
-[ADR-0003](docs/adr/0003-machine-readable-catalog.md) (manifests, catalog, and the join with the infra Fleet API).
-All decisions: [`docs/adr/`](docs/adr/README.md).
+Same as the platform repo: every workspace package has a `component.yaml` validated by `pnpm validate`; the
+committed `catalog/catalog.json` is regenerated by `pnpm catalog` and checked in CI; `pnpm lint:boundaries` enforces
+that imports follow `depends_on`; `.github/CODEOWNERS` is generated from manifest owners. Rationale:
+[ADR-0001](https://github.com/DegentClub/scribbit/blob/claude/wizardly-hypatia-5l6s56/docs/adr/0001-monorepo-structure.md),
+[ADR-0003](https://github.com/DegentClub/scribbit/blob/claude/wizardly-hypatia-5l6s56/docs/adr/0003-machine-readable-catalog.md),
+[ADR-0004](https://github.com/DegentClub/scribbit/blob/claude/wizardly-hypatia-5l6s56/docs/adr/0004-repo-split.md).

@@ -7,7 +7,7 @@ summary: Automated degent.club mint service - order state machine, art review, p
 lifecycle: beta
 depends_on: ["@bsh/inscription", "@bsh/degent-mint-sdk", "@bsh/events"]
 provides: [contracts/openapi/degent-mint.yaml, contracts/asyncapi/degent-mint.yaml]
-consumes: ["events:block.indexed.{network}"]
+consumes: ["events:block.indexed.{network}", "deps/scribbit/contracts/asyncapi/platform-events.yaml#/channels/degentMintOrderStatus"]
 stores: ["sqlite:degent_mint"]
 secrets: ["services/degent-mint/parent-key", "services/degent-mint/art-review-api-key", "services/degent-mint/reveal-encryption-key", "services/degent-mint/libre-rpc-pass", "services/degent-mint/slipstream-api-key"]
 env_schema: ./env.schema.json

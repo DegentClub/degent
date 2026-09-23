@@ -1,6 +1,8 @@
 /**
  * Implementation <-> contract conformance: routes, error codes, required fields and live responses
- * checked against contracts/openapi/degent-mint.yaml and contracts/asyncapi/degent-mint.yaml.
+ * checked against contracts/openapi/degent-mint.yaml and contracts/asyncapi/degent-mint.yaml, and the
+ * degent.mint.order.{status} topic checked against the platform's canonical schema in
+ * deps/scribbit/contracts/asyncapi/platform-events.yaml (ADR-0004: shared topics are owned by the platform).
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -12,6 +14,7 @@ import { api, browserMintToPayment, fundCommit, makeHarness } from './fakes/harn
 const root = new URL('../../../../../', import.meta.url).pathname;
 const openapi = parse(readFileSync(join(root, 'contracts/openapi/degent-mint.yaml'), 'utf8'));
 const asyncapi = parse(readFileSync(join(root, 'contracts/asyncapi/degent-mint.yaml'), 'utf8'));
+const platformEvents = parse(readFileSync(join(root, 'deps/scribbit/contracts/asyncapi/platform-events.yaml'), 'utf8'));
 const schemas = openapi.components.schemas;
 
 function srcFiles(dir: string): string[] {
@@ -134,5 +137,51 @@ describe('AsyncAPI contract', () => {
       expect(e.type).toBe(`degent.mint.order.${e.status}`);
     }
     expect(h.events.events.length).toBeGreaterThanOrEqual(9);
+  });
+});
+
+describe('degent.mint.order.{status} stays compatible with the platform topic (deps/scribbit/contracts/asyncapi/platform-events.yaml)', () => {
+  // The platform schema is canonical for the shared topic; this contract's OrderStatusEvent is the producer's
+  // view and must not drift from it. Both files are plain YAML with local $refs only.
+  const deref = (doc: any, n: any): any =>
+    n?.$ref ? deref(doc, n.$ref.replace(/^#\//, '').split('/').reduce((x: any, k: string) => x?.[k], doc)) : n;
+  const ours = asyncapi.channels.orderStatus;
+  const ourEvent = deref(asyncapi, asyncapi.components.schemas.OrderStatusEvent);
+  const theirs: any = Object.values<any>(platformEvents.channels).find((c) => c.address === ours.address);
+  const theirMessage = deref(platformEvents, Object.values<any>(theirs.messages)[0]);
+  const theirEvent = deref(platformEvents, theirMessage.payload.allOf[1].properties.data);
+  const enumOf = (doc: any, node: any): unknown[] =>
+    (deref(doc, node).enum ?? deref(doc, node).oneOf?.flatMap((b: any) => deref(doc, b).enum ?? (b.type === 'null' ? [null] : []))) as unknown[];
+
+  it('the platform declares the channel with the same address and status parameter enum', () => {
+    expect(theirs).toBeDefined();
+    expect(theirs.parameters.status.enum).toEqual(ours.parameters.status.enum);
+    expect(theirs.parameters.status.enum).toEqual([...ORDER_STATUSES]);
+  });
+
+  it('same required fields, same property set, same status / previousStatus / network / lane enums', () => {
+    expect([...ourEvent.required].sort()).toEqual([...theirEvent.required].sort());
+    expect(Object.keys(ourEvent.properties).sort()).toEqual(Object.keys(theirEvent.properties).sort());
+    for (const k of ['status', 'previousStatus', 'network', 'lane']) {
+      expect(enumOf(asyncapi, ourEvent.properties[k]), k).toEqual(enumOf(platformEvents, theirEvent.properties[k]));
+    }
+    expect(ourEvent.properties.type.pattern).toBe(theirEvent.properties.type.pattern);
+  });
+
+  it('our canonical examples validate against the platform schema', () => {
+    const examples = deref(asyncapi, Object.values<any>(ours.messages)[0]).examples;
+    expect(examples.length).toBeGreaterThan(0);
+    for (const ex of examples) expect(check(ex.payload, theirEvent)).toEqual([]);
+  });
+
+  it('every event the service emits validates against the platform schema', async () => {
+    const h = makeHarness();
+    const b = await browserMintToPayment(h);
+    fundCommit(h, b);
+    await h.worker.tick();
+    h.chain.mine();
+    await h.worker.tick();
+    expect(h.events.events.length).toBeGreaterThanOrEqual(9);
+    for (const e of h.events.events) expect(check(e, theirEvent)).toEqual([]);
   });
 });

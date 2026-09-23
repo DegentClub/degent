@@ -23,9 +23,11 @@ dependency and contract graph instead of reading package.json files.
 3. **One implementation of the maths.** Weight, fee and commit address come from `@bsh/inscription`; rules come
    from `@bsh/degent-mint-sdk`. Do not re-derive them in the app or the service.
 4. **Contract first.** API or event changes start in `contracts/openapi/degent-mint.yaml` /
-   `contracts/asyncapi/degent-mint.yaml`.
+   `contracts/asyncapi/degent-mint.yaml`. The order-status topic is shared and owned by the platform
+   (`deps/scribbit/contracts/asyncapi/platform-events.yaml`); keep `OrderStatusEvent` compatible with it.
 5. **Imports:** only `@bsh/inscription`, `@bsh/wallet-kit`, `@bsh/degent-mint-sdk`, `@bsh/events`, each only where declared in
-   that component's `depends_on`. Never import `blockspace` or `scribbit` code; `pnpm lint:boundaries` fails.
+   that component's `depends_on`. Platform packages come from the `deps/scribbit` submodule; never edit them in
+   place. Never import `blockspace` or `scribbit` code; `pnpm lint:boundaries` fails.
 6. **Tests with fakes.** Service tests use the in-memory adapters (`memory-order-store`, `in-memory-policy-signer`,
    `rules-art-review`); nothing in tests touches mainnet.
 

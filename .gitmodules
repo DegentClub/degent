@@ -1,0 +1,4 @@
+[submodule "deps/scribbit"]
+	path = deps/scribbit
+	url = https://github.com/DegentClub/scribbit.git
+	branch = claude/wizardly-hypatia-5l6s56

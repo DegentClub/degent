@@ -1,6 +1,0 @@
-packages:
-  - platform/*
-  - products/*/apps/*
-  - products/*/services/*
-  - products/*/packages/*
-  - tools/*

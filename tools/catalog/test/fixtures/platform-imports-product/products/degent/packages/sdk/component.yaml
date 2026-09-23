@@ -1,9 +1,0 @@
-name: degent-sdk
-package: "@bsh/degent-sdk"
-kind: library
-product: degent
-owner: team-degent
-summary: Fixture component degent-sdk for catalog-tool tests.
-lifecycle: beta
-depends_on: []
-commands: { test: test, typecheck: typecheck }

@@ -32,13 +32,17 @@ anything that signs or broadcasts.
 | `degent-mint` | `@bsh/degent-mint` | service | [`services/mint`](services/mint) | Order state machine, automated art review, parent co-signing, lane broadcaster |
 | `degent-mint-sdk` | `@bsh/degent-mint-sdk` | library | [`packages/mint-sdk`](packages/mint-sdk) | Mint rules (tiers, content validation), domain types, typed API client |
 
-Platform dependencies: [`@bsh/inscription`](../../platform/inscription) and
-[`@bsh/wallet-kit`](../../platform/wallet-kit). Live, generated view: `jq '.products.degent' catalog/catalog.json`.
+Platform dependencies: [`@bsh/inscription`](../../deps/scribbit/platform/inscription),
+[`@bsh/wallet-kit`](../../deps/scribbit/platform/wallet-kit) and [`@bsh/events`](../../deps/scribbit/platform/events),
+from the `deps/scribbit` submodule (DegentClub/scribbit, pinned commit). Live, generated view:
+`jq '.products.degent' catalog/catalog.json`.
 
 ## Contracts
 
 - `contracts/openapi/degent-mint.yaml`: HTTP API (provided by `degent-mint` and `degent-mint-sdk`, consumed by `degent-web`).
-- `contracts/asyncapi/degent-mint.yaml`: `degent.mint.*` order events (provided by `degent-mint`).
+- `contracts/asyncapi/degent-mint.yaml`: `degent.mint.*` order events (provided by `degent-mint`); must stay
+  compatible with the platform-owned topic in `deps/scribbit/contracts/asyncapi/platform-events.yaml`
+  (asserted in `services/mint/test/contract.test.ts`).
 - Consumes `events:block.indexed.{network}` from the chain indexers.
 
 ## Where to start
@@ -50,7 +54,7 @@ pnpm --filter "./products/degent/**" test
 ```
 
 - Changing **rules** (sizes, MIME types, tiers): `packages/mint-sdk/src/rules.ts`; front end and service both use it.
-- Changing **fees / weight / tx construction**: `platform/inscription` (shared with other products; tests compare
-  predictions against real signed transactions).
+- Changing **fees / weight / tx construction**: `deps/scribbit/platform/inscription` — a platform change in
+  DegentClub/scribbit, then a pin bump here (tests compare predictions against real signed transactions).
 - Changing the **order lifecycle**: `services/mint/src/domain/state-machine.ts`, then the AsyncAPI contract.
 - Adding an **external integration**: add a port in `services/mint/src/ports/` and an adapter in `src/adapters/`.

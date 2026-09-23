@@ -1,6 +1,9 @@
+# Product packages live here; the shared platform and the catalog tool come from the pinned
+# submodule at deps/scribbit (ADR-0004 in DegentClub/scribbit). Bump it with:
+#   git -C deps/scribbit fetch && git -C deps/scribbit checkout <commit> && pnpm install && pnpm check
 packages:
-  - platform/*
   - products/*/apps/*
   - products/*/services/*
   - products/*/packages/*
-  - tools/*
+  - deps/scribbit/platform/*
+  - deps/scribbit/tools/*
