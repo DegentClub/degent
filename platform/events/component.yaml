@@ -1,0 +1,11 @@
+name: events
+package: "@bsh/events"
+kind: library
+product: platform
+owner: team-platform
+summary: CloudEvents envelope, versioned topic registry with schema validation, AMQP-style bus, transactional outbox and RabbitMQ adapter.
+lifecycle: beta
+depends_on: []
+provides: [contracts/asyncapi/platform-events.yaml]
+docs: ./README.md
+commands: { test: test, typecheck: typecheck }
