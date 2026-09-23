@@ -16,6 +16,10 @@ import { Validate } from './screens/Validate';
 import { QuoteScreen } from './screens/Quote';
 import { Pay } from './screens/Pay';
 import { Track } from './screens/Track';
+import { Review } from './screens/Review';
+import { Explorer } from './screens/Explorer';
+import { Verify } from './screens/Verify';
+import { routeFor, usePathname } from './router';
 
 export interface AppProps {
   app: AppConfig;
@@ -24,9 +28,14 @@ export interface AppProps {
   vault?: KeyVault;
   /** Start somewhere other than the welcome screen (tests). */
   initial?: FlowState;
+  /** Pin the route (tests); defaults to window.location.pathname. */
+  path?: string;
+  /** Query string for the /verify page (tests); defaults to window.location.search. */
+  search?: string;
 }
 
-export function App({ app, services, store = browserStore(), vault: vaultProp, initial }: AppProps) {
+export function App({ app, services, store = browserStore(), vault: vaultProp, initial, path, search }: AppProps) {
+  const route = routeFor(usePathname(path));
   const vaultRef = useRef<KeyVault>(vaultProp ?? createKeyVault());
   const [state, dispatch] = useReducer(flowReducer, store, (s) => initial ?? initialState(loadRecovery(s)));
   const mainRef = useRef<HTMLElement>(null);
@@ -79,22 +88,25 @@ export function App({ app, services, store = browserStore(), vault: vaultProp, i
           the real mint.
         </div>
       ) : null}
-      <Header />
-      <ProgressNav />
+      <Header route={route} />
+      {route === 'mint' ? <ProgressNav /> : null}
       <main id="main" ref={mainRef} className="main">
-        {state.error ? (
+        {route === 'review' && <Review />}
+        {route === 'explorer' && <Explorer />}
+        {route === 'verify' && <Verify {...(search !== undefined ? { search } : {})} />}
+        {route === 'mint' && state.error ? (
           <div className="alert alert--bad" role="alert">
             <p className="alert__title">Something needs your attention</p>
             <div className="alert__body">{state.error}</div>
           </div>
         ) : null}
-        {state.step === 'welcome' && <Welcome />}
-        {state.step === 'connect' && <Connect />}
-        {state.step === 'create' && <Create />}
-        {state.step === 'validate' && <Validate />}
-        {state.step === 'quote' && <QuoteScreen />}
-        {state.step === 'pay' && <Pay />}
-        {state.step === 'track' && <Track />}
+        {route === 'mint' && state.step === 'welcome' && <Welcome />}
+        {route === 'mint' && state.step === 'connect' && <Connect />}
+        {route === 'mint' && state.step === 'create' && <Create />}
+        {route === 'mint' && state.step === 'validate' && <Validate />}
+        {route === 'mint' && state.step === 'quote' && <QuoteScreen />}
+        {route === 'mint' && state.step === 'pay' && <Pay />}
+        {route === 'mint' && state.step === 'track' && <Track />}
       </main>
       <footer className="footer">
         <p>

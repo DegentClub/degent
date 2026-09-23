@@ -11,18 +11,27 @@ import { base64, hex } from '@scure/base';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import type {
-  ServiceConfig,
+  ApprovalInfo,
   CreateOrderRequest,
+  ExplorerQuery,
   Network,
   Order,
   OrderStatus,
+  PublicVote,
   Quote,
+  RegisterMember,
+  ServiceConfig,
+  StatsResponse,
   SubmitRevealRequest,
+  VoteChoice,
+  VotesResponse,
 } from '@bsh/degent-mint-sdk';
+import { CHARTER_SIZE, GALLERY_SIZE, voteReference, voteStatement } from '@bsh/degent-mint-sdk';
 import type {
   ChainApi,
   EncodedImage,
   FeeSnapshot,
+  GateApi,
   ImageTools,
   InscriptionContentInput,
   InscriptionOps,
@@ -202,11 +211,20 @@ export function createFakeChain(log: CallLog = [], state?: Partial<FakeChainStat
 
 // ------------------------------------------------------------------ mint API
 
-export type FakeScenario = 'happy' | 'rescue' | 'reject';
+export type FakeScenario = 'happy' | 'rescue' | 'reject' | 'declined';
+
+/** Demo club members who vote in the fakes: their Degent numbers, in the order their votes arrive. */
+export const DEMO_VOTERS = [17, 808, 2049] as const;
+export const DEMO_QUORUM = 3;
+export const DEMO_REVIEW_SLA_SECONDS = 14 * 86_400;
 
 export interface FakeMintOptions {
   network: Network;
   scenario?: FakeScenario;
+  /** Addresses that count as club members (address -> Degent numbers). Default: the demo wallets' ordinals addresses. */
+  holders?: Record<string, number[]>;
+  /** Seed this many strangers' orders into member_review (demo /review page). */
+  seedReview?: number;
   /** Service returns a commit address that does not match the browser's (tamper test). */
   tamperCommit?: boolean;
   /** GET /rescue fails (service gone) so the front end must build the rescue locally. */
@@ -218,31 +236,184 @@ export interface FakeMintOptions {
 }
 
 const PROGRESSION: Record<FakeScenario, OrderStatus[]> = {
-  happy: ['paid', 'queued', 'revealing', 'revealed', 'confirmed', 'verified', 'delivered'],
-  rescue: ['paid', 'queued', 'rescue_available'],
+  happy: ['paid', 'confirming', 'member_review', 'queued', 'revealing', 'revealed', 'confirmed', 'verified', 'delivered'],
+  rescue: ['paid', 'confirming', 'member_review', 'queued', 'rescue_available'],
+  declined: ['paid', 'confirming', 'member_review', 'declined'],
   reject: [],
 };
+
+/** Demo holders: the fake wallets' ordinals addresses (one Degent each), so `?demo=1` can sign in and vote. */
+export function demoHolders(network: Network): Record<string, number[]> {
+  const out: Record<string, number[]> = {};
+  WALLET_CATALOG.forEach((w, i) => {
+    out[demoOrdinalsAddress(w.id, network)] = [DEMO_VOTERS[i % DEMO_VOTERS.length]! + i * 1000];
+  });
+  return out;
+}
+
+/** A recognisable placeholder rendering: a bowtie on lacquer, numbered. */
+export function placeholderImage(label: string): string {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><rect width='200' height='200' fill='#0b1d15'/><path d='M100 100 L40 70 Q30 100 40 130 Z M100 100 L160 70 Q170 100 160 130 Z' fill='#c9a55a'/><rect x='88' y='88' width='24' height='24' rx='4' fill='#c9a55a'/><text x='100' y='170' font-family='monospace' font-size='18' text-anchor='middle' fill='#f1e9d4'>${label}</text></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+function mulberry(seed: number) {
+  let t = seed >>> 0;
+  return () => {
+    t = (t + 0x6d2b79f5) >>> 0;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Deterministic demo Gallery: 4,112 members with a size spread like the real roster (median ~372 KB). */
+export function demoRoster(network: Network): RegisterMember[] {
+  const rnd = mulberry(4112);
+  const owners = Array.from({ length: 1400 }, (_, i) => fakeAddress(`demo-holder-${i}`, network));
+  const out: RegisterMember[] = [];
+  for (let n = 1; n <= GALLERY_SIZE; n++) {
+    const u = rnd();
+    // 85% standard (205-390 KB), 15% block-sized (390 KB - 3.96 MB)
+    const kb = u < 0.85 ? 205 + rnd() * 185 : 390 + rnd() ** 2 * 3570;
+    const id = `${sha256Hex(enc.encode(`degent|${n}`))}i0`;
+    const whale = rnd() < 0.08;
+    out.push({
+      n,
+      id,
+      number: 93_800_000 + n * 7_000,
+      via: 'gallery',
+      bytes: Math.round(kb * 1024),
+      height: 840_000 + n * 3,
+      sat: 1_000_000_000_000 + n * 977,
+      owner: owners[whale ? Math.floor(rnd() * 12) : Math.floor(rnd() * owners.length)]!,
+      contentUrl: placeholderImage(`#${n}`),
+    });
+  }
+  return out;
+}
+
+function medianOf(xs: number[]): number {
+  if (!xs.length) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
+}
+
+function weekOf(iso: string): string {
+  const d = new Date(Date.parse(iso));
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  d.setUTCHours(0, 0, 0, 0);
+  return d.toISOString().slice(0, 10);
+}
 
 export function createFakeMintApi(
   log: CallLog = [],
   opts: FakeMintOptions,
-): MintApi & { orders: Map<string, Order>; tokenFor(id: string): string | undefined } {
+): MintApi & { orders: Map<string, Order>; votes: Map<string, PublicVote[]>; tokenFor(id: string): string | undefined } {
   const config = demoConfig(opts.network);
   const orders = new Map<string, Order>();
   const bodies = new Map<string, Uint8Array>();
+  const votes = new Map<string, PublicVote[]>();
+  const voterAddresses = new Map<string, Set<string>>();
+  const holders = opts.holders ?? demoHolders(opts.network);
+  const sessions = new Map<string, string>(); // token -> address
+  const roster = demoRoster(opts.network);
+  let approved = 0;
   const now = opts.now ?? (() => Date.now());
   const iso = () => new Date(now()).toISOString();
   const scenario = opts.scenario ?? 'happy';
   let seq = 0;
+
+  const approvalOf = (o: Order): ApprovalInfo => {
+    const vs = votes.get(o.id) ?? [];
+    const started = o.timeline.find((e) => e.status === 'member_review')?.at ?? null;
+    return {
+      approvals: vs.filter((v) => v.vote === 'approve').length,
+      declines: vs.filter((v) => v.vote === 'decline').length,
+      approvalQuorum: DEMO_QUORUM,
+      declineQuorum: DEMO_QUORUM,
+      reviewStartedAt: started,
+      reviewDeadline: started ? new Date(Date.parse(started) + DEMO_REVIEW_SLA_SECONDS * 1000).toISOString() : null,
+    };
+  };
 
   const push = (o: Order, status: OrderStatus, detail?: string, txid?: string): Order => {
     const at = iso();
     const ev: Order['timeline'][number] = { status, at };
     if (detail) ev.detail = detail;
     if (txid) ev.txid = txid;
-    const next: Order = { ...o, status, updatedAt: at, timeline: [...o.timeline, ev] };
+    let next: Order = { ...o, status, updatedAt: at, timeline: [...o.timeline, ev] };
+    if (status === 'member_review' || next.approval) next = { ...next, approval: approvalOf(next) };
     orders.set(o.id, next);
     return next;
+  };
+
+  const recordVote = (o: Order, degent: number, address: string, vote: VoteChoice, message: string, signature: string): Order => {
+    const list = votes.get(o.id) ?? [];
+    list.push({ degent, vote, at: iso(), signature, message });
+    votes.set(o.id, list);
+    if (!voterAddresses.has(o.id)) voterAddresses.set(o.id, new Set());
+    voterAddresses.get(o.id)!.add(address);
+    let cur: Order = { ...o, approval: approvalOf(o) };
+    orders.set(o.id, cur);
+    if (cur.approval!.approvals >= DEMO_QUORUM) {
+      const degentNumber = GALLERY_SIZE + ++approved;
+      cur = push({ ...cur, degentNumber, queue: { lane: o.quote?.lane ?? 'standard', position: o.quote?.queuePosition ?? 1, etaMinutes: (o.quote?.queuePosition ?? 1) * 10 } }, 'queued', `approved by ${DEMO_QUORUM} members; Degent #${degentNumber}`);
+    } else if (cur.approval!.declines >= DEMO_QUORUM) {
+      cur = push(cur, 'declined', `declined by ${DEMO_QUORUM} members; self-rescue (no parent) is available`);
+    }
+    return cur;
+  };
+
+  const seedOrder = (i: number): Order => {
+    const id = `ord_demo_review_${String(i + 1).padStart(3, '0')}`;
+    const bytesLen = i % 3 === 2 ? 1_900_000 : 240_000 + i * 17_000;
+    const sha = sha256Hex(enc.encode(`seed|${id}`));
+    const at = new Date(now() - (i + 1) * 3_600_000).toISOString();
+    const req: CreateOrderRequest = {
+      tier: bytesLen > 390_000 ? 'block' : 'standard',
+      contentType: 'image/webp',
+      contentLength: bytesLen,
+      contentSha256: sha,
+      recipientAddress: fakeAddress(`seed-recipient-${i}`, opts.network),
+      revealPubkey: hex.encode(validXOnly(enc.encode(`seed-key-${i}`))),
+      feeRate: 3,
+    };
+    const timeline = ['awaiting_content', 'reviewing', 'approved', 'awaiting_payment', 'paid', 'confirming', 'member_review'].map((st, k) => ({
+      status: st as OrderStatus,
+      at: new Date(Date.parse(at) + k * 60_000).toISOString(),
+      ...(st === 'paid' ? { txid: sha256Hex(enc.encode(`seed-commit|${id}`)) } : {}),
+    }));
+    const o: Order = {
+      id,
+      network: opts.network,
+      status: 'member_review',
+      tier: req.tier,
+      contentType: req.contentType,
+      contentLength: req.contentLength,
+      contentSha256: sha,
+      recipientAddress: req.recipientAddress,
+      revealPubkey: req.revealPubkey,
+      quote: quoteFor(req),
+      review: { approved: true, reasons: [], checks: [{ id: 'tuxedo', passed: true, detail: 'Tuxedo detected' }] },
+      commitOutpoint: { txid: sha256Hex(enc.encode(`seed-commit|${id}`)), vout: 0 },
+      revealTxid: null,
+      inscriptionId: null,
+      rescued: false,
+      serviceFeeAddress: null,
+      queue: null,
+      approval: null,
+      degentNumber: null,
+      timeline,
+      createdAt: at,
+      updatedAt: timeline.at(-1)!.at,
+    };
+    const seeded = { ...o, approval: approvalOf(o) };
+    orders.set(id, seeded);
+    if (opts.chain) opts.chain.contentUrls.set(`seed:${id}`, placeholderImage(`order ${i + 1}`));
+    if (i === 0) votes.set(id, [{ degent: 2049, vote: 'approve', at: seeded.updatedAt, signature: 'AA==', message: voteStatement('approve', id, sha) }]);
+    return orders.get(id)!;
   };
 
   const requests = new Map<string, CreateOrderRequest>();
@@ -257,7 +428,8 @@ export function createFakeMintApi(
     return o;
   };
 
-  const quoteFor = (req: CreateOrderRequest): Quote => {
+  // Hoisted: seedOrder() above needs it.
+  function quoteFor(req: CreateOrderRequest): Quote {
     const tierRule = config.tiers.find((t) => t.tier === req.tier)!;
     // Simulated weight: witness bytes weigh 1 WU; ~1,300 WU of non-witness overhead with parent.
     const chunks = Math.ceil(req.contentLength / 520);
@@ -291,10 +463,28 @@ export function createFakeMintApi(
       queuePosition: req.tier === 'block' ? queue.blockLaneLength + 1 : null,
       etaMinutes: req.tier === 'block' ? (queue.blockLaneLength + 1) * 10 : 10,
     };
+  }
+
+  for (let i = 0; i < (opts.seedReview ?? 0); i++) seedOrder(i);
+
+  const sessionAddress = (token: string): string => {
+    const a = sessions.get(token);
+    if (!a) throw new Error('401 unauthorized: holder session missing or expired');
+    if (!(holders[a]?.length ?? 0)) throw new Error('403 not_a_holder: this address no longer holds a Degent');
+    return a;
+  };
+
+  const members = (): RegisterMember[] => {
+    const children: RegisterMember[] = [];
+    for (const o of orders.values())
+      if (o.status === 'delivered' && o.degentNumber !== null && o.inscriptionId && !o.rescued)
+        children.push({ n: o.degentNumber, id: o.inscriptionId, number: null, via: 'child', bytes: o.contentLength, height: 912_345, sat: null, owner: o.recipientAddress, contentUrl: opts.chain?.contentUrls.get(o.inscriptionId) ?? placeholderImage(`#${o.degentNumber}`) });
+    return [...roster, ...children];
   };
 
   return {
     orders,
+    votes,
     tokenFor: (id: string) => tokens.get(id),
     async getConfig() {
       log.push('api.getConfig');
@@ -326,6 +516,8 @@ export function createFakeMintApi(
         review: null,
         rescued: false,
         queue: null,
+        approval: null,
+        degentNumber: null,
         commitOutpoint: null,
         revealTxid: null,
         inscriptionId: null,
@@ -381,9 +573,18 @@ export function createFakeMintApi(
       const idx = path.indexOf(o.status);
       const next = o.status === 'awaiting_payment' ? path[0] : idx >= 0 ? path[idx + 1] : undefined;
       if (!next) return o;
+      // Member review: seeded orders wait for real votes; the user's own order gets one demo vote per poll.
+      if (o.status === 'member_review') {
+        if (o.id.startsWith('ord_demo_review_')) return o;
+        const cast = (votes.get(o.id) ?? []).length;
+        const degent = DEMO_VOTERS[cast % DEMO_VOTERS.length]!;
+        const choice: VoteChoice = scenario === 'declined' ? 'decline' : 'approve';
+        return recordVote(o, degent, `demo-member-${degent}`, choice, voteStatement(choice, o.id, voteReference(o)), base64.encode(sha256(enc.encode(`demo-vote|${o.id}|${degent}`))));
+      }
       let cur = o;
       let txid: string | undefined;
       if (next === 'paid') txid = o.commitOutpoint?.txid;
+      if (next === 'member_review') txid = o.commitOutpoint?.txid;
       if (next === 'queued') {
         const pos = o.quote?.queuePosition ?? 1;
         cur = { ...cur, queue: { lane: o.quote?.lane ?? 'standard', position: pos, etaMinutes: pos * 10 } };
@@ -406,8 +607,140 @@ export function createFakeMintApi(
       const o = get(id);
       const raw = sha256(enc.encode(`service-rescue|${id}`));
       const tx: RescueTx = { hex: hex.encode(raw), txid: hex.encode(dsha(raw).reverse()) };
-      void o;
+      void o; // the real service refuses outside rescue_available / declined; the fake stays lenient for effect tests
       return tx;
+    },
+
+    // ------------------------------------------------------------ member approval
+    async authChallenge(address) {
+      log.push('api.authChallenge');
+      const at = iso();
+      const exp = new Date(now() + 300_000).toISOString();
+      const message = [
+        'degent.club wants you to sign in with your Bitcoin account:',
+        address,
+        '',
+        'Sign in to degent.club as a club member. This request will not trigger a transaction or cost any fees.',
+        '',
+        'URI: https://degent.club',
+        'Version: 1',
+        `Network: ${opts.network}`,
+        `Nonce: ${sha256Hex(enc.encode(`nonce|${address}|${at}`)).slice(0, 32)}`,
+        `Issued At: ${at}`,
+        `Expiration Time: ${exp}`,
+      ].join('\n');
+      return { message, expiresAt: exp };
+    },
+    async authVerify(address, message, signature) {
+      log.push('api.authVerify');
+      if (!message.includes(address) || !signature) throw new Error('401 auth_failed: invalid_signature');
+      const degents = holders[address] ?? [];
+      if (!degents.length) throw new Error('403 not_a_holder: this address holds no Degent; only club members can review');
+      const token = `demo.${hex.encode(sha256(enc.encode(`session|${address}|${now()}`)))}.sig`;
+      sessions.set(token, address);
+      return { token, address, degents, expiresAt: new Date(now() + 3_600_000).toISOString() };
+    },
+    async getReviewQueue(token) {
+      log.push('api.getReviewQueue');
+      const address = sessionAddress(token);
+      const items = [...orders.values()]
+        .filter((o) => o.status === 'member_review')
+        .map((o) => ({ order: { ...o, approval: approvalOf(o) }, approval: approvalOf(o), voted: (voterAddresses.get(o.id)?.has(address) ? (votes.get(o.id) ?? []).at(-1)?.vote ?? null : null) as VoteChoice | null }));
+      return { items, memberDegents: holders[address] ?? [] };
+    },
+    async castVote(id, token, req) {
+      log.push(`api.castVote:${req.vote}`);
+      const address = sessionAddress(token);
+      const o = get(id);
+      if (o.status !== 'member_review') throw new Error(`409 review_closed: order is not open for member review (status ${o.status})`);
+      if (o.recipientAddress === address) throw new Error('403 self_vote: a member cannot vote on their own order');
+      if (voterAddresses.get(id)?.has(address)) throw new Error('409 already_voted: this address has already voted on this order');
+      if (req.message !== voteStatement(req.vote, o.id, voteReference(o))) throw new Error('422 vote_invalid: message is not the expected statement');
+      if (!req.signature) throw new Error('422 vote_invalid: signature missing');
+      const degent = Math.min(...(holders[address] ?? [0]));
+      const cur = recordVote(o, degent, address, req.vote, req.message, req.signature);
+      return { orderId: id, status: cur.status, approval: approvalOf(cur), votes: votes.get(id) ?? [] };
+    },
+    async getVotes(id): Promise<VotesResponse> {
+      log.push('api.getVotes');
+      const o = get(id);
+      return { orderId: id, status: o.status, approval: approvalOf(o), votes: votes.get(id) ?? [] };
+    },
+
+    // ------------------------------------------------------------ the Register
+    async getRegister() {
+      log.push('api.getRegister');
+      const all = members();
+      return { parent: config.parentInscriptionId, gallery: null, count: all.length, bytes: all.reduce((a, m) => a + m.bytes, 0), pending: [...orders.values()].filter((o) => o.degentNumber !== null && o.status !== 'delivered').length, updatedAt: iso() };
+    },
+    async getRegisterMember(n) {
+      log.push('api.getRegisterMember');
+      const m = members().find((x) => x.n === n);
+      if (!m) throw new Error('404 not_found: Degent not found');
+      return m;
+    },
+    async getHolder(address) {
+      log.push('api.getHolder');
+      const degents = holders[address] ?? members().filter((m) => m.owner === address).map((m) => m.n);
+      return { address, holder: degents.length > 0, degents };
+    },
+    async verifyMember(id) {
+      log.push('api.verifyMember');
+      const m = members().find((x) => x.id === id);
+      return m ? { id, member: true, via: m.via, n: m.n } : { id, member: false, via: null, n: null };
+    },
+    async getExplorer(q: ExplorerQuery) {
+      log.push('api.getExplorer');
+      const offset = q.offset ?? 0;
+      const limit = q.limit ?? 48;
+      const sort = q.sort ?? 'n';
+      const order = q.order ?? 'asc';
+      const text = (q.q ?? '').trim().toLowerCase();
+      const key = (m: RegisterMember) => (sort === 'bytes' ? m.bytes : sort === 'height' ? (m.height ?? m.number ?? m.n) : m.n);
+      const filtered = members().filter((m) => {
+        if (!text) return true;
+        if (/^#?\d+$/.test(text)) return m.n === Number(text.replace('#', ''));
+        return m.id.startsWith(text) || (m.owner?.toLowerCase().startsWith(text) ?? false);
+      });
+      const sorted = [...filtered].sort((a, b) => (order === 'desc' ? -1 : 1) * (key(a) - key(b)) || a.n - b.n);
+      return { items: sorted.slice(offset, offset + limit), total: filtered.length, offset, limit, sort, order };
+    },
+    async getStats(): Promise<StatsResponse> {
+      log.push('api.getStats');
+      const all = members();
+      const bytes = all.map((m) => m.bytes);
+      const edges = [0, 200, 250, 300, 350, 390, 500, 1000, 2000, 3000, 4000];
+      const sizeHistogram = edges.map((from, i) => ({ from, to: i + 1 < edges.length ? edges[i + 1]! : null, count: 0 }));
+      for (const b of bytes) {
+        const kb = b / 1024;
+        const idx = sizeHistogram.findIndex((x) => x.to === null || kb < x.to);
+        sizeHistogram[idx]!.count++;
+      }
+      const weeks = new Map<string, number>();
+      for (const m of all) {
+        const week = weekOf(new Date(Date.UTC(2024, 3, 20) + (m.height! - 840_000) * 600_000).toISOString());
+        weeks.set(week, (weeks.get(week) ?? 0) + 1);
+      }
+      const counts = new Map<string, number>();
+      for (const m of all) if (m.owner) counts.set(m.owner, (counts.get(m.owner) ?? 0) + 1);
+      const list = [...orders.values()];
+      return {
+        minted: all.length,
+        charter: CHARTER_SIZE,
+        totalBytes: bytes.reduce((a, b) => a + b, 0),
+        medianBytes: medianOf(bytes),
+        mintsPerWeek: [...weeks.entries()].sort().map(([week, count]) => ({ week, count })),
+        sizeHistogram,
+        approvals: {
+          inReview: list.filter((o) => o.status === 'member_review').length,
+          approved: list.filter((o) => o.degentNumber !== null).length,
+          declined: list.filter((o) => o.status === 'declined').length,
+          perWeek: [],
+          medianSecondsToQuorum: null,
+        },
+        topHolders: [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([owner, count]) => ({ owner, count })),
+        updatedAt: iso(),
+      };
     },
   };
 }
@@ -422,8 +755,16 @@ export const WALLET_CATALOG: ReadonlyArray<Omit<WalletOption, 'installed'>> = [
   { id: 'magiceden', name: 'Magic Eden', installUrl: 'https://wallet.magiceden.io/download' },
 ];
 
+/** The ordinals address the fake wallet `id` reports (same derivation as connect()). */
+export function demoOrdinalsAddress(id: WalletId, network: Network): string {
+  const ordX = schnorr.getPublicKey(sha256(enc.encode(`demo-ord|${id}`)));
+  return btc.p2tr(ordX, undefined, scureNetwork(network)).address!;
+}
+
 export interface FakeWalletOptions {
   installed?: WalletId[];
+  /** signMessage rejects (user declined). */
+  rejectSignMessage?: boolean;
   /** Payment address type the wallet reports. */
   paymentType?: 'p2wpkh' | 'p2sh-p2wpkh' | 'p2tr' | 'p2pkh';
   /** Wallet mutates the transaction before signing (should be caught by the txid check). */
@@ -470,6 +811,12 @@ export function createFakeWallets(log: CallLog = [], opts: FakeWalletOptions = {
           for (const { index } of req.inputsToSign) tx.signIdx(payPriv, index);
           if (req.finalize) tx.finalize();
           return { psbtBase64: base64.encode(tx.toPSBT()) };
+        },
+        async signMessage(message, address) {
+          log.push('wallet.signMessage');
+          if (opts.rejectSignMessage) throw new Error('User rejected the request.');
+          // Simulated BIP-322: deterministic and unforgeable enough for the fakes (the real wallet signs with its key).
+          return base64.encode(sha256(enc.encode(`bip322|${address}|${message}|${hex.encode(ordPriv)}`)));
         },
         async disconnect() {
           log.push('wallet.disconnect');
@@ -532,6 +879,26 @@ export function createFakeImages(opts: FakeImageOptions = {}): ImageTools {
   };
 }
 
+// ------------------------------------------------------------------ telegram gate
+
+export interface FakeGateOptions {
+  /** Reject every submission with this message. */
+  reject?: string;
+}
+
+export function createFakeGate(log: CallLog = [], opts: FakeGateOptions = {}): GateApi & { submissions: Array<{ url: string; body: unknown }> } {
+  const submissions: Array<{ url: string; body: unknown }> = [];
+  return {
+    submissions,
+    async submit(url, body) {
+      log.push('gate.submit');
+      submissions.push({ url, body });
+      if (opts.reject) return { ok: false, message: opts.reject };
+      return { ok: true, invite: `https://t.me/+demo-${body.token.slice(0, 6)}`, message: 'Welcome, gentleman.' };
+    },
+  };
+}
+
 // ------------------------------------------------------------------ bundle
 
 export interface FakeServicesOptions {
@@ -540,12 +907,15 @@ export interface FakeServicesOptions {
   mint?: Omit<FakeMintOptions, 'network' | 'chain'>;
   wallet?: FakeWalletOptions;
   images?: FakeImageOptions | ImageTools;
+  gate?: FakeGateOptions;
 }
 
 export interface FakeServices extends Services {
   log: CallLog;
   chainState: FakeChainState;
   apiOrders: Map<string, Order>;
+  apiVotes: Map<string, PublicVote[]>;
+  gateSubmissions: Array<{ url: string; body: unknown }>;
 }
 
 export function createFakeServices(o: FakeServicesOptions = {}): FakeServices {
@@ -554,6 +924,7 @@ export function createFakeServices(o: FakeServicesOptions = {}): FakeServices {
   const chain = createFakeChain(log);
   const mintApi = createFakeMintApi(log, { network, chain: chain.state, ...(o.mint ?? {}) });
   const images = o.images && 'encode' in o.images ? o.images : createFakeImages(o.images as FakeImageOptions | undefined);
+  const gate = createFakeGate(log, o.gate);
   return {
     mode: 'demo',
     mintApi,
@@ -561,8 +932,11 @@ export function createFakeServices(o: FakeServicesOptions = {}): FakeServices {
     chain,
     inscription: createFakeInscription(log),
     images,
+    gate,
     log,
     chainState: chain.state,
     apiOrders: mintApi.orders,
+    apiVotes: mintApi.votes,
+    gateSubmissions: gate.submissions,
   };
 }

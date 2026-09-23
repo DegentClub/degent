@@ -12,6 +12,20 @@ pnpm --filter @bsh/degent-web typecheck
 pnpm --filter @bsh/degent-web build      # → dist/
 ```
 
+## Pages
+
+| Path | What | Who |
+|---|---|---|
+| `/` | The mint wizard (below): Design → Mint → Confirm → Approve; Track shows the four stages, the live member tally ("2 of 3 members have approved"), the declined state with the parent-less reveal, and a share card once delivered | anyone |
+| `/review` | The members' vote (ADR-0005): sign in with the wallet that holds a Degent (SIWB challenge from the mint, BIP-322 `signMessage` via `@bsh/wallet-kit`), grid of orders in `member_review` with preview, size and tier, Approve / Decline by signing `Approve Degent order <id> (<ref>)` | holders |
+| `/explorer` | The Register: stats header (`/v1/stats`), filter/sort/paginated grid of every Degent (`/v1/explorer`), member detail | anyone |
+| `/verify?tg=<token>` | Telegram gate landing: connect, sign the gate statement, POST `{token, address, message, signature}` to `VITE_GATE_URL` (the gate service is built separately) | holders |
+
+Routing is a few lines in `src/router.ts` (pathname → route); `?demo=1` works on every page and seeds three
+strangers' orders into the review queue.
+
+Configuration adds `VITE_GATE_URL` (gate endpoint; empty disables `/verify`) and `VITE_SITE_URL` (share links).
+
 ## Flow
 
 ```

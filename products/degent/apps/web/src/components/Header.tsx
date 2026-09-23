@@ -1,6 +1,13 @@
 import { useMint } from '../flow/context';
 import { shortHash } from '../lib/format';
+import { navigate, ROUTE_PATHS, type Route } from '../router';
 import { Button } from './ui';
+
+const NAV: Array<{ route: Route; label: string }> = [
+  { route: 'mint', label: 'Mint' },
+  { route: 'explorer', label: 'Explorer' },
+  { route: 'review', label: 'Review' },
+];
 
 export function BowtieMark({ size = 28 }: { size?: number }) {
   return (
@@ -11,7 +18,7 @@ export function BowtieMark({ size = 28 }: { size?: number }) {
   );
 }
 
-export function Header() {
+export function Header({ route = 'mint' }: { route?: Route }) {
   const { state, dispatch } = useMint();
   const w = state.wallet;
   const locked = state.step === 'pay' && state.pay.phase !== 'idle' && state.pay.phase !== 'error';
@@ -22,8 +29,25 @@ export function Header() {
         <span className="wordmark">
           degent<span className="wordmark__dot">.</span>club
         </span>
-        <span className="header__tag">The Mint</span>
+        <span className="header__tag">{route === 'mint' ? 'The Mint' : route === 'review' ? 'The Review' : route === 'explorer' ? 'The Register' : 'The Lounge'}</span>
       </div>
+      <nav className="header__nav" aria-label="Site">
+        {NAV.map((n) => (
+          <a
+            key={n.route}
+            href={ROUTE_PATHS[n.route]}
+            className={`header__link ${route === n.route ? 'header__link--on' : ''}`}
+            aria-current={route === n.route ? 'page' : undefined}
+            onClick={(e) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+              e.preventDefault();
+              navigate(ROUTE_PATHS[n.route]);
+            }}
+          >
+            {n.label}
+          </a>
+        ))}
+      </nav>
       {w ? (
         <div className="header__wallet">
           <span className="chip" title={w.ordinals.address}>

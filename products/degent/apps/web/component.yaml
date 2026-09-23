@@ -3,7 +3,7 @@ package: "@bsh/degent-web"
 kind: app
 product: degent
 owner: team-degent
-summary: degent.club automated mint front end - connect any wallet, create, validate, preview, quote, pay, track, rescue.
+summary: degent.club front end - the four-stage mint (Design, Mint, Confirm, Approve with live member votes), the members' review queue, the Degent Explorer and the Telegram-gate verify page.
 lifecycle: beta
 depends_on: ["@bsh/inscription", "@bsh/wallet-kit", "@bsh/degent-mint-sdk"]
 consumes: [contracts/openapi/degent-mint.yaml]

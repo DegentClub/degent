@@ -59,5 +59,16 @@ export function createRealMintApi(baseUrl: string, fetchImpl?: FetchLike): MintA
       const r = await client.getRescue(id, need(token));
       return { hex: r.hex, txid: r.txid };
     },
+    authChallenge: (address) => client.authChallenge({ address }),
+    authVerify: (address, message, signature) => client.authVerify({ address, message, signature }),
+    getReviewQueue: (session) => client.reviewQueue(session),
+    castVote: (id, session, req) => client.castVote(id, session, req),
+    getVotes: (id) => client.getVotes(id),
+    getRegister: () => client.register(),
+    getRegisterMember: (n) => client.registerMember(n),
+    getHolder: (address) => client.registerHolder(address),
+    verifyMember: (id) => client.registerVerify(id),
+    getExplorer: (q) => client.explorer(q),
+    getStats: () => client.stats(),
   };
 }

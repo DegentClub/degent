@@ -9,6 +9,10 @@ export interface AppConfig {
   ordContentUrl: string;
   pollIntervalMs: number;
   demo: boolean;
+  /** Telegram gate endpoint the /verify page posts to (VITE_GATE_URL). Empty = gate disabled. */
+  gateUrl: string;
+  /** Public site origin used in share links (VITE_SITE_URL), defaults to the current origin. */
+  siteUrl: string;
 }
 
 const NETWORKS: readonly Network[] = ['mainnet', 'testnet', 'signet', 'regtest'];
@@ -37,6 +41,8 @@ export interface EnvLike {
   VITE_EXPLORER_URL?: string;
   VITE_ORD_URL?: string;
   VITE_POLL_MS?: string;
+  VITE_GATE_URL?: string;
+  VITE_SITE_URL?: string;
 }
 
 export function readConfig(env: EnvLike, search: string): AppConfig {
@@ -53,5 +59,7 @@ export function readConfig(env: EnvLike, search: string): AppConfig {
     ordContentUrl: trimSlash(env.VITE_ORD_URL ?? 'https://ordinals.com'),
     pollIntervalMs: Number.isFinite(poll) && poll > 0 ? poll : demo ? 1200 : 5000,
     demo,
+    gateUrl: trimSlash(env.VITE_GATE_URL ?? ''),
+    siteUrl: trimSlash(env.VITE_SITE_URL ?? 'https://degent.club'),
   };
 }

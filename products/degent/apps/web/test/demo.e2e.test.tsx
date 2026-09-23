@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { readConfig } from '../src/config';
 import { createDemoServices } from '../src/services';
@@ -86,10 +86,27 @@ describe('demo mode: the whole flow, end to end, through the UI', () => {
     await user.click(screen.getByRole('checkbox', { name: /I have kept a copy/ }));
     await user.click(sign);
 
-    // 7 · Track
+    // 7 · Track: Design -> Mint -> Confirm -> Approve, with the members' votes arriving live
     expect(await screen.findByRole('heading', { level: 1, name: /From mempool to membership/ })).toBeInTheDocument();
-    expect(await screen.findByText('hash match ✓', {}, { timeout: 4000 })).toBeInTheDocument();
+    const stages = screen.getByRole('list', { name: 'Mint stages' });
+    expect(within(stages).getAllByRole('listitem').map((li) => li.textContent?.split(' — ')[0]?.replace(/^\d/, ''))).toEqual(
+      expect.arrayContaining([expect.stringContaining('Design'), expect.stringContaining('Mint'), expect.stringContaining('Confirm'), expect.stringContaining('Approve')]),
+    );
+    expect(await screen.findByText(/of 3 members have approved/, {}, { timeout: 4000 })).toBeInTheDocument();
+    expect((await screen.findAllByText('Degent #4113', {}, { timeout: 4000 })).length).toBeGreaterThan(0);
+    expect(await screen.findByText('hash match ✓', {}, { timeout: 6000 })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Welcome to the club.' })).toBeInTheDocument();
+    expect(screen.getByTestId('stage-approve')).toHaveAttribute('data-state', 'done');
+    // Share card on delivery
+    const card = screen.getByTestId('share-card');
+    expect(within(card).getByRole('heading', { name: 'Degent #4113' })).toBeInTheDocument();
+    expect(within(card).getByRole('link', { name: /Share on X/ })).toHaveAttribute('href', expect.stringContaining('twitter.com/intent/tweet'));
+    expect(within(card).getByRole('link', { name: 'View in the Explorer' })).toHaveAttribute('href', 'https://degent.club/explorer?q=4113');
+    const order = [...services.apiOrders.values()][0]!;
+    expect(order.timeline.map((e) => e.status)).toEqual([
+      'awaiting_content', 'reviewing', 'approved', 'awaiting_payment', 'paid', 'confirming', 'member_review', 'queued', 'revealing', 'revealed', 'confirmed', 'verified', 'delivered',
+    ]);
+    expect(services.apiVotes.get(order.id)!.map((v) => v.degent)).toEqual([17, 808, 2049]);
 
     // The money path happened in the only safe order.
     const at = (n: string) => log.indexOf(n);
@@ -97,5 +114,5 @@ describe('demo mode: the whole flow, end to end, through the UI', () => {
     expect(at('chain.broadcast')).toBeGreaterThan(at('wallet.signPsbt'));
     // The token never leaked into the call log.
     expect(log.join(' ')).not.toContain(bundle.orderToken);
-  });
+  }, 20_000);
 });

@@ -14,6 +14,7 @@ const wallet = (paymentType: WalletSession['payment']['addressType'] = 'p2wpkh')
   ordinals: { address: 'bc1pordinals', publicKey: '00', addressType: 'p2tr' },
   payment: { address: paymentType === 'p2pkh' ? '1Legacy' : 'bc1qpay', publicKey: '02', addressType: paymentType },
   signPsbt: async () => ({ psbtBase64: '' }),
+  signMessage: async () => 'AA==',
   disconnect: async () => undefined,
 });
 const artwork: Artwork = {
@@ -60,6 +61,8 @@ const order = (over: Partial<Order> = {}): Order => ({
   rescued: false,
   serviceFeeAddress: null,
   queue: null,
+  approval: null,
+  degentNumber: null,
   timeline: [],
   createdAt: '',
   updatedAt: '',

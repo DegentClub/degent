@@ -1,4 +1,4 @@
-/** ADR-0002 §6 order state machine, as presented to the user. */
+/** ADR-0002 §6 order state machine plus the member-approval stage of ADR-0005, as presented to the user. */
 import type { Order, OrderEvent, OrderStatus } from '@bsh/degent-mint-sdk';
 
 export const HAPPY_PATH: readonly OrderStatus[] = [
@@ -7,6 +7,8 @@ export const HAPPY_PATH: readonly OrderStatus[] = [
   'approved',
   'awaiting_payment',
   'paid',
+  'confirming',
+  'member_review',
   'queued',
   'revealing',
   'revealed',
@@ -15,7 +17,7 @@ export const HAPPY_PATH: readonly OrderStatus[] = [
   'delivered',
 ];
 
-export const OFF_PATH: readonly OrderStatus[] = ['rejected', 'expired', 'rescue_available', 'failed'];
+export const OFF_PATH: readonly OrderStatus[] = ['rejected', 'expired', 'declined', 'rescue_available', 'failed'];
 
 export const STATUS_COPY: Record<OrderStatus, { label: string; blurb: string }> = {
   awaiting_content: { label: 'Order opened', blurb: 'Waiting for your artwork bytes.' },
@@ -24,7 +26,10 @@ export const STATUS_COPY: Record<OrderStatus, { label: string; blurb: string }> 
   rejected: { label: 'Rejected', blurb: 'The art did not meet the brief. You have paid nothing.' },
   awaiting_payment: { label: 'Awaiting payment', blurb: 'Half-signed reveal stored. Waiting for your funding transaction.' },
   paid: { label: 'Payment seen', blurb: 'Your funding (commit) transaction is on the network.' },
-  queued: { label: 'Queued', blurb: 'Waiting for its lane. Block Degents take a whole block each.' },
+  confirming: { label: 'Confirming', blurb: 'Waiting for the funding transaction to be mined before the members see it.' },
+  member_review: { label: 'Member review', blurb: 'Existing club members are voting on your Degent.' },
+  declined: { label: 'Declined by the members', blurb: 'The club said no. You keep your inscription — reveal it without the parent link below.' },
+  queued: { label: 'Approved · queued', blurb: 'The members approved. Waiting for its lane. Block Degents take a whole block each.' },
   revealing: { label: 'Revealing', blurb: 'The parent is being attached and co-signed.' },
   revealed: { label: 'Revealed', blurb: 'The reveal transaction is in the mempool.' },
   confirmed: { label: 'Confirmed', blurb: 'Mined into a block.' },
@@ -34,6 +39,61 @@ export const STATUS_COPY: Record<OrderStatus, { label: string; blurb: string }> 
   rescue_available: { label: 'Rescue available', blurb: 'The service has not revealed in time. You can reveal it yourself.' },
   failed: { label: 'Failed', blurb: 'Something went wrong. See the detail below.' },
 };
+
+// ---------------------------------------------------------------- the four stages (ADR-0005)
+
+export type Stage = 'design' | 'mint' | 'confirm' | 'approve';
+export const STAGES: readonly Stage[] = ['design', 'mint', 'confirm', 'approve'];
+export const STAGE_COPY: Record<Stage, { label: string; blurb: string }> = {
+  design: { label: 'Design', blurb: 'Art in the brief, checked by the automated doorman before anything is payable.' },
+  mint: { label: 'Mint', blurb: 'Your reveal is pre-signed in the browser; you fund the commit with your own wallet.' },
+  confirm: { label: 'Confirm', blurb: 'The funding transaction is mined. Only then do the members see it.' },
+  approve: { label: 'Approve', blurb: 'Existing members vote. On quorum the club co-signs the parent link and reveals your Degent.' },
+};
+
+const STAGE_OF: Record<OrderStatus, Stage> = {
+  awaiting_content: 'design',
+  reviewing: 'design',
+  approved: 'design',
+  rejected: 'design',
+  awaiting_payment: 'mint',
+  paid: 'mint',
+  expired: 'mint',
+  failed: 'mint',
+  confirming: 'confirm',
+  member_review: 'approve',
+  declined: 'approve',
+  queued: 'approve',
+  revealing: 'approve',
+  revealed: 'approve',
+  confirmed: 'approve',
+  verified: 'approve',
+  delivered: 'approve',
+  rescue_available: 'approve',
+};
+
+export function stageOf(status: OrderStatus): Stage {
+  return STAGE_OF[status];
+}
+
+export interface StageStep {
+  stage: Stage;
+  label: string;
+  blurb: string;
+  state: StepState;
+}
+
+/** The four-stage strip: done before the current stage, current, upcoming after; `problem` on an off-path status. */
+export function buildStages(order: Pick<Order, 'status'>): StageStep[] {
+  const cur = STAGES.indexOf(stageOf(order.status));
+  const offPath = OFF_PATH.includes(order.status);
+  const finished = order.status === 'delivered';
+  return STAGES.map((stage, i) => ({
+    stage,
+    ...STAGE_COPY[stage],
+    state: i < cur || (i === cur && finished) ? 'done' : i === cur ? (offPath ? 'problem' : 'current') : 'upcoming',
+  }));
+}
 
 export type StepState = 'done' | 'current' | 'upcoming' | 'problem';
 
@@ -53,6 +113,11 @@ export function isPrePaid(status: OrderStatus): boolean {
   return ['awaiting_content', 'reviewing', 'approved', 'awaiting_payment'].includes(status);
 }
 
+/** Self-rescue is offered right now (timeout, policy refusal, or the members declined). */
+export function rescueOffered(status: OrderStatus): boolean {
+  return status === 'rescue_available' || status === 'declined';
+}
+
 /** Last event per status. */
 function lastEvents(timeline: OrderEvent[]): Map<OrderStatus, OrderEvent> {
   const m = new Map<OrderStatus, OrderEvent>();
@@ -62,7 +127,7 @@ function lastEvents(timeline: OrderEvent[]): Map<OrderStatus, OrderEvent> {
 
 /**
  * Steps for the stepper. The happy path is always shown; an off-path status (rejected, expired,
- * rescue_available, failed) is inserted after the last happy step reached, marked `problem`.
+ * declined, rescue_available, failed) is inserted after the last happy step reached, marked `problem`.
  */
 export function buildTimeline(order: Pick<Order, 'status' | 'timeline'>): TimelineStep[] {
   const events = lastEvents(order.timeline);

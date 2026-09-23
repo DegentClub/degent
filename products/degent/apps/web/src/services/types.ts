@@ -5,11 +5,23 @@
  * tests and `?demo=1`.
  */
 import type {
-  ServiceConfig,
+  AuthChallengeResponse,
+  AuthVerifyResponse,
+  CastVoteRequest,
   CreateOrderRequest,
+  ExplorerQuery,
+  ExplorerResponse,
+  HolderResponse,
   Network,
   Order,
+  RegisterMember,
+  RegisterSummary,
+  ReviewQueueResponse,
+  ServiceConfig,
+  StatsResponse,
   SubmitRevealRequest,
+  VerifyMembershipResponse,
+  VotesResponse,
 } from '@bsh/degent-mint-sdk';
 
 // ---------------------------------------------------------------- mint service
@@ -63,6 +75,35 @@ export interface MintApi {
   getOrder(orderId: string): Promise<Order>;
   /** GET /v1/orders/{id}/rescue: the parent-less [commit] -> [child] reveal, fully signed. */
   getRescue(orderId: string, orderToken: string): Promise<RescueTx>;
+
+  // Member approval (ADR-0005): holder sign-in, review queue, votes
+  authChallenge(address: string): Promise<AuthChallengeResponse>;
+  authVerify(address: string, message: string, signature: string): Promise<AuthVerifyResponse>;
+  getReviewQueue(sessionToken: string): Promise<ReviewQueueResponse>;
+  castVote(orderId: string, sessionToken: string, req: CastVoteRequest): Promise<VotesResponse>;
+  getVotes(orderId: string): Promise<VotesResponse>;
+
+  // The Register (public)
+  getRegister(): Promise<RegisterSummary>;
+  getRegisterMember(n: number): Promise<RegisterMember>;
+  getHolder(address: string): Promise<HolderResponse>;
+  verifyMember(inscriptionId: string): Promise<VerifyMembershipResponse>;
+  getExplorer(query: ExplorerQuery): Promise<ExplorerResponse>;
+  getStats(): Promise<StatsResponse>;
+}
+
+// ---------------------------------------------------------------- telegram gate (/verify)
+
+export interface GateSubmission {
+  token: string;
+  address: string;
+  message: string;
+  signature: string;
+}
+
+/** The holders-only Telegram gate service (built separately): POST {token, address, message, signature}. */
+export interface GateApi {
+  submit(url: string, body: GateSubmission): Promise<{ ok: boolean; invite?: string; message?: string }>;
 }
 
 // ---------------------------------------------------------------- wallet
@@ -102,6 +143,8 @@ export interface WalletSession {
   ordinals: WalletAccount;
   payment: WalletAccount;
   signPsbt(psbtBase64: string, req: SignPsbtRequest): Promise<SignPsbtResult>;
+  /** BIP-322 simple signature (base64) of `message` by `address` (SIWB sign-in, member votes). */
+  signMessage(message: string, address: string): Promise<string>;
   pushTx?(hex: string): Promise<string>;
   disconnect(): Promise<void>;
 }
@@ -193,4 +236,5 @@ export interface Services {
   chain: ChainApi;
   inscription: InscriptionOps;
   images: ImageTools;
+  gate: GateApi;
 }

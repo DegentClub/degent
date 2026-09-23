@@ -18,6 +18,8 @@ export function testApp(over: Partial<AppConfig> = {}): AppConfig {
     ordContentUrl: 'https://ord.test',
     pollIntervalMs: 10,
     demo: true,
+    gateUrl: 'https://gate.test/verify',
+    siteUrl: 'https://degent.club',
     ...over,
   };
 }
@@ -83,10 +85,23 @@ export async function stateAtQuote(
   return { state: s, vault };
 }
 
-export function renderApp(services: Services, opts: { app?: AppConfig; store?: KeyValueStore; vault?: KeyVault; initial?: FlowState } = {}) {
+export function renderApp(
+  services: Services,
+  opts: { app?: AppConfig; store?: KeyValueStore; vault?: KeyVault; initial?: FlowState; path?: string; search?: string } = {},
+) {
   const store = opts.store ?? memoryStore();
   const vault = opts.vault ?? createKeyVault();
   const app = opts.app ?? testApp();
-  const utils = render(<App app={app} services={services} store={store} vault={vault} {...(opts.initial ? { initial: opts.initial } : {})} />);
+  const utils = render(
+    <App
+      app={app}
+      services={services}
+      store={store}
+      vault={vault}
+      path={opts.path ?? '/'}
+      {...(opts.search !== undefined ? { search: opts.search } : {})}
+      {...(opts.initial ? { initial: opts.initial } : {})}
+    />,
+  );
   return { ...utils, store, vault, app };
 }

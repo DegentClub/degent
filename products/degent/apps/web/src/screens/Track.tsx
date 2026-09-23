@@ -1,12 +1,126 @@
 import { useEffect, useState } from 'react';
-import type { Order } from '@bsh/degent-mint-sdk';
+import type { Order, VotesResponse } from '@bsh/degent-mint-sdk';
 import { useMint } from '../flow/context';
 import { rescue } from '../flow/effects';
 import { ScreenHeading } from '../components/ScreenHeading';
 import { Alert, Badge, Button, CopyBlock, ExternalLink, Mono, Panel, errorText, useObjectUrl } from '../components/ui';
-import { buildTimeline, isTerminal, STATUS_COPY } from '../lib/timeline';
+import { buildStages, buildTimeline, isTerminal, rescueOffered, STATUS_COPY } from '../lib/timeline';
 import { clearRecovery, recoveryJson } from '../lib/recovery';
-import { formatTimestamp, shortHash } from '../lib/format';
+import { formatSize, formatTimestamp, shortHash } from '../lib/format';
+import type { Services } from '../services/types';
+
+/** The four stages of ADR-0005: Design -> Mint -> Confirm -> Approve. */
+export function Stages({ order }: { order: Pick<Order, 'status'> }) {
+  return (
+    <ol className="stages" aria-label="Mint stages">
+      {buildStages(order).map((s, i) => (
+        <li key={s.stage} className={`stage stage--${s.state}`} data-testid={`stage-${s.stage}`} data-state={s.state} aria-current={s.state === 'current' || s.state === 'problem' ? 'step' : undefined}>
+          <span className="stage__num" aria-hidden="true">{i + 1}</span>
+          <span className="stage__label">{s.label}</span>
+          <span className="sr-only"> — {s.state === 'done' ? 'done' : s.state === 'current' ? 'in progress' : s.state === 'problem' ? 'needs attention' : 'not yet'}</span>
+          <span className="stage__blurb">{s.blurb}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** Live tally while the members vote: "2 of 3 members have approved". */
+export function Votes({ order, services, pollMs }: { order: Order; services: Services; pollMs: number }) {
+  const [votes, setVotes] = useState<VotesResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const reviewing = order.status === 'member_review';
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      try {
+        const v = await services.mintApi.getVotes(order.id);
+        if (!alive) return;
+        setVotes(v);
+        setError(null);
+      } catch (e) {
+        if (!alive) return;
+        setError(errorText(e));
+      }
+      if (reviewing) timer = setTimeout(() => void tick(), pollMs);
+    };
+    void tick();
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [order.id, reviewing, services, pollMs]);
+  const a = votes?.approval ?? order.approval;
+  if (!a) return null;
+  const deadline = a.reviewDeadline ? formatTimestamp(a.reviewDeadline) : null;
+  return (
+    <div className="votes" aria-live="polite" data-testid="votes">
+      <p className="votes__headline">
+        <strong>
+          {a.approvals} of {a.approvalQuorum} members have approved
+        </strong>
+        {a.declines > 0 ? (
+          <>
+            {' '}
+            · {a.declines} of {a.declineQuorum} declined
+          </>
+        ) : null}
+      </p>
+      <div className="votebar" role="img" aria-label={`${a.approvals} approvals of ${a.approvalQuorum} needed`}>
+        {Array.from({ length: a.approvalQuorum }, (_, i) => (
+          <span key={i} className={`votebar__seg ${i < a.approvals ? 'votebar__seg--on' : ''}`} />
+        ))}
+      </div>
+      {votes && votes.votes.length > 0 ? (
+        <ul className="votelist" aria-label="Votes">
+          {votes.votes.map((v) => (
+            <li key={`${v.degent}-${v.at}`}>
+              <Badge tone={v.vote === 'approve' ? 'good' : 'bad'}>{v.vote === 'approve' ? 'Approved' : 'Declined'}</Badge> by Degent{' '}
+              <span className="mono">#{v.degent}</span> <span className="muted small">· {formatTimestamp(v.at)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {reviewing && deadline ? (
+        <p className="small muted">
+          Every vote is a BIP-322 signature by a member’s wallet, verifiable by anyone. If the club has not decided by{' '}
+          <span className="mono">{deadline}</span>, self-rescue is offered so your funds are never stranded.
+        </p>
+      ) : null}
+      {error ? <p className="small muted">Could not refresh the votes: {error}</p> : null}
+    </div>
+  );
+}
+
+/** Delivered: a card worth showing off. */
+export function ShareCard({ order, siteUrl, imageUrl }: { order: Order; siteUrl: string; imageUrl: string }) {
+  const n = order.degentNumber;
+  const title = n !== null ? `Degent #${n}` : 'A new inscription';
+  const link = n !== null ? `${siteUrl}/explorer?q=${n}` : `${siteUrl}/`;
+  const text = n !== null
+    ? `Degent #${n} has joined the Decentralized Gentlemen Club — ${formatSize(order.contentLength)} inscribed on Bitcoin, approved by the members. ${link}`
+    : `Inscribed on Bitcoin (${formatSize(order.contentLength)}), the non-custodial way. ${link}`;
+  const tweet = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`;
+  return (
+    <section className="sharecard" aria-label="Share card" data-testid="share-card">
+      <img className="sharecard__img" src={imageUrl} alt={`${title} as rendered from the chain`} />
+      <div className="sharecard__body">
+        <p className="kicker">{order.rescued ? 'Inscribed without the parent link' : 'Member of the club'}</p>
+        <h3 className="sharecard__title">{title}</h3>
+        <p className="small">
+          {formatSize(order.contentLength)} · {order.tier === 'block' ? 'Block Degent' : 'Standard Degent'} · <Mono>{shortHash(order.inscriptionId ?? '', 6)}</Mono>
+        </p>
+        <div className="row">
+          <ExternalLink href={tweet}>Share on X</ExternalLink>
+          <a className="link" href={link}>
+            View in the Explorer
+          </a>
+        </div>
+      </div>
+    </section>
+  );
+}
 
 type HashCheck = { state: 'idle' | 'checking' } | { state: 'match' | 'mismatch'; onChain: string } | { state: 'error'; message: string };
 
@@ -128,14 +242,16 @@ export function Track() {
       <ScreenHeading
         step="Step 7 of 7"
         title="From mempool to membership."
-        lede="This page follows your order on its own. You can close it — reopen the site on this device to resume."
+        lede="Design → Mint → Confirm → Approve. This page follows your order on its own. You can close it — reopen the site on this device to resume."
       />
+
+      {order ? <Stages order={order} /> : null}
 
       <Panel title="Status">
         <div aria-live="polite" className="status-now">
           {order ? (
             <p>
-              <Badge tone={order.status === 'delivered' || order.status === 'verified' ? 'good' : order.status === 'rescue_available' || order.status === 'failed' || order.status === 'rejected' || order.status === 'expired' ? 'bad' : 'brass'}>
+              <Badge tone={order.status === 'delivered' || order.status === 'verified' ? 'good' : rescueOffered(order.status) || order.status === 'failed' || order.status === 'rejected' || order.status === 'expired' ? 'bad' : 'brass'}>
                 {STATUS_COPY[order.status].label}
               </Badge>{' '}
               {STATUS_COPY[order.status].blurb}
@@ -170,23 +286,46 @@ export function Track() {
             <span className="mono">~{order.queue.etaMinutes ?? '?'} min</span>
           </p>
         ) : null}
+        {order?.degentNumber !== null && order?.degentNumber !== undefined ? (
+          <p className="small">
+            The members approved: this is <strong>Degent #{order.degentNumber}</strong>.
+          </p>
+        ) : null}
         {order ? <Timeline order={order} explorerUrl={app.explorerUrl} /> : null}
       </Panel>
 
-      {order?.status === 'rescue_available' ? (
-        <Panel title="Rescue your Degent" kicker="Self-custody, as promised">
+      {order && (order.status === 'member_review' || order.approval) && !isTerminal(order.status) ? (
+        <Panel title="Member approval" kicker="Stage 4 · Approve">
           <p>
-            The mint has not revealed your Degent in time. Your pre-signed reveal was signed with{' '}
-            <Mono>SIGHASH_SINGLE | ANYONECANPAY</Mono>, so the same signature also works in a simple one-input, one-output
-            transaction: <em>commit → your ordinals address</em>. Broadcasting it lands the inscription now, without the
-            on-chain parent link to the collection. Your sats and your art are never stranded.
+            Every new Degent is approved by existing members before the club co-signs the parent link. Approval{' '}
+            <em>is</em> membership: the parent link is applied at reveal.
           </p>
+          <Votes order={order} services={services} pollMs={app.pollIntervalMs} />
+        </Panel>
+      ) : null}
+
+      {order && rescueOffered(order.status) ? (
+        <Panel title={order.status === 'declined' ? 'The members declined — keep your inscription' : 'Rescue your Degent'} kicker="Self-custody, as promised">
+          {order.status === 'declined' ? (
+            <p>
+              The club voted not to admit this piece. Nothing is lost: your funding is sitting in the commit output and
+              your pre-signed reveal still works <em>without</em> the parent. Broadcast it and the inscription lands in
+              your ordinals address — it is simply not a Degent.
+            </p>
+          ) : (
+            <p>
+              The mint has not revealed your Degent in time. Your pre-signed reveal was signed with{' '}
+              <Mono>SIGHASH_SINGLE | ANYONECANPAY</Mono>, so the same signature also works in a simple one-input,
+              one-output transaction: <em>commit → your ordinals address</em>. Broadcasting it lands the inscription
+              now, without the on-chain parent link to the collection. Your sats and your art are never stranded.
+            </p>
+          )}
           {!state.recovery ? (
             <p className="small muted">No local recovery bundle on this device: the mint’s rescue endpoint will be used.</p>
           ) : null}
           <div className="actions">
             <Button variant="danger" busy={rescueState.state === 'busy'} disabled={rescueState.state === 'done'} onClick={() => void doRescue()}>
-              Rescue now (reveal without parent)
+              {order.status === 'declined' ? 'Reveal without the parent (keep my inscription)' : 'Rescue now (reveal without parent)'}
             </Button>
           </div>
           <div aria-live="assertive">
@@ -218,6 +357,7 @@ export function Track() {
               <figcaption className="small muted">On chain (ord /content)</figcaption>
             </figure>
           </div>
+          {order?.status === 'delivered' ? <ShareCard order={order} siteUrl={app.siteUrl} imageUrl={services.chain.contentUrl(inscriptionId)} /> : null}
           <p aria-live="polite" className="hashline">
             {hash.state === 'checking' ? 'Hashing the on-chain bytes…' : null}
             {hash.state === 'match' ? (
