@@ -1,7 +1,9 @@
 /**
  * Parent co-signing policy (ADR-0002 §3), as a pure function over the PSBT the worker wants
  * signed. The PolicySigner adapter runs this BEFORE touching the parent key; any violation
- * refuses the signature.
+ * refuses the signature. The shape is exact: inputs are [parent UTXO, this order's commit
+ * outpoint] and outputs are [parent return == parentValue, child == order recipient & postage];
+ * nothing else is accepted.
  *
  * One deliberate tightening versus the ADR text ("value >= its input value"): the parent return
  * must carry EXACTLY the parent input value. ord places the child on the first sat of the commit
@@ -26,6 +28,8 @@ export interface PolicyContext {
   collectionScript: Uint8Array;
   commitOutpoint: { txid: string; vout: number };
   commitValue: bigint;
+  /** P2TR script of this order's commit output (recomputed from K_e pub + content + parent). */
+  commitScript: Uint8Array;
   recipientScript: Uint8Array;
   postage: bigint;
   quotedFeeRate: number;
@@ -83,6 +87,7 @@ export function evaluateParentPolicy(psbtBase64: string, ctx: PolicyContext, cfg
   if (txidOf(in1.txid) !== ctx.commitOutpoint.txid.toLowerCase() || in1.index !== ctx.commitOutpoint.vout)
     v.push("input 1 is not this order's commit output");
   if (in1.witnessUtxo?.amount !== ctx.commitValue) v.push('input 1 value differs from the order commit value');
+  if (!eq(in1.witnessUtxo?.script, ctx.commitScript)) v.push("input 1 script is not this order's commit script");
   if (!in1.tapScriptSig || in1.tapScriptSig.length !== 1) v.push('input 1 is not signed by the reveal key');
 
   // output 0: parent back to the collection address, same value

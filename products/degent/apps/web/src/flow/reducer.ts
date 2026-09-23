@@ -5,7 +5,7 @@
 import type { CollectionConfig, Order, Tier } from '@bsh/degent-mint-sdk';
 import type { FeeSnapshot, QueueSnapshot, WalletSession } from '../services/types';
 import type { RecoveryBundle } from '../lib/recovery';
-import type { FundingPsbt } from '../lib/funding';
+import { isLegacy, type FundingPsbt } from '../lib/funding';
 import { initialPay, initialState, STEPS, type Artwork, type FlowState, type PayPhase, type Step } from './state';
 
 export type FlowAction =
@@ -45,9 +45,9 @@ export function canEnter(s: FlowState, step: Step): boolean {
     case 'connect':
       return s.config !== null;
     case 'create':
-      return s.config !== null && s.wallet !== null;
+      return s.config !== null && s.wallet !== null && !isLegacy(s.wallet.payment);
     case 'validate':
-      return s.config !== null && s.wallet !== null && s.artwork !== null;
+      return canEnter(s, 'create') && s.artwork !== null;
     case 'quote':
       return quoteReady(s);
     case 'pay':

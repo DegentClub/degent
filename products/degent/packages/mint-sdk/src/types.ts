@@ -215,6 +215,8 @@ export type ApiErrorCode =
   | 'review_rejected'
   | 'reveal_invalid'
   | 'rescue_unavailable'
+  | 'review_unavailable'
+  | 'queue_full'
   | 'internal';
 
 export interface ApiErrorBody {

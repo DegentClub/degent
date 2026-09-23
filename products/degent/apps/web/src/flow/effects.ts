@@ -17,7 +17,24 @@ import type { AppConfig } from '../config';
 import type { Artwork } from './state';
 import type { KeyVault } from './keyVault';
 import { buildFundingPsbt, extractSignedTx, type FundingPsbt } from '../lib/funding';
-import { RECOVERY_NOTE, saveRecovery, type KeyValueStore, type RecoveryBundle } from '../lib/recovery';
+import { RECOVERY_NOTE, RECOVERY_WARNING, saveRecovery, type KeyValueStore, type RecoveryBundle } from '../lib/recovery';
+
+export class MissingTokenError extends Error {
+  constructor() {
+    super(
+      'This order’s access token is not available in this browser, so the mint service will not accept ' +
+        'changes to it. If you paid, use the recovery bundle you saved (it contains the token). If you have ' +
+        'not paid yet, start a fresh order: nothing has been spent.',
+    );
+    this.name = 'MissingTokenError';
+  }
+}
+
+function requireToken(vault: KeyVault, orderId: string): string {
+  const t = vault.token(orderId);
+  if (!t) throw new MissingTokenError();
+  return t;
+}
 
 export type Sleep = (ms: number) => Promise<void>;
 export const realSleep: Sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -28,7 +45,7 @@ export async function openOrder(
 ): Promise<Order> {
   const { mintApi, inscription } = deps.services;
   const key = inscription.generateEphemeralKey();
-  let order = await mintApi.createOrder({
+  const created = await mintApi.createOrder({
     tier: args.tier,
     contentType: args.artwork.contentType,
     contentLength: args.artwork.size,
@@ -37,8 +54,11 @@ export async function openOrder(
     revealPubkey: key.pubkeyHex,
     feeRate: args.feeRate,
   });
+  if (!created.orderToken) throw new MissingTokenError();
+  let order = created.order;
   deps.vault.put(order.id, key.privkey);
-  order = await mintApi.uploadContent(order.id, args.artwork.bytes, args.artwork.contentType);
+  deps.vault.putToken(order.id, created.orderToken);
+  order = await mintApi.uploadContent(order.id, requireToken(deps.vault, order.id), args.artwork.bytes);
   const sleep = deps.sleep ?? realSleep;
   const maxPolls = deps.maxPolls ?? 60;
   for (let i = 0; i < maxPolls && (order.status === 'awaiting_content' || order.status === 'reviewing'); i++) {
@@ -96,6 +116,7 @@ export async function preparePayment(
   const commitAddress = quote.commitAddress;
   const privkey = deps.vault.get(order.id);
   if (!privkey) throw new MissingKeyError();
+  const orderToken = requireToken(deps.vault, order.id);
   const { chain, inscription, mintApi } = deps.services;
 
   args.onPhase?.('fetching-utxos');
@@ -133,7 +154,7 @@ export async function preparePayment(
   });
 
   args.onPhase?.('submitting-reveal');
-  const updated = await mintApi.submitReveal(order.id, {
+  const updated = await mintApi.submitReveal(order.id, orderToken, {
     commitTxid: funding.txid,
     commitVout: funding.commitVout,
     halfSignedRevealPsbt: reveal.psbtBase64,
@@ -154,7 +175,9 @@ export async function preparePayment(
     contentType: order.contentType,
     contentSha256: order.contentSha256,
     halfSignedRevealPsbt: reveal.psbtBase64,
+    orderToken,
     note: RECOVERY_NOTE,
+    warning: RECOVERY_WARNING,
   };
   const savedLocally = saveRecovery(bundle, deps.store);
   // The reveal is signed and stored in two places; K_e has no further purpose.
@@ -201,13 +224,22 @@ export async function signAndBroadcast(
  */
 export async function rescue(
   deps: { services: Services },
-  args: { orderId: string; bundle: RecoveryBundle | null; wallet: WalletSession | null; network: Network },
+  args: {
+    orderId: string;
+    orderToken: string | null;
+    bundle: RecoveryBundle | null;
+    wallet: WalletSession | null;
+    network: Network;
+  },
 ): Promise<{ txid: string; source: 'service' | 'local' }> {
   let tx: RescueTx;
   let source: 'service' | 'local' = 'service';
+  const token = args.orderToken ?? args.bundle?.orderToken ?? null;
   try {
-    tx = await deps.services.mintApi.getRescue(args.orderId);
+    if (!token) throw new MissingTokenError();
+    tx = await deps.services.mintApi.getRescue(args.orderId, token);
   } catch (e) {
+    // The half-signed reveal alone is enough to rescue; the token is only needed for the service path.
     if (!args.bundle) throw e;
     tx = deps.services.inscription.buildRescueReveal({
       network: args.network,

@@ -223,7 +223,10 @@ const PROGRESSION: Record<FakeScenario, OrderStatus[]> = {
   reject: [],
 };
 
-export function createFakeMintApi(log: CallLog = [], opts: FakeMintOptions): MintApi & { orders: Map<string, Order> } {
+export function createFakeMintApi(
+  log: CallLog = [],
+  opts: FakeMintOptions,
+): MintApi & { orders: Map<string, Order>; tokenFor(id: string): string | undefined } {
   const config = demoConfig(opts.network);
   const orders = new Map<string, Order>();
   const bodies = new Map<string, Uint8Array>();
@@ -243,6 +246,11 @@ export function createFakeMintApi(log: CallLog = [], opts: FakeMintOptions): Min
   };
 
   const requests = new Map<string, CreateOrderRequest>();
+  const tokens = new Map<string, string>();
+  const auth = (id: string, token: string) => {
+    if (!token) throw new Error('401 unauthorized: missing order token');
+    if (tokens.get(id) !== token) throw new Error('403 forbidden: order token does not match');
+  };
   const get = (id: string): Order => {
     const o = orders.get(id);
     if (!o) throw new Error(`order ${id} not found`);
@@ -287,6 +295,7 @@ export function createFakeMintApi(log: CallLog = [], opts: FakeMintOptions): Min
 
   return {
     orders,
+    tokenFor: (id: string) => tokens.get(id),
     async getConfig() {
       log.push('api.getConfig');
       return config;
@@ -327,10 +336,13 @@ export function createFakeMintApi(log: CallLog = [], opts: FakeMintOptions): Min
       };
       orders.set(id, order);
       requests.set(id, req);
-      return order;
+      const orderToken = hex.encode(schnorr.utils.randomSecretKey());
+      tokens.set(id, orderToken);
+      return { order, orderToken };
     },
-    async uploadContent(id, bytes) {
+    async uploadContent(id, token, bytes) {
       log.push('api.uploadContent');
+      auth(id, token);
       const o = get(id);
       if (sha256Hex(bytes) !== o.contentSha256) throw new Error('content hash does not match order');
       bodies.set(id, bytes);
@@ -338,9 +350,11 @@ export function createFakeMintApi(log: CallLog = [], opts: FakeMintOptions): Min
       const binding = { ...o, quote: quoteFor(requests.get(id)!) };
       return push(binding, 'reviewing', 'Automated art review started');
     },
-    async submitReveal(id, req: SubmitRevealRequest) {
+    async submitReveal(id, token, req: SubmitRevealRequest) {
       log.push('api.submitReveal');
+      auth(id, token);
       const o = get(id);
+      if (req.commitAddress && req.commitAddress !== o.quote?.commitAddress) throw new Error('409 commit address mismatch');
       if (o.status !== 'approved') throw new Error(`cannot submit reveal in status ${o.status}`);
       orders.set(id, { ...o, commitOutpoint: { txid: req.commitTxid, vout: req.commitVout } });
       return push(get(id), 'awaiting_payment', 'Half-signed reveal verified and stored');
@@ -385,9 +399,10 @@ export function createFakeMintApi(log: CallLog = [], opts: FakeMintOptions): Min
       }
       return push(cur, next, undefined, txid);
     },
-    async getRescue(id) {
+    async getRescue(id, token) {
       log.push('api.getRescue');
       if (opts.rescueEndpointDown) throw new Error('service unavailable');
+      auth(id, token);
       const o = get(id);
       const raw = sha256(enc.encode(`service-rescue|${id}`));
       const tx: RescueTx = { hex: hex.encode(raw), txid: hex.encode(dsha(raw).reverse()) };
