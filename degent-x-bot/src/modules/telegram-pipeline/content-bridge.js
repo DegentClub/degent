@@ -1,6 +1,9 @@
 const { getDb } = require('../../services/database');
 const { contentQueue } = require('../../db/schema');
 const logger = require('../../lib/logger');
+const config = require('../../config');
+const { gateContent } = require('../../lib/content-safety');
+const { maxTier } = require('../../lib/content-classifier');
 
 async function bridgeToContentQueue(mediaRecord, classification, metadata) {
   try {
@@ -22,10 +25,20 @@ async function bridgeToContentQueue(mediaRecord, classification, metadata) {
       approvalTier = classification.quality_score >= 85 ? 'auto' : 'review';
     }
 
+    // The caption itself can carry price talk — classify it and take the
+    // stricter of the category tier and the text tier.
+    const gate = gateContent(tweetText, {
+      contentType: 'repost',
+      reviewQueueEnabled: config.features.reviewQueueEnabled,
+    });
+    approvalTier = maxTier(approvalTier, gate.tier);
+    tweetText = gate.text;
+    const status = approvalTier === 'auto' && gate.autoPost ? 'approved' : 'pending';
+
     const [record] = await db.insert(contentQueue).values({
       contentType: 'repost',
       source: 'telegram',
-      status: approvalTier === 'auto' ? 'approved' : 'pending',
+      status,
       textContent: tweetText,
       mediaUrls: mediaRecord.storedUrl ? [mediaRecord.storedUrl] : [],
       telegramMessageId: metadata.messageId,

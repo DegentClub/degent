@@ -3,6 +3,7 @@ const { generateTweet, getContentTypeForTimeSlot } = require('../../content-engi
 const { postTweet, uploadMedia } = require('../../../services/twitter-client');
 const { canExecute, recordUsage } = require('../../../lib/rate-limiter');
 const { recordContent } = require('../../../lib/deduplicator');
+const { gateContent } = require('../../../lib/content-safety');
 const { getDb } = require('../../../services/database');
 const { contentQueue } = require('../../../db/schema');
 const config = require('../../../config');
@@ -16,7 +17,8 @@ async function handlePostContent(job) {
 
   const db = getDb();
 
-  // 1. Check if there's approved content waiting in the queue
+  // 1. Check if there's approved content waiting in the queue.
+  //    Manual-tier content is only eligible when a human signed off on it.
   const approved = await db.select()
     .from(contentQueue)
     .where(
@@ -24,12 +26,18 @@ async function handlePostContent(job) {
         eq(contentQueue.status, 'approved'),
       )
     )
-    .limit(1);
+    .limit(5);
 
   let contentToPost = null;
 
-  if (approved.length > 0) {
-    contentToPost = approved[0];
+  const eligible = approved.find((row) => row.approvalTier !== 'manual' || Boolean(row.approvedBy));
+  const blocked = approved.filter((row) => row.approvalTier === 'manual' && !row.approvedBy);
+  for (const row of blocked) {
+    logger.warn({ id: row.id }, 'Manual-tier content marked approved without approver; refusing to auto-post');
+  }
+
+  if (eligible) {
+    contentToPost = eligible;
     logger.info({ id: contentToPost.id, type: contentToPost.contentType }, 'Found approved content in queue');
   } else {
     // 2. Generate new content
@@ -42,17 +50,34 @@ async function handlePostContent(job) {
       return { skipped: true, reason: 'generation_failed' };
     }
 
-    // Insert into queue
+    // Classify and gate. Only auto-tier content with the review queue
+    // switched off is inserted as 'approved'; everything else waits for a
+    // human. Manual-tier content never auto-posts.
+    const gate = gateContent(generated.text, {
+      contentType,
+      reviewQueueEnabled: config.features.reviewQueueEnabled,
+    });
+
     const [record] = await db.insert(contentQueue).values({
       contentType,
       source: job.data?.manual ? 'manual' : 'ai_generated',
-      status: 'approved',
-      textContent: generated.text,
+      status: gate.status,
+      textContent: gate.text,
       aiModel: generated.model,
       aiPromptUsed: generated.prompt,
       contentScore: generated.score,
-      approvalTier: 'auto',
+      approvalTier: gate.tier,
     }).returning();
+
+    if (!gate.autoPost) {
+      logger.info({
+        id: record?.id,
+        tier: gate.tier,
+        reasons: gate.reasons,
+        safetyFailures: gate.safety.failures,
+      }, 'Generated content queued for review');
+      return { queued: true, id: record?.id, tier: gate.tier, status: gate.status };
+    }
 
     contentToPost = record;
   }
