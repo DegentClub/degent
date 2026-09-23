@@ -1,0 +1,87 @@
+# Decentralized Gentlemen Club — technical roadmap (machine-readable, canonical)
+# Schema: schemas/roadmap.schema.json; validated by `pnpm test:root` (test/roadmap.test.ts), which also checks that
+# every `verify` for an item in THIS repository names an existing package script, test file or script file.
+# Status values: todo | in_progress | done | blocked | deferred.
+# `verify` names the automated check that proves the item; `owner_action` marks items only the club owner can complete.
+# Items whose repo is not `degent` are verified in their own repository (their `verify` is informational here).
+version: 2
+updated: "2026-09-23"
+claim:
+  text: "The largest collection on Bitcoin, by blockspace"
+  measure: "sum of inscription content_length over the roster, via ord recursive endpoint"
+  reproduce: "node products/degent/services/mint/scripts/blockspace-query.mjs --collection products/degent/services/mint/data/roster.json --compare compare.json"
+repos:
+  degent: { url: https://github.com/DegentClub/degent, role: "this repository: the mint service, the front end, the mint SDK, the Register", local: true }
+  platform: { url: https://github.com/DegentClub/scribbit, role: "shared platform (@bsh/inscription, @bsh/wallet-kit, @bsh/identity, @bsh/events), vendored at deps/scribbit" }
+  marketplace: { url: https://github.com/antron3000/Degent-Marketplace, role: "exchange" }
+  combiner: { url: https://github.com/antron3000/degen-frame-combiner, role: "atelier prototype" }
+  xbot: { url: https://github.com/antron3000/Degent-X-Bot, role: "x account automation" }
+  archived: [ https://github.com/antron3000/Degen-minter, https://github.com/antron3000/degen-minter-2, https://github.com/antron3000/degen-minter-3 ]
+phases:
+  - id: p0
+    name: Stop-ship
+    exit: "No known path loses a user's BTC or inscription; bot posts nothing financial without a human."
+    items:
+      - { id: p0.1, repo: degent, title: "Mint locks after payment; stale quotes cannot be paid (pure reducer with entry guards)", status: done, verify: "pnpm --filter @bsh/degent-web test -- reducer" }
+      - { id: p0.2, repo: degent, title: "Fee rate passed to the wallet; single set of fee/size rules in @bsh/degent-mint-sdk", status: done, verify: "pnpm --filter @bsh/degent-mint-sdk test -- rules" }
+      - { id: p0.3, repo: degent, title: "Non-custodial mint service replaces the Skrybit proxy: rate limit, recipient validation, no upstream echo", status: done, verify: "pnpm --filter @bsh/degent-mint test -- api" }
+      - { id: p0.4, repo: marketplace, title: "Buys disabled behind BUYS_ENABLED=false with banner and 503", status: in_progress, verify: "npm test -- flags" }
+      - { id: p0.5, repo: marketplace, title: "XSS removed; public/ only; CSP; POST-only mutations; CORS restricted", status: in_progress, verify: "npm test -- security" }
+      - { id: p0.6, repo: combiner, title: "Image proxy allow-listed; DALL-E route authenticated and rate-limited", status: in_progress, verify: "npm test -- proxy" }
+      - { id: p0.7, repo: xbot, title: "Review tiers enforced; default secrets fail startup; bech32 filter fixed", status: in_progress, verify: "npm test" }
+      - { id: p0.8, repo: archived, title: "Archive Degen-minter, degen-minter-2 and degen-minter-3 on GitHub", status: todo, owner_action: true }
+  - id: p1
+    name: Atelier and the new mint
+    exit: "First-time minter lands → inscribed in < 3 min active time on a phone; zero duplicate payments in first 500 mints."
+    items:
+      - { id: p1.1, repo: degent, title: "Explicit mint state machine driving the UI (ADR-0002 §6)", status: done, verify: "pnpm --filter @bsh/degent-mint test -- state-machine" }
+      - { id: p1.2, repo: degent, title: "Multi-wallet (UniSat, Xverse, Leather, OKX, Magic Eden) via @bsh/wallet-kit with taproot enforcement", status: done, verify: "pnpm --filter @bsh/degent-web test -- payment" }
+      - { id: p1.3, repo: degent, title: "Binding quote in sats/BTC from @bsh/inscription; lane fee presets", status: done, verify: "pnpm --filter @bsh/degent-web test -- quote" }
+      - { id: p1.4, repo: degent, title: "Order tracker persisted across refresh (recovery bundle in localStorage)", status: done, verify: "pnpm --filter @bsh/degent-web test -- track" }
+      - { id: p1.5, repo: degent, title: "Stepper, a11y labels, object URL cleanup, demo mode", status: done, verify: "pnpm --filter @bsh/degent-web test -- demo.e2e" }
+      - { id: p1.6, repo: combiner, title: "Atelier rebrand (Playfair/Inter, gold), border slider, size/fee readout", status: in_progress, verify: "npm run build" }
+      - { id: p1.7, repo: degent, title: "Fold combiner into the web app as /atelier route", status: todo, depends_on: [p1.1, p1.6] }
+      - { id: p1.8, repo: degent, title: "Character bible v1 (silhouette, tux, palette) as Atelier layer set", status: todo, owner_action: true }
+      - { id: p1.9, repo: degent, title: "Four-stage pipeline Design → Mint → Confirm → Approve: paid → confirming → member_review → queued | declined (ADR-0005)", status: done, verify: "pnpm --filter @bsh/degent-mint test -- worker e2e" }
+      - { id: p1.10, repo: degent, title: "Track page with the four stages, live vote tally, declined state with self-rescue, share card", status: done, verify: "pnpm --filter @bsh/degent-web test -- members demo.e2e" }
+      - { id: p1.11, repo: degent, title: "Holder auth: SIWB challenge → BIP-322 signature → holder check, via @bsh/identity (no own signature code)", status: done, verify: "pnpm --filter @bsh/degent-mint test -- approval" }
+      - { id: p1.12, repo: degent, title: "Member review queue (/review): existing members approve or decline; APPROVAL_QUORUM / DECLINE_QUORUM configurable; review SLA hands the order to self-rescue", status: done, verify: "pnpm --filter @bsh/degent-web test -- members" }
+  - id: p2
+    name: Register and collection API
+    exit: "Anyone can verify membership and the blockspace claim from a node and the published query."
+    items:
+      - { id: p2.1, repo: degent, title: "Register spec (parent, gallery, children, numbering, custody, approval gates the parent link)", status: done, doc: docs/REGISTER.md }
+      - { id: p2.2, repo: degent, title: "Reproducible blockspace query script", status: done, verify: "node products/degent/services/mint/scripts/blockspace-query.mjs --help" }
+      - { id: p2.3, repo: degent, title: "Inscribe the Club parent + the signed Gallery of the existing 4,112 (data/roster.json)", status: todo, owner_action: true, depends_on: [p2.1] }
+      - { id: p2.4, repo: degent, title: "Parent-child inscribing is done by the mint service itself (policy signer co-signs the parent); Skrybit no longer in the path", status: done, verify: "pnpm --filter @bsh/degent-mint test -- policy" }
+      - { id: p2.5, repo: degent, title: "Collection API: /v1/register, /v1/register/{n}, /v1/register/holder/{address}, /v1/register/verify/{id} backed by the roster + ord/esplora ownership", status: done, depends_on: [p2.1], verify: "pnpm --filter @bsh/degent-mint test -- register holder-registry" }
+      - { id: p2.6, repo: degent, title: "Degent Explorer (/explorer): grid of every Degent (image, #, size, block, owner), filters + sort, member detail", status: done, depends_on: [p2.5], verify: "pnpm --filter @bsh/degent-web test -- members" }
+      - { id: p2.9, repo: degent, title: "Explorer stats: minted/10,000, total bytes, median, mints per week, size histogram, approvals throughput, top holders", status: done, depends_on: [p2.5], verify: "pnpm --filter @bsh/degent-mint test -- register" }
+      - { id: p2.10, repo: degent, title: "Explorer data API /v1/explorer (paginated, filterable, sortable) + /v1/stats (cached); roster JSON committed", status: done, depends_on: [p2.5], verify: "pnpm --filter @bsh/degent-mint test -- register contract" }
+      - { id: p2.11, repo: degent, title: "Retire the WordPress degent.club: point the domain at the app; Explorer becomes the home page", status: todo, owner_action: true, depends_on: [p2.6] }
+      - { id: p2.12, repo: degent, title: "Open Graph share cards for member detail pages (needs server-rendered meta or an image endpoint)", status: todo, depends_on: [p2.6] }
+      - { id: p2.13, repo: degent, title: "Fee-era histogram and roster heights/timestamps (run build-roster.mjs --indexer against a club ord)", status: todo, owner_action: true, depends_on: [p2.9] }
+      - { id: p2.7, repo: xbot, title: "Bot reads mint/sales numbers from the collection API", status: todo, depends_on: [p2.5] }
+      - { id: p2.8, repo: degent, title: "Monthly published byte-count comparison", status: todo, owner_action: true, depends_on: [p2.2] }
+      - { id: p2.14, repo: platform, title: "platform-events.yaml adds confirming, member_review, declined to degent.mint.order.{status} (pnpm contracts:diff prints the delta until the pin carries it)", status: in_progress, verify: "pnpm contracts:diff", depends_on: [p1.9] }
+  - id: p3
+    name: Exchange and the Club
+    exit: "External review signs off the exchange; 100 real trades settle with the inscription in the buyer output."
+    items:
+      - { id: p3.1, repo: marketplace, title: "Settlement engine on @scure/btc-signer with padding inputs and FIFO assertion", status: in_progress, verify: "npm test -- settlement" }
+      - { id: p3.2, repo: marketplace, title: "BIP-322 authenticated listing/cancel; watcher marks sold from chain", status: in_progress, verify: "npm test -- auth watcher" }
+      - { id: p3.3, repo: marketplace, title: "Royalty output to treasury; dynamic fees; multi-UTXO buyers", status: in_progress, verify: "npm test -- settlement" }
+      - { id: p3.4, repo: marketplace, title: "Signet end-to-end trade before BUYS_ENABLED=true", status: todo, owner_action: true, depends_on: [p3.1] }
+      - { id: p3.5, repo: marketplace, title: "External security review of settlement", status: todo, owner_action: true, depends_on: [p3.4] }
+      - { id: p3.6, repo: xbot, title: "Holders-only Telegram gate: /verify → sign challenge → single-use invite; 6h re-verification kicks non-holders (reads GET /v1/register/holder/{address})", status: in_progress, verify: "npm test -- telegram-gate", depends_on: [p1.11, p2.5] }
+      - { id: p3.8, repo: degent, title: "/verify web page for the Telegram gate (wallet connect + BIP-322 sign, POST to VITE_GATE_URL)", status: done, depends_on: [p1.11], verify: "pnpm --filter @bsh/degent-web test -- members" }
+      - { id: p3.9, repo: degent, title: "Register updates: batch newly approved members + approver signatures as JSON for the owner to inscribe as a child of the parent", status: done, verify: "node products/degent/services/mint/scripts/register-batch.mjs --help", depends_on: [p1.12] }
+      - { id: p3.7, repo: degent, title: "Lore pages and public treasury page", status: todo, depends_on: [p3.6] }
+  - id: p4
+    name: Franchise (after 10,000)
+    exit: "Club earns more from culture (royalties, goods, events) than from mints."
+    items:
+      - { id: p4.1, repo: null, title: "Animated shorts from member portraits", status: deferred }
+      - { id: p4.2, repo: null, title: "Printed Register volume and exhibition", status: deferred }
+      - { id: p4.3, repo: null, title: "Physical goods and licensing", status: deferred }
+      - { id: p4.4, repo: null, title: "Runes token / games / bridges — only by holder vote after charter complete", status: deferred }

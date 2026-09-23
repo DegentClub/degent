@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://degent.club/schemas/roadmap.schema.json",
+  "title": "Degent Club roadmap",
+  "type": "object",
+  "required": ["version", "updated", "claim", "repos", "phases"],
+  "properties": {
+    "version": { "type": "integer" },
+    "updated": { "type": "string", "format": "date" },
+    "claim": { "type": "object", "required": ["text", "measure", "reproduce"], "properties": { "text": { "type": "string" }, "measure": { "type": "string" }, "reproduce": { "type": "string" } } },
+    "repos": { "type": "object" },
+    "phases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "exit", "items"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^p[0-9]+$" },
+          "name": { "type": "string" },
+          "exit": { "type": "string" },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "title", "status"],
+              "properties": {
+                "id": { "type": "string", "pattern": "^p[0-9]+\\.[0-9]+$" },
+                "repo": { "type": ["string", "null"] },
+                "title": { "type": "string" },
+                "status": { "enum": ["todo", "in_progress", "done", "blocked", "deferred"] },
+                "verify": { "type": "string", "description": "command proving the item" },
+                "doc": { "type": "string" },
+                "owner_action": { "type": "boolean" },
+                "blocker": { "type": "string" },
+                "depends_on": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://degent.club/schemas/register.schema.json",
+  "title": "Degent Register member",
+  "type": "object",
+  "required": ["n", "id", "via"],
+  "properties": {
+    "n": { "type": "integer", "minimum": 1, "maximum": 10000, "description": "Degent number" },
+    "id": { "type": "string", "pattern": "^[0-9a-f]{64}i[0-9]+$", "description": "inscription id" },
+    "number": { "type": "integer", "description": "global inscription number" },
+    "via": { "enum": ["gallery", "child"], "description": "membership proof path" },
+    "bytes": { "type": "integer", "minimum": 0 },
+    "height": { "type": "integer" },
+    "sat": { "type": "integer" },
+    "owner": { "type": "string" },
+    "location": { "type": "string", "pattern": "^[0-9a-f]{64}:[0-9]+:[0-9]+$" }
+  }
+}
