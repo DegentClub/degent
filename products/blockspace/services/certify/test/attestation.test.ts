@@ -63,7 +63,7 @@ describe('attestation signing', () => {
     expect(schnorr.verify(Buffer.from(attestation.signature, 'hex'), Buffer.from(expected, 'hex'), signer.publicKey)).toBe(true);
   });
 
-  it('is deterministic for the same input (BIP340 with a fixed key and no aux randomness)', async () => {
+  it('the digest is deterministic for the same input (the signature is not: BIP340 aux randomness)', async () => {
     const a = await signAttestation(body, signer);
     const b = await signAttestation(structuredClone(body), signer);
     expect(a.digest).toBe(b.digest);
