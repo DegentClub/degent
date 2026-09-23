@@ -1,111 +1,178 @@
 import { NextRequest, NextResponse } from 'next/server';
-import axios from 'axios';
+import { randomUUID } from 'node:crypto';
+import { explainTaprootRequirement, validateMainnetAddress } from '@/lib/address';
+import { FEE_MAX, FEE_MIN } from '@/lib/fees';
+import { ABSOLUTE_MAX_UPLOAD_BYTES, MAX_FILE_BYTES, MIN_FILE_BYTES } from '@/lib/api';
+import { clientIpFromHeaders, ipLimiter, recipientLimiter } from '@/lib/rate-limit';
 
-const SKRYBIT_API_URL = 'https://api.skrybit.io';
+// The in-memory rate limiter and node:crypto need the Node runtime.
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+const SKRYBIT_API_URL = process.env.SKRYBIT_API_URL ?? 'https://api.skrybit.io';
+const UPSTREAM_TIMEOUT_MS = 30_000;
+
+let warnedLegacyEnv = false;
+
+/**
+ * Resolve the Skrybit key. `SKRYBIT_API_KEY` is the supported name; the old
+ * `NEXT_PUBLIC_AUTH_TOKEN` still works so existing deployments do not break,
+ * but its NEXT_PUBLIC_ prefix would ship the key to the browser if it were
+ * ever referenced in client code, so we warn once.
+ */
+function resolveApiKey(): string | null {
+  if (process.env.SKRYBIT_API_KEY) return process.env.SKRYBIT_API_KEY;
+  if (process.env.NEXT_PUBLIC_AUTH_TOKEN) {
+    if (!warnedLegacyEnv) {
+      warnedLegacyEnv = true;
+      console.warn('[create-commit] NEXT_PUBLIC_AUTH_TOKEN is deprecated; rename it to SKRYBIT_API_KEY.');
+    }
+    return process.env.NEXT_PUBLIC_AUTH_TOKEN;
+  }
+  return null;
+}
+
+function fail(status: number, error: string, requestId: string, extra?: Record<string, unknown>) {
+  return NextResponse.json({ error, requestId, ...extra }, { status, headers: { 'x-request-id': requestId } });
+}
+
+function parseFeeRate(raw: FormDataEntryValue | null): number | null {
+  if (typeof raw !== 'string' || !/^\d+(\.\d+)?$/.test(raw.trim())) return null;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < FEE_MIN || value > FEE_MAX) return null;
+  return value;
+}
 
 export async function POST(request: NextRequest) {
+  const requestId = randomUUID();
+  const ip = clientIpFromHeaders(request.headers);
+
+  const ipBudget = ipLimiter.hit(ip);
+  if (!ipBudget.allowed) {
+    return fail(429, 'Too many requests. Please wait a moment and try again.', requestId, {
+      retryAfterMs: ipBudget.retryAfterMs,
+    });
+  }
+
+  const declaredLength = Number(request.headers.get('content-length') ?? 0);
+  if (declaredLength > ABSOLUTE_MAX_UPLOAD_BYTES + 16 * 1024) {
+    return fail(413, 'Upload too large.', requestId);
+  }
+
+  let formData: FormData;
   try {
-    const formData = await request.formData();
-    
-    const file = formData.get('file') as File;
-    const recipientAddress = formData.get('recipient_address') as string;
-    const feeRate = formData.get('fee_rate') as string;
-    const senderAddress = formData.get('sender_address') as string;
+    formData = await request.formData();
+  } catch {
+    return fail(400, 'Expected multipart/form-data.', requestId);
+  }
 
-    // Validate required fields
-    if (!file || !recipientAddress || !feeRate || !senderAddress) {
-      return NextResponse.json(
-        { error: 'Missing required fields' },
-        { status: 400 }
-      );
-    }
+  const file = formData.get('file');
+  const recipientAddress = formData.get('recipient_address');
+  const senderAddress = formData.get('sender_address');
+  const feeRate = parseFeeRate(formData.get('fee_rate'));
 
-    // Validate file type
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    if (!allowedTypes.includes(file.type)) {
-      return NextResponse.json(
-        { error: 'Invalid file type. Only jpg, png, gif, webp are accepted.' },
-        { status: 400 }
-      );
-    }
+  if (!(file instanceof File) || typeof recipientAddress !== 'string' || typeof senderAddress !== 'string') {
+    return fail(400, 'Missing required fields.', requestId);
+  }
+  if (feeRate === null) {
+    return fail(400, `Fee rate must be between ${FEE_MIN} and ${FEE_MAX} sat/vB.`, requestId);
+  }
 
-    // Validate file size (200kb - 400kb)
-    const MIN_SIZE = 200 * 1024;
-    const MAX_SIZE = 400 * 1024;
-    if (file.size < MIN_SIZE || file.size > MAX_SIZE) {
-      return NextResponse.json(
-        { error: `File size must be between 200kb and 400kb. Current size: ${Math.round(file.size / 1024)}kb` },
-        { status: 400 }
-      );
-    }
+  const recipient = recipientAddress.trim();
+  const recipientProblem = explainTaprootRequirement(recipient);
+  if (recipientProblem) return fail(400, `Recipient address: ${recipientProblem}`, requestId);
 
-    // Create form data for Skrybit API
-    const skrybitFormData = new FormData();
-    skrybitFormData.append('file', file);
-    skrybitFormData.append('recipient_address', recipientAddress);
-    skrybitFormData.append('fee_rate', feeRate);
-    skrybitFormData.append('sender_address', senderAddress);
+  const sender = senderAddress.trim();
+  if (!validateMainnetAddress(sender)) return fail(400, 'Sender address is not a valid mainnet address.', requestId);
 
-    // Get JWT token from environment
-    const authToken = process.env.NEXT_PUBLIC_AUTH_TOKEN;
-    if (!authToken) {
-      return NextResponse.json(
-        { error: 'Server configuration error: Missing auth token' },
-        { status: 500 }
-      );
-    }
-
-    // Call Skrybit API
-    const response = await axios.post(
-      `${SKRYBIT_API_URL}/inscriptions/create-commit`,
-      skrybitFormData,
-      {
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-          'Content-Type': 'multipart/form-data',
-        },
-      }
+  if (!file.type.startsWith('image/')) return fail(400, 'Only image files are accepted.', requestId);
+  if (file.size > ABSOLUTE_MAX_UPLOAD_BYTES) return fail(413, 'Upload too large.', requestId);
+  if (file.size < MIN_FILE_BYTES || file.size > MAX_FILE_BYTES) {
+    return fail(
+      400,
+      `File size must be between ${Math.round(MIN_FILE_BYTES / 1024)} KB and ${Math.round(MAX_FILE_BYTES / 1024)} KB (got ${Math.round(file.size / 1024)} KB).`,
+      requestId
     );
+  }
 
-    // Validate the response data
-    const { payment_address, required_amount_in_sats, inscription_id } = response.data;
-    
-    if (!payment_address || !required_amount_in_sats) {
-      console.error('Invalid Skrybit API response:', response.data);
-      return NextResponse.json(
-        { error: 'Invalid response from inscription service' },
-        { status: 500 }
-      );
-    }
+  const recipientBudget = recipientLimiter.hit(recipient);
+  if (!recipientBudget.allowed) {
+    return fail(429, 'Too many quotes for this address. Please wait a moment.', requestId, {
+      retryAfterMs: recipientBudget.retryAfterMs,
+    });
+  }
 
-    // Validate that required_amount_in_sats is a valid number
-    const amountInSats = parseInt(required_amount_in_sats);
-    if (isNaN(amountInSats) || amountInSats <= 0) {
-      console.error('Invalid required_amount_in_sats:', required_amount_in_sats);
-      return NextResponse.json(
-        { error: 'Invalid inscription amount received from service' },
-        { status: 500 }
-      );
-    }
+  const apiKey = resolveApiKey();
+  if (!apiKey) {
+    console.error(`[create-commit ${requestId}] SKRYBIT_API_KEY is not configured`);
+    return fail(500, 'Inscription service is not configured.', requestId);
+  }
 
-    console.log('Inscription commit created successfully:', {
-      payment_address,
-      required_amount_in_sats,
-      inscription_id
+  const upstreamForm = new FormData();
+  upstreamForm.append('file', file, file.name);
+  upstreamForm.append('recipient_address', recipient);
+  upstreamForm.append('fee_rate', feeRate.toString());
+  upstreamForm.append('sender_address', sender);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+
+  try {
+    const upstream = await fetch(`${SKRYBIT_API_URL}/inscriptions/create-commit`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: upstreamForm,
+      signal: controller.signal,
     });
 
-    // Return the response from Skrybit
-    return NextResponse.json(response.data);
+    const text = await upstream.text();
+    let data: Record<string, unknown> | null = null;
+    try {
+      data = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      data = null;
+    }
 
-  } catch (error: any) {
-    console.error('API Error:', error.response?.data || error.message);
-    
+    if (!upstream.ok) {
+      // Log the upstream body server-side only; never echo it to the client.
+      console.error(`[create-commit ${requestId}] upstream ${upstream.status}: ${text.slice(0, 500)}`);
+      const status = upstream.status === 401 || upstream.status === 403 ? 502 : upstream.status >= 500 ? 502 : 400;
+      return fail(
+        status,
+        status === 400 ? 'The inscription service rejected this request.' : 'The inscription service is unavailable.',
+        requestId
+      );
+    }
+
+    const paymentAddress = data?.payment_address;
+    const amount = Number.parseInt(String(data?.required_amount_in_sats ?? ''), 10);
+    const inscriptionId = data?.inscription_id;
+
+    if (typeof paymentAddress !== 'string' || !validateMainnetAddress(paymentAddress)) {
+      console.error(`[create-commit ${requestId}] upstream returned invalid payment_address`);
+      return fail(502, 'Invalid response from the inscription service.', requestId);
+    }
+    if (!Number.isInteger(amount) || amount <= 0) {
+      console.error(`[create-commit ${requestId}] upstream returned invalid required_amount_in_sats`);
+      return fail(502, 'Invalid response from the inscription service.', requestId);
+    }
+
+    console.info(`[create-commit ${requestId}] quote ok inscription_id=${String(inscriptionId ?? '')} sats=${amount}`);
+
     return NextResponse.json(
-      { 
-        error: error.response?.data?.message || 'Failed to create inscription commit',
-        details: error.response?.data 
+      {
+        payment_address: paymentAddress,
+        required_amount_in_sats: String(amount),
+        inscription_id: typeof inscriptionId === 'string' ? inscriptionId : String(inscriptionId ?? ''),
+        requestId,
       },
-      { status: error.response?.status || 500 }
+      { headers: { 'x-request-id': requestId, 'cache-control': 'no-store' } }
     );
+  } catch (err) {
+    const aborted = err instanceof Error && err.name === 'AbortError';
+    console.error(`[create-commit ${requestId}] ${aborted ? 'upstream timeout' : 'upstream error'}:`, err);
+    return fail(aborted ? 504 : 502, 'The inscription service did not respond. Please try again.', requestId);
+  } finally {
+    clearTimeout(timeout);
   }
 }
