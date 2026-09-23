@@ -1,4 +1,4 @@
-import { RawOldTx, RawTx } from '@scure/btc-signer';
+import { RawTx } from '@scure/btc-signer';
 import { describe, expect, it } from 'vitest';
 import { HttpOrd, ordTransactionVsize } from '../src/adapters/http-ord.js';
 import { OrdError } from '../src/ports/ord.js';
@@ -105,7 +105,7 @@ describe('ordTransactionVsize', () => {
     const witnesses = inputs.map((i) => i.witness.map((len) => fill(len, 0xcc)));
     const segwit = witnesses.some((w) => w.length > 0);
     const full = RawTx.encode({ version: 2, segwitFlag: segwit, inputs: ins, outputs: outs, witnesses: segwit ? witnesses : undefined, lockTime: 0 });
-    const base = RawOldTx.encode({ version: 2, inputs: ins, outputs: outs, lockTime: 0 });
+    const base = RawTx.encode({ version: 2, segwitFlag: false, inputs: ins, outputs: outs, witnesses: undefined, lockTime: 0 });
     const expectedVsize = Math.ceil((base.length * 3 + full.length) / 4); // BIP141 weight = base*3 + total
     const ordJson = {
       version: 2,

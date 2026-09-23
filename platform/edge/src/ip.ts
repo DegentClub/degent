@@ -83,7 +83,9 @@ export interface Cidr {
 }
 
 export function parseCidr(input: string): Cidr {
-  const [addr, bitsStr] = input.split('/');
+  const parts = input.split('/');
+  if (parts.length > 2) throw new Error(`invalid CIDR: ${input}`);
+  const [addr, bitsStr] = parts;
   const ip = parseIp(addr ?? '');
   if (!ip) throw new Error(`invalid CIDR: ${input}`);
   const max = ip.version === 4 ? 32 : 128;
