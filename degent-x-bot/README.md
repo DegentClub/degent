@@ -72,6 +72,19 @@ See `docs/OPERATIONS.md` for how to work the queue, and
 `brain/DEGENT_X_BOT_BRAIN.md` → "CONTENT APPROVAL TIERS" for the editorial
 rules behind it.
 
+## Telegram holders gate
+
+A second service, `npm run gate` (compose: `telegram-gate`), gates the
+holders-only Telegram group. A holder DMs the gate bot `/verify`, gets a
+one-time link to the minter web app, signs a BIP-322 message with the wallet
+that holds their Degent, and receives a single-use invite by DM. Every six
+hours the service re-checks every verified wallet against the collection API
+and kicks anyone who sold. One wallet maps to one Telegram account.
+
+Env: `TELEGRAM_GATE_BOT_TOKEN`, `HOLDERS_CHAT_ID`, `WEB_BASE_URL`,
+`REGISTER_API_URL`, `GATE_JWT_SECRET`. Full flow, endpoints and bot setup in
+[`docs/TELEGRAM-GATE.md`](docs/TELEGRAM-GATE.md).
+
 ## Environment Variables
 
 See `.env.example` for the full list and `docs/OPERATIONS.md` for the
@@ -136,6 +149,7 @@ src/
 │   ├── metrics-tracker/     # Performance data collection
 │   └── orchestrator/        # BullMQ scheduler & job workers
 ├── services/         # Twitter, AI, Redis, S3 clients
+├── telegram-gate/    # Holders-only group gate (separate process: npm run gate)
 └── index.js          # Entry point
 ```
 

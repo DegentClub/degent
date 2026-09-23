@@ -33,6 +33,23 @@
   laundries manual-tier content.
 - The Telegram bridge classifies captions too; the stricter tier wins.
 
+### Telegram holders gate (new service)
+
+- `src/telegram-gate/` — `npm run gate`, compose service `telegram-gate`.
+  `/verify` in DM → one-time link (HS256 token, 10 min) → `POST
+  /gate/challenge` issues a single-use nonce → wallet signs the fixed
+  five-line message (BIP-322, `bip322-js`) → `POST /gate/verify` checks
+  nonce, signature and holdings via `REGISTER_API_URL` (cached 5 min,
+  retried with backoff) → stores `{telegram_user_id, address, degents,
+  verified_at}` → one single-use 10-minute invite link by DM.
+- BullMQ job every 6 h re-checks every member; non-holders are kicked
+  (ban + unban) and told why. API failures never kick.
+- One wallet ↔ one Telegram account, enforced at challenge and verify and
+  by unique constraints. `/verify` rate limited 3 per 10 min per user.
+- `GET /gate/stats` behind the admin JWT.
+- Tables `gate_challenges`, `gate_members` (migration 0001).
+- `docs/TELEGRAM-GATE.md` with sequence diagram, env vars and bot setup.
+
 ### Brain
 
 - `brain/DEGENT_X_BOT_BRAIN.md` v2.1 is the single copy (root file is a
@@ -45,8 +62,10 @@
 ### Tooling
 
 - vitest suite (`npm test`) covering config validation, the address regex,
-  the classifier, the safety gate and the post-content job with mocked
-  DB/queue.
+  the classifier, the safety gate, the post-content job with mocked
+  DB/queue, and the Telegram gate (BIP-322 round-trip with in-test keys,
+  nonce/token lifetimes, holder client, invite/kick behaviour, one-to-one
+  enforcement, HTTP layer).
 - GitHub Actions CI.
 - `docs/OPERATIONS.md`.
 
