@@ -1,8 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, useEffect } from 'react';
-import { connectWallet, isWalletInstalled, getWalletAddress } from '@/lib/wallet';
 
 interface HeaderButtonProps {
   id?: string;
@@ -41,17 +39,12 @@ export function HeaderButton({
   const tooltipText = tooltip || alt;
   const tooltipClasses = tooltipText ? "tooltip-enabled" : "";
   
-  // Set data-tooltip if tooltip prop is provided, otherwise use alt attribute
-  const tooltipAttrs: any = {};
-  if (tooltip) {
-    tooltipAttrs['data-tooltip'] = tooltip;
-  }/* else if (alt) {
-    tooltipAttrs.alt = alt;
-  }*/
+  const tooltipAttrs: Record<string, string> = tooltip ? { 'data-tooltip': tooltip } : {};
 
+  // The text label is hidden on small screens, so the accessible name must not depend on it.
   const buttonContent = (
     <>
-      {icon && <i className={`${icon}`}></i>}
+      {icon && <i className={icon} aria-hidden="true"></i>}
       <span className="hidden sm:inline">{label}</span>
     </>
   );
@@ -63,10 +56,10 @@ export function HeaderButton({
         href={href}
         target={target}
         rel={target === '_blank' ? 'noopener noreferrer' : undefined}
+        aria-label={label}
         className={`${baseClasses} ${variantClasses[variant]} ${tooltipClasses}`}
         {...tooltipAttrs}
-      >    
-
+      >
         {buttonContent}
       </Link>
     );
@@ -75,63 +68,28 @@ export function HeaderButton({
   return (
     <button
       id={id}
+      type="button"
       onClick={onClick}
+      aria-label={label}
       className={`overflow-hidden group relative ${baseClasses} ${variantClasses[variant]} ${tooltipClasses}`}
       {...tooltipAttrs}
     >
-      
-
       {buttonContent}
     </button>
   );
 }
 
 export default function Header() {
-  const [address, setAddress] = useState<string | null>(null);
-  const [isConnecting, setIsConnecting] = useState(false);
-
-  useEffect(() => {
-    // Check if wallet is already connected
-    const checkConnection = async () => {
-      const addr = await getWalletAddress();
-      if (addr) {
-        setAddress(addr);
-      }
-    };
-    checkConnection();
-  }, []);
-
-  const handleWalletConnect = async () => {
-    if (!isWalletInstalled()) {
-      alert('UniSat wallet not detected. Please install the UniSat browser extension.');
-      return;
-    }
-
-    setIsConnecting(true);
-    try {
-      const addr = await connectWallet();
-      setAddress(addr);
-      // Scroll to wallet connect section
-      const walletSection = document.getElementById('wallet-connect-section');
-      if (walletSection) {
-        walletSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-    } catch (err: any) {
-      alert(err.message || 'Failed to connect wallet');
-    } finally {
-      setIsConnecting(false);
-    }
-  };
-
   return (
     <header id="header" className="header fixed">
       <div className="container">
         {/* Logo Section */}
-        <Link href="https://degent.club" className="logo">
-          <svg 
-            viewBox="0 0 800 800" 
+        <Link href="https://degent.club" className="logo" aria-label="degent.club home">
+          <svg
+            viewBox="0 0 800 800"
             xmlns="http://www.w3.org/2000/svg"
             fill="currentColor"
+            aria-hidden="true"
           >
             <g>
               <path fill="currentColor" d="M140.18,286.46c10.59,6.18,20.69,12.08,30.79,17.97c10,5.83,20.11,11.47,29.97,17.53
@@ -191,16 +149,7 @@ export default function Header() {
         </div>
 
         {/* Right Action Buttons */}
-        <div className="navigation">
-          {/* Wallet button - kept for future use but hidden from UI */}
-          {/* <HeaderButton
-            id="wallet-btn"
-            label={address ? `${address.slice(0, 6)}...${address.slice(-4)}` : isConnecting ? 'Connecting...' : 'Connect Wallet'}
-            onClick={handleWalletConnect}
-            variant="gradient"
-            icon={isConnecting ? "fas fa-spinner fa-spin" : "fas fa-wallet"}
-          /> */}
-          
+        <nav className="navigation" aria-label="Site links">
           <HeaderButton
             id="minting-btn"
             label="Minting Process"
@@ -208,7 +157,6 @@ export default function Header() {
             variant="gradient"
             target="_blank"
             icon="fa-solid fa-book"
-            //alt="Brief tutorial page to learn how the minting process works"
           />
           <HeaderButton
             id="collection-btn"
@@ -218,7 +166,7 @@ export default function Header() {
             target="_blank"
             icon="fas fa-photo-film"
           />
-        </div>
+        </nav>
       </div>
     </header>
   );

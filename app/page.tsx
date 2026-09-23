@@ -1,292 +1,226 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import WalletConnect from '@/components/WalletConnect';
 import AIInstructions from '@/components/AIInstructions';
 import FileUpload from '@/components/FileUpload';
 import FileValidation from '@/components/FileValidation';
 import MintButton from '@/components/MintButton';
-import StatusDisplay from '@/components/StatusDisplay';
+import OrderTracker from '@/components/OrderTracker';
 import HeroSection from '@/components/HeroSection';
 import SocialJoin from '@/components/SocialJoin';
-import { createInscriptionCommit, isFileSizeValid } from '@/lib/api';
-import type { InscriptionResponse } from '@/lib/api';
+import Stepper from '@/components/Stepper';
+import { useToast } from '@/components/Toast';
+import { ApiError, createInscriptionCommit, hashFile, isAcceptedMime, isFileSizeValid } from '@/lib/api';
+import { fetchBtcUsdPrice, fetchMempoolPresets, type FeePresets } from '@/lib/fees';
+import {
+  canMint,
+  currentQuoteKey,
+  initialMintState,
+  isOrderLocked,
+  mintReducer,
+  quoteTargetId,
+} from '@/lib/mint-machine';
+import { latestOrder, saveOrder, updateOrder, type StoredOrder } from '@/lib/orders';
+import { getAdapter } from '@/lib/wallet';
+
+const QUOTE_DEBOUNCE_MS = 600;
 
 export default function Home() {
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const { notify } = useToast();
+  const [state, dispatch] = useReducer(mintReducer, initialMintState);
   const [originalFile, setOriginalFile] = useState<File | null>(null);
-  const [compressedFile, setCompressedFile] = useState<File | null>(null);
-  const [feeRate, setFeeRate] = useState(1);
-  const [calculatingFeeRate, setCalculatingFeeRate] = useState<number | null>(null);
-  const [isPendingCalculation, setIsPendingCalculation] = useState(false);
-  const [inscriptionData, setInscriptionData] = useState<InscriptionResponse | null>(null);
-  const [isCalculating, setIsCalculating] = useState(false);
-  const [txid, setTxid] = useState<string | null>(null);
-  const [hasCalculated, setHasCalculated] = useState(false);
-  const [calculationError, setCalculationError] = useState<string | null>(null);
-  
-  // Track the current fee rate to prevent race conditions
-  const currentFeeRateRef = useRef(feeRate);
-  // Track if we need to recalculate after current calculation finishes
-  const needsRecalculationRef = useRef(false);
-  // AbortController to cancel in-flight requests
-  const abortControllerRef = useRef<AbortController | null>(null);
-  // Debounce timer for fee rate changes
-  const feeRateDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
-  // Track if we've shown an error alert to prevent spam
-  const hasShownErrorRef = useRef(false);
+  const [submitFile, setSubmitFile] = useState<File | null>(null);
+  const [presets, setPresets] = useState<FeePresets | null>(null);
+  const [usdPerBtc, setUsdPerBtc] = useState<number | null>(null);
+  const [activeOrder, setActiveOrder] = useState<StoredOrder | null>(null);
 
-  // Debounce fee rate changes - wait 1 second after user stops changing before calculating
+  // Refs let async callbacks read the latest state without re-subscribing.
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const submitFileRef = useRef(submitFile);
+  submitFileRef.current = submitFile;
+  const quoteCounter = useRef(0);
+  const hashCounter = useRef(0);
+  const payingRef = useRef(false);
+
+  // Restore an in-flight order after a refresh.
   useEffect(() => {
-    const feeRateChanged = currentFeeRateRef.current !== feeRate;
-    currentFeeRateRef.current = feeRate;
-    
-    // If fee rate changed, reset hasCalculated and clear any existing debounce timer
-    if (feeRateChanged) {
-      setHasCalculated(false);
-      
-      // Keep calculating state visible if conditions are met
-      if (walletAddress && compressedFile && isFileSizeValid(compressedFile.size)) {
-        setIsPendingCalculation(true);
-        setCalculatingFeeRate(feeRate);
-      }
-      
-      // Clear existing debounce timer
-      if (feeRateDebounceTimerRef.current) {
-        clearTimeout(feeRateDebounceTimerRef.current);
-      }
-      
-      // If currently calculating, abort it
-      if (isCalculating) {
-        console.log('Fee rate changed during calculation - aborting current request');
-        if (abortControllerRef.current) {
-          abortControllerRef.current.abort();
-        }
-      }
-    }
-    
-    // Cleanup function to clear timer on unmount
-    return () => {
-      if (feeRateDebounceTimerRef.current) {
-        clearTimeout(feeRateDebounceTimerRef.current);
-      }
-    };
-  }, [feeRate, isCalculating, walletAddress, compressedFile]);
+    const existing = latestOrder();
+    if (existing && !existing.dismissed) setActiveOrder(existing);
+  }, []);
 
-  // Auto-calculate when file becomes valid or fee rate changes (with debounce for fee rate)
+  // Fee presets and BTC price are best-effort decorations.
   useEffect(() => {
-    // Don't auto-retry if there's an error - check current state
-    const shouldCalculate = 
-      walletAddress &&
-      compressedFile &&
-      isFileSizeValid(compressedFile.size) &&
-      !isCalculating &&
-      !hasCalculated &&
-      !calculationError; // Don't auto-retry if there's an error
-
-    if (shouldCalculate) {
-      // Clear any existing debounce timer
-      if (feeRateDebounceTimerRef.current) {
-        clearTimeout(feeRateDebounceTimerRef.current);
-      }
-      
-      // Clear any previous error when starting new calculation
-      setCalculationError(null);
-      hasShownErrorRef.current = false;
-      
-      // Show calculating state immediately
-      setIsPendingCalculation(true);
-      setCalculatingFeeRate(feeRate);
-      
-      // Wait 1 second before calculating (debounce)
-      feeRateDebounceTimerRef.current = setTimeout(() => {
-        // Don't set isPendingCalculation to false here - handleCalculate will do it
-        // This prevents a gap where neither isPendingCalculation nor isCalculating is true
-        handleCalculate();
-      }, 1000);
-    }
-    
-    // Cleanup function
+    let cancelled = false;
+    void fetchMempoolPresets().then((p) => !cancelled && setPresets(p));
+    void fetchBtcUsdPrice().then((p) => !cancelled && setUsdPerBtc(p));
     return () => {
-      if (feeRateDebounceTimerRef.current) {
-        clearTimeout(feeRateDebounceTimerRef.current);
-      }
+      cancelled = true;
     };
-  }, [walletAddress, compressedFile, feeRate, hasCalculated, isCalculating, calculationError]);
+  }, []);
 
-  const handleCalculate = async () => {
-    if (!walletAddress || !compressedFile) return;
+  // Hash whatever file is about to be submitted and tell the machine about it.
+  useEffect(() => {
+    const id = ++hashCounter.current;
+    if (!submitFile) {
+      dispatch({ type: 'FILE_CLEARED' });
+      return;
+    }
+    void hashFile(submitFile).then((hash) => {
+      if (id !== hashCounter.current) return;
+      dispatch({
+        type: 'FILE_SET',
+        file: {
+          hash,
+          size: submitFile.size,
+          name: submitFile.name,
+          type: submitFile.type,
+          valid: isAcceptedMime(submitFile.type) && isFileSizeValid(submitFile.size),
+        },
+      });
+    });
+  }, [submitFile]);
 
-    // Capture the fee rate at the start of this calculation
-    const calculationFeeRate = feeRate;
-    
-    // Create a new AbortController for this request
-    abortControllerRef.current = new AbortController();
-    
-    // Set isCalculating and clear isPendingCalculation atomically
-    setIsCalculating(true);
-    setIsPendingCalculation(false);
-    setCalculatingFeeRate(calculationFeeRate);
-    setInscriptionData(null);
+  // Debounced quote fetch, keyed on the exact inputs. A change in any input
+  // changes `target`, which aborts the in-flight request and starts over.
+  const target = quoteTargetId(state);
+  useEffect(() => {
+    if (!target) return;
+    const controller = new AbortController();
+    const requestId = ++quoteCounter.current;
 
+    const timer = window.setTimeout(async () => {
+      const current = stateRef.current;
+      const key = currentQuoteKey(current);
+      const file = submitFileRef.current;
+      if (!key || !file || !current.wallet) return;
+
+      dispatch({ type: 'QUOTE_STARTED', requestId, key });
+      try {
+        const quote = await createInscriptionCommit({
+          file,
+          recipientAddress: key.recipient,
+          feeRate: key.feeRate,
+          senderAddress: current.wallet.address,
+          signal: controller.signal,
+        });
+        dispatch({ type: 'QUOTE_SUCCEEDED', requestId, quote: { key, ...quote } });
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        const message =
+          err instanceof ApiError
+            ? `${err.message}${err.requestId ? ` (ref ${err.requestId.slice(0, 8)})` : ''}`
+            : 'Could not get a quote. Please try again.';
+        dispatch({ type: 'QUOTE_FAILED', requestId, error: message });
+        notify(message, 'error');
+      }
+    }, QUOTE_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+    // `target` already encodes every input the quote depends on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target]);
+
+  const handleMint = async () => {
+    const current = stateRef.current;
+    if (payingRef.current || !canMint(current) || !current.quote || !current.wallet) return;
+    payingRef.current = true;
+    dispatch({ type: 'PAY_STARTED' });
+
+    const { quote, wallet } = current;
     try {
-      const data = await createInscriptionCommit(
-        compressedFile,
-        walletAddress, // recipient
-        calculationFeeRate,
-        walletAddress,  // sender
-        abortControllerRef.current.signal
-      );
-
-      // Only update state if the fee rate hasn't changed during the calculation
-      if (currentFeeRateRef.current === calculationFeeRate) {
-        setInscriptionData(data);
-        setHasCalculated(true);
-        setCalculationError(null); // Clear any previous errors on success
-        hasShownErrorRef.current = false;
-        needsRecalculationRef.current = false;
-      } else {
-        // Fee rate changed, ignore this stale result
-        console.log('Ignoring stale calculation result - fee rate changed');
-        // Don't mark as calculated so it will recalculate
-        setHasCalculated(false);
-      }
-    } catch (error: any) {
-      // Don't show error if request was aborted (user changed fee rate)
-      if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
-        console.log('Calculation aborted - fee rate changed');
-        return;
-      }
-      
-      // Only handle error if this calculation is still relevant
-      if (currentFeeRateRef.current === calculationFeeRate) {
-        const errorMessage = error.response?.data?.error || error.message || 'Failed to calculate inscription cost. Please try again.';
-        console.error('Calculation failed:', error);
-        
-        // Set error state to prevent infinite retries
-        setCalculationError(errorMessage);
-        setHasCalculated(true); // Mark as calculated to prevent auto-retry
-        
-        // Only show alert once per error
-        if (!hasShownErrorRef.current) {
-          hasShownErrorRef.current = true;
-          alert(errorMessage);
-        }
-      }
+      const adapter = getAdapter(wallet.walletId);
+      if (!adapter) throw new Error('Wallet adapter not found. Please reconnect.');
+      const txid = await adapter.sendBitcoin(quote.paymentAddress, quote.amountSats, { feeRate: quote.key.feeRate });
+      const paidAt = Date.now();
+      dispatch({ type: 'PAY_SUCCEEDED', txid, paidAt });
+      const order: StoredOrder = {
+        inscriptionId: quote.inscriptionId,
+        paymentAddress: quote.paymentAddress,
+        txid,
+        amountSats: quote.amountSats,
+        feeRate: quote.key.feeRate,
+        fileHash: quote.key.fileHash,
+        fileName: current.file?.name ?? '',
+        recipient: quote.key.recipient,
+        createdAt: paidAt,
+        status: 'paid',
+      };
+      saveOrder(order);
+      setActiveOrder(order);
+      notify('Payment sent. Tracking the transaction now.', 'success');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Payment failed.';
+      dispatch({ type: 'PAY_FAILED', error: message });
+      notify(message, 'error');
     } finally {
-      setIsCalculating(false);
-      
-      // Only clear calculating state if the fee rate hasn't changed
-      if (currentFeeRateRef.current === calculationFeeRate) {
-        // Fee rate is still the same, clear calculating state
-        setIsPendingCalculation(false);
-        setCalculatingFeeRate(null);
-      } else {
-        // Fee rate changed, keep showing calculating state for the new rate
-        // Don't clear isPendingCalculation or calculatingFeeRate
-        setHasCalculated(false);
-      }
+      payingRef.current = false;
     }
   };
 
-  const handleWalletConnect = (address: string) => {
-    setWalletAddress(address);
+  const handleOrderUpdate = useCallback((patch: Partial<Omit<StoredOrder, 'txid'>>) => {
+    setActiveOrder((order) => {
+      if (!order) return order;
+      const updated = updateOrder(order.txid, patch) ?? { ...order, ...patch };
+      if (patch.status && patch.status !== 'paid') dispatch({ type: 'PAYMENT_CONFIRMED' });
+      return updated;
+    });
+  }, []);
+
+  const handleMintAnother = () => {
+    if (activeOrder) updateOrder(activeOrder.txid, { dismissed: true });
+    setActiveOrder(null);
+    setOriginalFile(null);
+    setSubmitFile(null);
+    dispatch({ type: 'RESET' });
   };
 
-  const handleWalletDisconnect = () => {
-    setWalletAddress(null);
-    setInscriptionData(null);
-    setTxid(null);
-    setHasCalculated(false);
-    setCalculationError(null);
-    hasShownErrorRef.current = false;
-  };
-
-  const handleFileSelect = (file: File) => {
-    setOriginalFile(file);
-    setCompressedFile(null);
-    setInscriptionData(null);
-    setTxid(null);
-    setHasCalculated(false);
-    setCalculationError(null);
-    hasShownErrorRef.current = false;
-  };
-
-  const handleCompressedFile = (file: File, compressing: boolean) => {
-    setCompressedFile(file);
-    
-    // Reset calculation when file changes
-    if (!compressing) {
-      setInscriptionData(null);
-      setHasCalculated(false);
-      setCalculationError(null);
-      hasShownErrorRef.current = false;
-    }
-  };
-
-  const handleMintSuccess = (transactionId: string) => {
-    setTxid(transactionId);
-  };
-
-  const handleFeeRateChange = (rate: number) => {
-    const minFeeRate = 0.13;
-    const validatedRate = rate < minFeeRate ? minFeeRate : rate;
-    setFeeRate(validatedRate);
-    // Clear error when fee rate changes to allow retry
-    setCalculationError(null);
-    hasShownErrorRef.current = false;
-    // hasCalculated will be reset by the useEffect
-    // Note: We don't clear inscriptionData here to avoid flickering
-    // It will be updated when the new calculation completes
-  };
-
-  const fileIsValid = compressedFile ? isFileSizeValid(compressedFile.size) : false;
+  const locked = isOrderLocked(state) || activeOrder !== null;
 
   return (
     <>
-      {/* Hero Section - Full width, outside main container */}
       <HeroSection />
 
-      {/* Main Content */}
       <main className="bg-dark-gradient-fade">
-        {/* Main Content - Single Column */}
-          <div className="container">
-          {/* <div id="wallet-connect-section"> */}
-            <WalletConnect 
-              onConnect={handleWalletConnect}
-              onDisconnect={handleWalletDisconnect}
-            />
-          {/* </div> */}
+        <div className="container">
+          <Stepper state={state} />
 
-          <AIInstructions />
-
-          <FileUpload 
-            onFileSelect={handleFileSelect}
+          <WalletConnect
+            wallet={state.wallet}
+            recipient={state.recipient}
+            locked={locked}
+            onConnected={(wallet, suggestedRecipient) => {
+              dispatch({ type: 'WALLET_CONNECTED', wallet });
+              dispatch({ type: 'RECIPIENT_SET', recipient: suggestedRecipient });
+            }}
+            onDisconnected={() => dispatch({ type: 'WALLET_DISCONNECTED' })}
+            onRecipientChange={(recipient) => dispatch({ type: 'RECIPIENT_SET', recipient })}
           />
 
-          <FileValidation
-            originalFile={originalFile}
-            onCompressedFile={handleCompressedFile}
-          />
+          {activeOrder ? (
+            <OrderTracker order={activeOrder} onUpdate={handleOrderUpdate} onMintAnother={handleMintAnother} />
+          ) : (
+            <>
+              <AIInstructions />
 
-          <MintButton
-            walletAddress={walletAddress}
-            compressedFile={compressedFile}
-            isFileSizeValid={fileIsValid}
-            inscriptionData={inscriptionData}
-            onMintSuccess={handleMintSuccess}
-            isCalculating={isCalculating || isPendingCalculation}
-            calculatingFeeRate={calculatingFeeRate}
-            feeRate={feeRate}
-            onFeeRateChange={handleFeeRateChange}
-          />
+              <FileUpload onFileSelect={setOriginalFile} disabled={locked} />
 
-            <StatusDisplay
-              txid={txid}
-            />
+              <FileValidation originalFile={originalFile} onCompressedFile={setSubmitFile} disabled={locked} />
 
-            
-          </div>
+              <MintButton
+                state={state}
+                dispatch={dispatch}
+                presets={presets}
+                usdPerBtc={usdPerBtc}
+                onMint={() => void handleMint()}
+              />
+            </>
+          )}
+        </div>
       </main>
       <SocialJoin />
     </>

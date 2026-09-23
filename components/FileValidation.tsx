@@ -1,218 +1,212 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import imageCompression from 'browser-image-compression';
-import { formatFileSize, isFileSizeValid } from '@/lib/api';
+import { MAX_FILE_BYTES, MIN_FILE_BYTES, formatFileSize, isFileSizeValid } from '@/lib/api';
 
 interface FileValidationProps {
   originalFile: File | null;
-  onCompressedFile: (file: File, isCompressing: boolean) => void;
+  /** Called with the file to submit (null while compressing) whenever it changes. */
+  onCompressedFile: (file: File | null) => void;
+  disabled?: boolean;
 }
 
-export default function FileValidation({ 
-  originalFile, 
-  onCompressedFile
-}: FileValidationProps) {
+const COMPRESS_DEBOUNCE_MS = 250;
+
+export default function FileValidation({ originalFile, onCompressedFile, disabled }: FileValidationProps) {
   const [quality, setQuality] = useState(100);
   const [compressedFile, setCompressedFile] = useState<File | null>(null);
   const [isCompressing, setIsCompressing] = useState(false);
-  const [showCompressing, setShowCompressing] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  // Monotonic id so a slow compression cannot overwrite a newer result.
+  const requestCounter = useRef(0);
+  const onCompressedRef = useRef(onCompressedFile);
+  onCompressedRef.current = onCompressedFile;
 
-  // Reset quality when new file is uploaded
+  // New source file: reset slider and hand the original through untouched.
   useEffect(() => {
-    if (originalFile) {
-      setQuality(100);
-      setCompressedFile(originalFile);
-      onCompressedFile(originalFile, false);
-    }
+    requestCounter.current++;
+    setQuality(100);
+    setIsCompressing(false);
+    setCompressedFile(originalFile);
+    onCompressedRef.current(originalFile);
   }, [originalFile]);
 
-  const compressImage = async (file: File, qualityValue: number) => {
-    if (qualityValue === 100) {
-      // Skip compression at 100% quality
-      setCompressedFile(file);
-      onCompressedFile(file, false);
+  // Object URL lifecycle: one per preview, revoked when replaced or unmounted.
+  useEffect(() => {
+    if (!compressedFile) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(compressedFile);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [compressedFile]);
+
+  // Debounced, race-guarded compression whenever the quality changes.
+  useEffect(() => {
+    if (!originalFile) return;
+    const requestId = ++requestCounter.current;
+
+    if (quality === 100) {
+      setIsCompressing(false);
+      setCompressedFile(originalFile);
+      onCompressedRef.current(originalFile);
       return;
     }
 
     setIsCompressing(true);
-    
-    // Show "Compressing..." only if it takes more than 200ms
-    const timer = setTimeout(() => {
-      setShowCompressing(true);
-    }, 200);
+    onCompressedRef.current(null);
 
-    try {
-      const options = {
-        maxSizeMB: 0.4, // Target 400kb max
-        maxWidthOrHeight: 2048,
-        useWebWorker: true,
-        initialQuality: qualityValue / 100,
-        quality: qualityValue / 100,
-        alwaysKeepResolution: false,
-      };
-
-      const compressed = await imageCompression(file, options);
-      
-      // Create a new File object with the original name
-      const newFile = new File([compressed], file.name, {
-        type: file.type,
-      });
-
-      clearTimeout(timer);
-      setShowCompressing(false);
-      setCompressedFile(newFile);
-      onCompressedFile(newFile, false);
-    } catch (error) {
-      console.error('Compression failed:', error);
-      clearTimeout(timer);
-      setShowCompressing(false);
-      setCompressedFile(file);
-      onCompressedFile(file, false);
-    } finally {
+    const timer = window.setTimeout(async () => {
+      let result: File = originalFile;
+      try {
+        const compressed = await imageCompression(originalFile, {
+          maxSizeMB: MAX_FILE_BYTES / (1024 * 1024),
+          maxWidthOrHeight: 2048,
+          useWebWorker: true,
+          initialQuality: quality / 100,
+          alwaysKeepResolution: false,
+        });
+        result = new File([compressed], originalFile.name, { type: originalFile.type });
+      } catch {
+        result = originalFile;
+      }
+      if (requestId !== requestCounter.current) return; // superseded
       setIsCompressing(false);
-    }
-  };
+      setCompressedFile(result);
+      onCompressedRef.current(result);
+    }, COMPRESS_DEBOUNCE_MS);
 
-  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setQuality(Number(e.target.value));
-  };
+    return () => window.clearTimeout(timer);
+  }, [originalFile, quality]);
 
-  const handleSliderRelease = () => {
-    if (originalFile) {
-      compressImage(originalFile, quality);
-    }
-  };
-
-  if (!originalFile) {
-    return null;
-  }
+  if (!originalFile) return null;
 
   const originalSize = originalFile.size;
-  const compressedSize = compressedFile?.size || originalSize;
-  const isValid = isFileSizeValid(compressedSize);
+  const compressedSize = compressedFile?.size ?? originalSize;
+  const isValid = !isCompressing && isFileSizeValid(compressedSize);
+  const sourceTooSmall = originalSize < MIN_FILE_BYTES;
 
-  const getHelperText = () => {
-    if (isCompressing) {
-      return 'Compressing...';
+  const helperText = (() => {
+    if (isCompressing) return 'Compressing…';
+    if (sourceTooSmall) {
+      return `Your source image is ${formatFileSize(originalSize)}, below the ${formatFileSize(MIN_FILE_BYTES)} minimum for this collection. Compression can only shrink files, so export a larger version (higher resolution or less compression) and upload that instead.`;
     }
-    if (compressedSize < 200 * 1024) {
-      return 'File too small. Increase quality slider.';
-    }
-    if (compressedSize > 400 * 1024) {
-      return 'File too large. Decrease quality slider.';
-    }
-    return 'File size is valid! Ready to calculate.';
-  };
+    if (compressedSize < MIN_FILE_BYTES) return 'Compressed too far. Move the quality slider up.';
+    if (compressedSize > MAX_FILE_BYTES) return 'Still too large. Move the quality slider down.';
+    return 'Size is within range. Ready for a quote.';
+  })();
 
   return (
-    <div className={`
-      degent-card
-      ${isValid ? 'border-degent-green/50' : 'border-red-500/50'}
-    `}>
-    <h2 className="degent-title h2">
+    <section
+      className={`degent-card ${isValid ? 'border-degent-green/50' : 'border-red-500/50'}`}
+      aria-labelledby="file-validation-title"
+    >
+      <h2 id="file-validation-title" className="degent-title h2">
         <span className={`icon-square ${isValid ? 'bg-degent-green/20' : 'bg-red-500/20'}`}>
-          <i className={`fas ${isValid ? 'fa-check-circle' : 'fa-times-circle'} ${isValid ? 'text-degent-green' : 'text-red-500'}`}></i>
+          <i
+            className={`fas ${isValid ? 'fa-check-circle text-degent-green' : 'fa-times-circle text-red-500'}`}
+            aria-hidden="true"
+          ></i>
         </span>
         File Validation
-        <div className={`status ${isValid ? 'text-degent-green' : 'text-red-500'}`}>
+        <div className={`status ${isValid ? 'text-degent-green' : 'text-red-500'}`} aria-hidden="true">
           <i className={`fas ${isValid ? 'fa-check' : 'fa-times'}`}></i>
         </div>
       </h2>
-        
-      {/* Quality Slider */}
-      <div className="degent-card-2">
-        <div className="degent-row">
-          <h3 className="degent-title h3">
-            <span className="icon-square">
-              <i className="fas fa-sliders-h text-degent-green text-sm"></i>
+
+      {!sourceTooSmall && (
+        <div className="degent-card-2">
+          <div className="degent-row">
+            <h3 className="degent-title h3">
+              <span className="icon-square">
+                <i className="fas fa-sliders-h text-degent-green text-sm" aria-hidden="true"></i>
+              </span>
+              <label htmlFor="quality-slider">Quality</label>
+            </h3>
+            <span className="text-xl font-bold text-degent-orange" aria-live="polite">
+              {quality}%
             </span>
-            Quality Slider
-          </h3>
-          <span className="text-xl font-bold text-degent-orange">{quality}%</span>
-        </div>
-        
-        <p className="text-degent-muted text-sm mb-3">
-          Adjust quality to compress your image (200kb-400kb required)
-        </p>
-
-        <div className="relative">
-          <input
-            type="range"
-            min="1"
-            max="100"
-            step="1"
-            value={quality}
-            onChange={handleSliderChange}
-            onMouseUp={handleSliderRelease}
-            onTouchEnd={handleSliderRelease}
-            className="w-full h-2 bg-degent-input rounded-lg appearance-none cursor-pointer"
-            style={{
-              background: `linear-gradient(to right, #2efc86 0%, #2efc86 ${quality}%, #2a2a2d ${quality}%, #2a2a2d 100%)`,
-            }}
-          />
-          
-          <div className="flex justify-between text-xs text-degent-muted mt-1">
-            <span>1%</span>
-            <span>100%</span>
           </div>
-        </div>
 
-        {showCompressing && (
-          <div className="mt-3 text-center text-degent-green animate-pulse flex items-center justify-center gap-2">
-            <i className="fas fa-spinner fa-spin"></i>
-            Compressing...
+          <p className="text-degent-muted text-sm mb-3">
+            Lower the quality to bring the file inside {formatFileSize(MIN_FILE_BYTES)}–{formatFileSize(MAX_FILE_BYTES)}.
+          </p>
+
+          <div className="relative">
+            <input
+              id="quality-slider"
+              type="range"
+              min="1"
+              max="100"
+              step="1"
+              value={quality}
+              disabled={disabled}
+              onChange={(e) => setQuality(Number(e.target.value))}
+              aria-valuemin={1}
+              aria-valuemax={100}
+              aria-valuenow={quality}
+              aria-valuetext={`${quality} percent quality`}
+              className="w-full h-2 bg-degent-input rounded-lg appearance-none cursor-pointer"
+              style={{
+                background: `linear-gradient(to right, #2efc86 0%, #2efc86 ${quality}%, #2a2a2d ${quality}%, #2a2a2d 100%)`,
+              }}
+            />
+            <div className="flex justify-between text-xs text-degent-muted mt-1" aria-hidden="true">
+              <span>1%</span>
+              <span>100%</span>
+            </div>
           </div>
-        )}
-      </div>
+
+          {isCompressing && (
+            <div className="mt-3 text-center text-degent-green animate-pulse flex items-center justify-center gap-2" role="status">
+              <i className="fas fa-spinner fa-spin" aria-hidden="true"></i>
+              Compressing…
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="degent-card-2 text-sm">
         <div className="degent-row">
           <span className="label-icon">
-            <i className="fas fa-file-image text-degent-green"></i>
-            Original Size:
+            <i className="fas fa-file-image text-degent-green" aria-hidden="true"></i>
+            Original size
           </span>
           <span className="text-white font-semibold">{formatFileSize(originalSize)}</span>
         </div>
-
         <div className="degent-row">
           <span className="label-icon">
-            <i className="fas fa-compress text-degent-green"></i>
-            Compressed Size:
+            <i className="fas fa-compress text-degent-green" aria-hidden="true"></i>
+            Upload size
           </span>
           <span className={`font-semibold ${isValid ? 'text-degent-green' : 'text-red-400'}`}>
-            {formatFileSize(compressedSize)}
+            {isCompressing ? '…' : formatFileSize(compressedSize)}
           </span>
         </div>
-
         <div className="degent-row total">
-            <span className="text-degent-muted">Valid Range:</span>
-            <span className="text-white">200kb - 400kb</span>
-
+          <span className="text-degent-muted">Allowed range</span>
+          <span className="text-white">
+            {formatFileSize(MIN_FILE_BYTES)} – {formatFileSize(MAX_FILE_BYTES)}
+          </span>
         </div>
-
-        <div className={`
-         info-text status
-          ${isValid ? 'success' : 'error'}
-        `}>
-          <i className={`fas ${isValid ? 'fa-check-circle' : 'fa-exclamation-triangle'}`}></i>
-          {getHelperText()}
+        <div className={`info-text status ${isValid ? 'success' : 'error'}`} role="status">
+          <i className={`fas ${isValid ? 'fa-check-circle' : 'fa-exclamation-triangle'}`} aria-hidden="true"></i>
+          <span>{helperText}</span>
         </div>
       </div>
 
-      {compressedFile && (
+      {previewUrl && (
         <div className="degent-block-border-top">
           <p className="label-icon">
-              <i className="fas fa-eye text-degent-green"></i>
-            Compressed Image Preview:
+            <i className="fas fa-eye text-degent-green" aria-hidden="true"></i>
+            Preview
           </p>
-          <img 
-            src={URL.createObjectURL(compressedFile)} 
-            alt="Preview" 
-            className="degent-image w-full"
-          />
+          {/* eslint-disable-next-line @next/next/no-img-element -- blob URL preview */}
+          <img src={previewUrl} alt="Preview of the image that will be inscribed" className="degent-image w-full" />
         </div>
       )}
-    </div>
+    </section>
   );
 }

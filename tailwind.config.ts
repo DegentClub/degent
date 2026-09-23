@@ -22,7 +22,7 @@ const config: Config = {
         }
       },
       fontFamily: {
-        sans: ['"Space Grotesk"', 'sans-serif'],
+        sans: ['var(--font-space-grotesk)', '"Space Grotesk"', 'sans-serif'],
       },
       backgroundImage: {
         'degent-gradient': 'linear-gradient(to bottom right, #2efc86, #f7931a)',

@@ -23,7 +23,7 @@ export default function SocialJoin() {
         {/* Subheading */}
         <div className="subheading">
           <p>
-            If everything's correctly set up, you'll automatically be allowed in. Just sit tight!
+            If everything&apos;s correctly set up, you&apos;ll automatically be allowed in. Just sit tight!
           </p>
         </div>
 

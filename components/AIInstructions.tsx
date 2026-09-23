@@ -37,7 +37,7 @@ export default function AIInstructions() {
             </li>
             <li className="item">
               <i className="fas fa-font"></i>
-              <span>Must include text: "DEGEN", "DEGENT", or "REGEN"</span>
+              <span>Must include text: &ldquo;DEGEN&rdquo;, &ldquo;DEGENT&rdquo;, or &ldquo;REGEN&rdquo;</span>
             </li>
           </ul>
         </div>
@@ -60,7 +60,7 @@ export default function AIInstructions() {
             </li>
             <li className="item">
               <span className="text-degent-green font-bold">3.</span>
-              <span>Prompt: "Make one like this"</span>
+              <span>Prompt: &ldquo;Make one like this&rdquo;</span>
             </li>
           </ol>
         </div>

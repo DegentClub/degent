@@ -1,191 +1,231 @@
 'use client';
 
-import { useState } from 'react';
-import { sendBitcoin } from '@/lib/wallet';
+import { useEffect, useState, type Dispatch } from 'react';
+import {
+  FEE_MAX,
+  FEE_MIN,
+  FEE_WARN,
+  clampFeeRate,
+  estimateFeeSats,
+  formatBtc,
+  formatUsd,
+  isFeeRateInRange,
+  type FeePresets,
+} from '@/lib/fees';
+import {
+  canMint,
+  disabledReason,
+  hasFreshQuote,
+  requiresHighFeeConfirmation,
+  type MintAction,
+  type MintState,
+} from '@/lib/mint-machine';
 
 interface MintButtonProps {
-  walletAddress: string | null;
-  compressedFile: File | null;
-  isFileSizeValid: boolean;
-  inscriptionData: {
-    payment_address: string;
-    required_amount_in_sats: string;
-  } | null;
-  onMintSuccess: (txid: string) => void;
-  isCalculating?: boolean;
-  calculatingFeeRate?: number | null;
-  feeRate: number;
-  onFeeRateChange: (rate: number) => void;
+  state: MintState;
+  dispatch: Dispatch<MintAction>;
+  presets: FeePresets | null;
+  usdPerBtc: number | null;
+  onMint: () => void;
 }
 
-export default function MintButton({
-  walletAddress,
-  compressedFile,
-  isFileSizeValid,
-  inscriptionData,
-  onMintSuccess,
-  isCalculating = false,
-  calculatingFeeRate = null,
-  feeRate,
-  onFeeRateChange,
-}: MintButtonProps) {
-  const [isMinting, setIsMinting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+function CostLine({ sats, usdPerBtc, label }: { sats: number; usdPerBtc: number | null; label: string }) {
+  return (
+    <div className="degent-field-bg">
+      <span className="text-gray-400">{label}</span>
+      <span className="text-right">
+        <strong>{sats.toLocaleString()} sats</strong>
+        <span className="block text-xs text-degent-muted">
+          {formatBtc(sats)} BTC{usdPerBtc ? ` · ${formatUsd(sats, usdPerBtc)}` : ''}
+        </span>
+      </span>
+    </div>
+  );
+}
 
-  const handleFeeRateChange = (value: number) => {
-    // Enforce minimum of 0.1 sats/vb
-    if (value < 0.1) {
-      onFeeRateChange(0.1);
-    } else {
-      onFeeRateChange(value);
+export default function MintButton({ state, dispatch, presets, usdPerBtc, onMint }: MintButtonProps) {
+  const [feeText, setFeeText] = useState(String(state.feeRate));
+  const [feeError, setFeeError] = useState<string | null>(null);
+
+  // Keep the field in sync when the rate changes from outside (presets, reset).
+  useEffect(() => {
+    setFeeText((current) => (Number(current) === state.feeRate ? current : String(state.feeRate)));
+  }, [state.feeRate]);
+
+  const locked = state.phase === 'paying' || state.phase === 'submitted' || state.phase === 'confirmed';
+  const enabled = canMint(state);
+  const reason = disabledReason(state);
+  const quoteFresh = hasFreshQuote(state);
+  const needsHighFeeConfirm = requiresHighFeeConfirmation(state);
+
+  const setRate = (rate: number) => {
+    dispatch({ type: 'FEE_RATE_SET', feeRate: rate });
+  };
+
+  const handleFeeInput = (value: string) => {
+    setFeeText(value);
+    const parsed = Number(value);
+    if (value.trim() === '' || !Number.isFinite(parsed)) {
+      setFeeError('Enter a number');
+      return;
     }
+    setFeeError(isFeeRateInRange(parsed) ? null : `Must be between ${FEE_MIN} and ${FEE_MAX} sat/vB`);
+    setRate(parsed);
   };
 
-  const isEnabled =
-    walletAddress &&
-    compressedFile &&
-    isFileSizeValid &&
-    inscriptionData &&
-    !isMinting;
-
-  const getDisabledReason = () => {
-    if (!walletAddress) return 'Connect wallet to continue';
-    if (!compressedFile) return 'Please upload an image file';
-    if (!isFileSizeValid) return 'File must be 200kb-400kb';
-    if (!inscriptionData && !isCalculating) return 'Calculating...';
-    return '';
+  const commitFee = () => {
+    const clamped = clampFeeRate(Number(feeText));
+    setFeeText(String(clamped));
+    setFeeError(null);
+    setRate(clamped);
   };
 
-  const handleMint = async () => {
-    if (!isEnabled || !inscriptionData) return;
-
-    setIsMinting(true);
-    setError(null);
-
-    try {
-      // CRITICAL: Convert to integer to prevent "0.00000000 BTC" error
-      const amountInSats = parseInt(inscriptionData.required_amount_in_sats);
-
-      // Validate the amount is a valid positive integer
-      if (isNaN(amountInSats) || amountInSats <= 0) {
-        throw new Error(
-          `Invalid inscription amount: ${inscriptionData.required_amount_in_sats}. ` +
-          'Please try recalculating the inscription cost.'
-        );
-      }
-
-      console.log('Sending Bitcoin:', {
-        address: inscriptionData.payment_address,
-        amountInSats,
-        originalValue: inscriptionData.required_amount_in_sats
-      });
-
-      const txid = await sendBitcoin(
-        inscriptionData.payment_address,
-        amountInSats
-      );
-
-      onMintSuccess(txid);
-    } catch (err: any) {
-      console.error('Minting failed:', err);
-      setError(err.message || 'Failed to send payment. Please try again.');
-    } finally {
-      setIsMinting(false);
-    }
-  };
+  const estimateSats = state.file && isFeeRateInRange(state.feeRate) ? estimateFeeSats(state.file.size, state.feeRate) : null;
 
   return (
-    <div className="degent-card">
-      <h2 className="degent-title h2">
+    <section className="degent-card" aria-labelledby="mint-title">
+      <h2 id="mint-title" className="degent-title h2">
         <span className="icon-square">
-          <i className="fa-solid fa-rocket text-degent-green"></i>
+          <i className="fa-solid fa-rocket text-degent-green" aria-hidden="true"></i>
         </span>
-        <span>It's time to <strong>Submit your Degent!</strong></span>
+        <span>
+          Review and <strong>submit your Degent</strong>
+        </span>
       </h2>
-      {/* Fee Rate Input */}
+
       <div className="degent-card-2">
-        <label className="label-icon">
-          <i className="fas fa-tachometer-alt text-degent-green text-lg"></i>
-          Fee Rate (sats/vbyte)
+        <label htmlFor="fee-rate" className="label-icon">
+          <i className="fas fa-tachometer-alt text-degent-green text-lg" aria-hidden="true"></i>
+          Fee rate (sat/vB)
         </label>
+
+        {presets && (
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Fee presets">
+            {(['economy', 'normal', 'fast'] as const).map((key) => (
+              <button
+                key={key}
+                type="button"
+                disabled={locked}
+                onClick={() => {
+                  setFeeText(String(presets[key]));
+                  setFeeError(null);
+                  setRate(presets[key]);
+                }}
+                aria-pressed={state.feeRate === presets[key]}
+                className={`btn !py-2 !text-sm flex-1 ${state.feeRate === presets[key] ? 'btn-neon' : 'btn-idle'}`}
+              >
+                <span className="capitalize">{key}</span>
+                <span className="block text-xs opacity-80">{presets[key]} sat/vB</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {presets && !presets.live && (
+          <p className="text-xs text-degent-muted">Live fee data unavailable; presets are static defaults.</p>
+        )}
+
         <input
+          id="fee-rate"
           type="number"
-          value={feeRate}
-          onChange={(e) => handleFeeRateChange(Number(e.target.value))}
-          onBlur={(e) => {
-            // Enforce minimum on blur as well
-            const value = Number(e.target.value);
-            if (value < 0.1) {
-              handleFeeRateChange(0.1);
-            }
+          inputMode="decimal"
+          value={feeText}
+          disabled={locked}
+          onChange={(e) => handleFeeInput(e.target.value)}
+          onBlur={commitFee}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitFee();
           }}
-          min="0.1"
-          step="0.1"
+          min={FEE_MIN}
+          max={FEE_MAX}
+          step="0.01"
+          aria-invalid={feeError ? true : undefined}
+          aria-describedby="fee-help"
           className="bg-degent-input border border-degent-border flex-grow focus:border-degent-green focus:ring-1 focus:ring-degent-green outline-none px-5 py-3 rounded-degent-button text-white transition-colors w-full"
         />
-        <p className="info-text"><i className="fa-circle-info fas"></i>Higher fee rates result in faster confirmation times (minimum: 0.13 sat/vb)</p>
+        <p id="fee-help" className={`info-text ${feeError ? '!text-red-400' : ''}`}>
+          <i className="fa-circle-info fas" aria-hidden="true"></i>
+          {feeError ?? `Higher rates confirm faster. Allowed range: ${FEE_MIN}–${FEE_MAX} sat/vB.`}
+        </p>
       </div>
 
-       {isCalculating && calculatingFeeRate !== null ? (
-        <div className="mt-4 pt-4 border-t border-gray-700 text-center">
-          <div className="text-bitcoin text-md animate-pulse">
-             <i className="fas fa-hourglass-start mr-2"></i> Calculating inscription cost at {calculatingFeeRate} sat/vb...
-          </div>
+      {needsHighFeeConfirm && !locked && (
+        <div className="degent-card-2 !border-degent-orange/50" role="alert">
+          <p className="text-degent-orange">
+            <i className="fas fa-triangle-exclamation mr-2" aria-hidden="true"></i>
+            {state.feeRate} sat/vB is above {FEE_WARN} sat/vB. That is unusually expensive; double-check before continuing.
+          </p>
+          <button type="button" onClick={() => dispatch({ type: 'HIGH_FEE_CONFIRMED' })} className="btn btn-flex btn-neon !py-2 !text-sm">
+            <i className="fas fa-check" aria-hidden="true"></i>I understand, use {state.feeRate} sat/vB
+          </button>
         </div>
-      ) : inscriptionData ? (
-        <div className="degent-card-2">
-          <div className="degent-field-bg">
-            <span className="text-gray-400">Required Amount:</span>
-            <strong>
-              {parseInt(inscriptionData.required_amount_in_sats).toLocaleString()} sats
-            </strong>
-          </div>
-          <div className="degent-field-bg">
-            <p className="text-gray-400 mb-1">Payment Address:</p>
-            <p className="text-bitcoin text-sm">
-              {inscriptionData.payment_address}
-            </p>
-          </div>
-        </div>
-      ) : null}
+      )}
 
-      {/* Mint Button */}
+      {state.phase === 'quoting' && (
+        <div className="degent-block-border-top text-center" role="status">
+          <div className="text-bitcoin text-md animate-pulse">
+            <i className="fas fa-hourglass-start mr-2" aria-hidden="true"></i>
+            Fetching quote at {state.feeRate} sat/vB…
+          </div>
+        </div>
+      )}
+
+      {state.quote && quoteFresh && state.phase !== 'quoting' && (
+        <div className="degent-card-2">
+          <CostLine sats={state.quote.amountSats} usdPerBtc={usdPerBtc} label="Total to pay" />
+          <div className="degent-field-bg">
+            <span className="text-gray-400 mb-1">Payment address</span>
+            <span className="text-bitcoin text-sm break-all">{state.quote.paymentAddress}</span>
+          </div>
+        </div>
+      )}
+
+      {!quoteFresh && state.phase !== 'quoting' && estimateSats !== null && (
+        <div className="degent-card-2">
+          <CostLine sats={estimateSats} usdPerBtc={usdPerBtc} label="Rough estimate" />
+          <p className="text-xs text-degent-muted">Exact amount comes from the quote once your image and wallet are ready.</p>
+        </div>
+      )}
+
       <button
-        onClick={handleMint}
-        disabled={!isEnabled}
-        className={`
-          w-full btn btn-flex
-          ${isEnabled
-            ? 'btn-gradient cursor-pointer'
-            : 'btn-disabled'
-          }
-        `}
+        type="button"
+        onClick={onMint}
+        disabled={!enabled}
+        className={`w-full btn btn-flex ${enabled ? 'btn-gradient cursor-pointer' : 'btn-disabled'}`}
       >
-        {isMinting ? (
+        {state.phase === 'paying' ? (
           <>
-            <i className="fas fa-spinner fa-spin"></i>
-            Minting...
+            <i className="fas fa-spinner fa-spin" aria-hidden="true"></i>
+            Waiting for wallet…
+          </>
+        ) : state.phase === 'submitted' || state.phase === 'confirmed' ? (
+          <>
+            <i className="fas fa-check" aria-hidden="true"></i>
+            Payment sent
           </>
         ) : (
           <>
-            <i className="fas fa-rocket"></i>
-            Mint Inscription
+            <i className="fas fa-rocket" aria-hidden="true"></i>
+            Pay and mint
           </>
         )}
       </button>
 
-      {!isEnabled && (
-        <p className="info-text">
-          <i className="fa-circle-info fas"></i>
-          <span className="disabled-reason">{getDisabledReason()}</span></p>
+      {reason && state.phase !== 'paying' && (
+        <p className="info-text" role="status">
+          <i className="fa-circle-info fas" aria-hidden="true"></i>
+          <span className="disabled-reason">{reason}</span>
+        </p>
       )}
 
-      {error && (
-        <div className="info-text status error">
-          <i className="fas fa-exclamation-triangle"></i>
-          {error}
+      {state.phase === 'failed' && state.error && (
+        <div className="info-text status error" role="alert">
+          <i className="fas fa-exclamation-triangle" aria-hidden="true"></i>
+          <span className="flex-1">{state.error}</span>
+          <button type="button" onClick={() => dispatch({ type: 'RETRY' })} className="btn btn-flex btn-idle !py-1 !px-3 !text-xs">
+            Retry
+          </button>
         </div>
       )}
-    </div>
+    </section>
   );
 }
