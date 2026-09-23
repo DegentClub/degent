@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Degent Marketplace | Decentralized Gentlemen Club</title>
   <meta name="description" content="The official marketplace for the Decentralized Gentlemen Club. Trade Degent ordinals peer-to-peer on Bitcoin.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;800;900&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -54,6 +57,11 @@
   </header>
 
   <main>
+    <!-- Settlement kill switch banner (shown when BUYS_ENABLED=false) -->
+    <div id="buys-paused-banner" class="notice-banner hidden" role="status">
+      <strong>Buying is paused</strong> while the settlement engine is rebuilt and verified on signet. Listings remain viewable and can still be created or cancelled.
+    </div>
+
     <!-- Hero / Not Connected State -->
     <section id="hero" class="hero">
       <div class="hero-content">
@@ -83,7 +91,7 @@
         <p>Please install the UniSat Wallet browser extension to continue.</p>
         <div class="modal-actions">
           <a href="https://unisat.io" target="_blank" rel="noopener" class="btn btn-primary">Install UniSat</a>
-          <button class="btn btn-ghost" onclick="document.getElementById('no-wallet-modal').classList.add('hidden')">Close</button>
+          <button class="btn btn-ghost" id="no-wallet-close">Close</button>
         </div>
       </div>
     </div>
@@ -174,7 +182,7 @@
         <div class="list-form">
           <label class="list-label" for="list-price-input">Price (sats)</label>
           <div class="list-input-wrap">
-            <input type="number" id="list-price-input" class="list-input" min="546" step="1" placeholder="e.g. 50000">
+            <input type="number" id="list-price-input" class="list-input" min="1000" step="1" placeholder="e.g. 50000">
             <span class="list-input-suffix">sats</span>
           </div>
           <div class="list-price-hint" id="list-price-hint"></div>
@@ -183,8 +191,9 @@
             <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 2v20M2 12h20"/>
             </svg>
-            + Sign &amp; List
+            <span>Sign &amp; List</span>
           </button>
+          <p class="buy-note">Your wallet signs input #2 of a listing template with SIGHASH_SINGLE|ANYONECANPAY, then a BIP-322 ownership message. The Degent stays in your wallet until someone buys it.</p>
         </div>
       </div>
     </div>
@@ -201,13 +210,22 @@
             <div class="list-modal-id mono" id="buy-modal-id"></div>
           </div>
         </div>
+        <div class="fee-tier-group" id="fee-tier-group" role="radiogroup" aria-label="Fee priority">
+          <button type="button" class="fee-tier" data-tier="economy"><span class="fee-name">Economy</span><span class="fee-rate">—</span></button>
+          <button type="button" class="fee-tier active" data-tier="normal"><span class="fee-name">Normal</span><span class="fee-rate">—</span></button>
+          <button type="button" class="fee-tier" data-tier="fast"><span class="fee-name">Fast</span><span class="fee-rate">—</span></button>
+        </div>
         <div class="buy-breakdown">
           <div class="buy-row">
             <span>Price</span>
             <span class="mono" id="buy-price-value">—</span>
           </div>
           <div class="buy-row">
-            <span>Est. network fee (~1 sat/vB)</span>
+            <span>Royalty</span>
+            <span class="mono" id="buy-royalty-value">—</span>
+          </div>
+          <div class="buy-row">
+            <span>Network fee</span>
             <span class="mono" id="buy-fee-value">—</span>
           </div>
           <div class="buy-row buy-row-total">
@@ -224,9 +242,9 @@
           <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M20 6L9 17l-5-5"/>
           </svg>
-          Confirm Purchase
+          <span>Confirm Purchase</span>
         </button>
-        <p class="buy-note">This will construct a PSBT, sign your payment input, and broadcast the transaction.</p>
+        <p class="buy-note">The server builds the transaction, your wallet signs your inputs (two small padding UTXOs plus payment), and the server verifies the seller's signature and the ordinal's destination before broadcasting. Your wallet will show an inscription input being spent: that is the Degent moving to you.</p>
       </div>
     </div>
 
@@ -274,7 +292,7 @@
                 <span class="field-label">Offset</span>
                 <span class="field-value" id="detail-offset"></span>
               </div>
-              <div class="detail-field" id="detail-seller-field" style="display:none">
+              <div class="detail-field hidden" id="detail-seller-field">
                 <span class="field-label">Seller</span>
                 <span class="field-value mono" id="detail-seller"></span>
               </div>
@@ -313,11 +331,10 @@
         <a href="https://degent.club/about/" target="_blank">About</a>
       </div>
       <p class="footer-quote">"The financial advice is optional, the bowtie is not."</p>
-      <p class="footer-copy">&copy; 2025 Decentralized Gentlemen Club &middot; Powered by UniSat Wallet &middot; Built on Bitcoin</p>
+      <p class="footer-copy">&copy; 2026 Decentralized Gentlemen Club &middot; Powered by UniSat Wallet &middot; Built on Bitcoin</p>
     </div>
   </footer>
 
-  <script src="psbt.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
