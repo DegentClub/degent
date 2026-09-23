@@ -1,6 +1,6 @@
 /**
- * @bsh/fee-oracle: multi-source Bitcoin fee aggregation for scribb.it (library).
- * The optional HTTP server lives at `@bsh/fee-oracle/server` so library users never load Hono.
+ * @bsh/scribbit-fee-oracle: multi-source Bitcoin fee aggregation for scribb.it (library).
+ * The optional HTTP server lives at `@bsh/scribbit-fee-oracle/server` so library users never load Hono.
  */
 export * from './types.js';
 export { aggregate, ceilToStep, median, rejectOutliers, type Aggregate, type LabeledReading } from './aggregate.js';

@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@bsh/inscription": "workspace:*",
-    "@bsh/fee-oracle": "workspace:*",
+    "@bsh/scribbit-fee-oracle": "workspace:*",
     "tsx": "^4.23.15"
   },
   "devDependencies": {

@@ -5,7 +5,7 @@ product: degent
 owner: team-degent
 summary: Automated degent.club mint service - order state machine, art review, parent co-signing policy signer, lane broadcaster.
 lifecycle: beta
-depends_on: ["@bsh/inscription", "@bsh/degent-mint-sdk"]
+depends_on: ["@bsh/inscription", "@bsh/degent-mint-sdk", "@bsh/events"]
 provides: [contracts/openapi/degent-mint.yaml, contracts/asyncapi/degent-mint.yaml]
 consumes: ["events:block.indexed.{network}"]
 stores: ["sqlite:degent_mint"]

@@ -1,4 +1,4 @@
-# @bsh/fee-oracle
+# @bsh/scribbit-fee-oracle
 
 Multi-source Bitcoin fee oracle for scribb.it. It polls several fee sources, rejects outliers, takes the
 median per confirmation target, floors the result at the min relay rate, and caches it for a TTL. It also
@@ -9,16 +9,16 @@ that implements [`contracts/openapi/scribbit-fees.yaml`](../../../../contracts/o
 It does not broadcast, sign or store anything. Its only state is an in-memory cache.
 
 ```bash
-pnpm --filter @bsh/fee-oracle test
-pnpm --filter @bsh/fee-oracle typecheck
-FEE_NETWORK=signet MEMPOOL_URLS=https://mempool.space/signet pnpm --filter @bsh/fee-oracle dev   # :8080
+pnpm --filter @bsh/scribbit-fee-oracle test
+pnpm --filter @bsh/scribbit-fee-oracle typecheck
+FEE_NETWORK=signet MEMPOOL_URLS=https://mempool.space/signet pnpm --filter @bsh/scribbit-fee-oracle dev   # :8080
 ```
 
 ## Library
 
 ```ts
 import { createFeeOracle, mempoolRecommendedSource, mempoolBlocksSource, esploraSource,
-         bitcoindSource, blockLaneSource } from '@bsh/fee-oracle';
+         bitcoindSource, blockLaneSource } from '@bsh/scribbit-fee-oracle';
 
 const oracle = createFeeOracle({
   network: 'mainnet',
@@ -95,7 +95,7 @@ aggregate with `stale: true` for up to `maxStaleMs` past its TTL. After that it 
 
 ## Server
 
-`createFeeServer({ oracles })` from `@bsh/fee-oracle/server`. The library entry point never loads Hono.
+`createFeeServer({ oracles })` from `@bsh/scribbit-fee-oracle/server`. The library entry point never loads Hono.
 
 | Route | |
 |---|---|

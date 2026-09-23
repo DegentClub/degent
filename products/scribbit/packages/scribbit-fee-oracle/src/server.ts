@@ -1,6 +1,6 @@
 /**
  * Optional HTTP server (Hono) exposing contracts/openapi/scribbit-fees.yaml. Import from
- * `@bsh/fee-oracle/server`; the library entry point never loads Hono.
+ * `@bsh/scribbit-fee-oracle/server`; the library entry point never loads Hono.
  */
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';

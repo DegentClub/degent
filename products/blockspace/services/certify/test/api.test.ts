@@ -67,15 +67,37 @@ describe('meta endpoints', () => {
     ]);
   });
 
-  it('edge behaviour: request id, security headers, CORS, JSON 404', async () => {
+  it('edge behaviour (@bsh/edge): request id, security headers, CORS, JSON 404', async () => {
     const w = world([degent], degentOrd());
-    const res = await w.app.request('/v1/keys', { headers: { 'x-request-id': 'abc-123', origin: 'https://degent.club' } });
-    expect(res.headers.get('x-request-id')).toBe('abc-123');
+    const res = await w.app.request('/v1/keys', { headers: { 'x-request-id': 'client-chosen-id', origin: 'https://degent.club' } });
+    const rid = res.headers.get('x-request-id')!;
+    expect(rid).toMatch(/^[0-9a-f-]{36}$/); // public clients cannot choose ids that land in our logs
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(res.headers.get('cross-origin-resource-policy')).toBe('cross-origin');
     expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    expect(res.headers.get('access-control-allow-credentials')).toBeNull();
     const nf = await w.req('GET', '/nope');
     expect(nf.status).toBe(404);
-    expect(await nf.json()).toEqual({ error: { code: 'not_found', message: 'no such endpoint' } });
+    const body = await nf.json();
+    expect(body).toEqual({ error: { code: 'not_found', message: 'Not found', requestId: nf.headers.get('x-request-id') } });
+  });
+
+  it('per-IP rate limits (429 + Retry-After) and a 1 KiB body limit on refresh', async () => {
+    const w = world([degent], degentOrd(), { reads: { windowMs: 60_000, max: 2 }, refresh: { windowMs: 60_000, max: 1 } });
+    expect((await w.req('GET', '/v1/keys')).status).toBe(200);
+    expect((await w.req('GET', '/v1/keys')).status).toBe(200);
+    const limited = await w.req('GET', '/v1/keys');
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect((await conforms('GET', '/v1/keys', limited)).error.code).toBe('rate_limited');
+
+    const big = await w.app.request('/v1/collections/degent/refresh', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${ADMIN}`, 'content-type': 'application/json', 'content-length': '2048' },
+      body: 'x'.repeat(2048),
+    });
+    expect(big.status).toBe(413);
+    expect((await conforms('POST', '/v1/collections/degent/refresh', big)).error.code).toBe('payload_too_large');
   });
 });
 

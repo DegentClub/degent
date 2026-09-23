@@ -6,7 +6,7 @@ product: scribbit
 owner: team-scribbit
 summary: Developer CLI `scribbit` - exact inscription quotes, envelope dumps, commit addresses and self-rescue transactions, with --json everywhere.
 lifecycle: beta
-depends_on: ["@bsh/inscription", "@bsh/fee-oracle"]
+depends_on: ["@bsh/inscription", "@bsh/scribbit-fee-oracle"]
 consumes: [contracts/openapi/scribbit-fees.yaml]
 docs: ./README.md
 commands: { dev: dev, test: test, typecheck: typecheck }

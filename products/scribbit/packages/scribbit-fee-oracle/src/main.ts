@@ -1,4 +1,4 @@
-/** Fee server entry point: `pnpm --filter @bsh/fee-oracle dev | start`. */
+/** Fee server entry point: `pnpm --filter @bsh/scribbit-fee-oracle dev | start`. */
 import { serve } from '@hono/node-server';
 import { ConfigError, loadServerConfig } from './config.js';
 import { createFeeOracle } from './oracle.js';

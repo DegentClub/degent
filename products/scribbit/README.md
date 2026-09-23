@@ -16,7 +16,7 @@ with exact costs up front and no custody of user keys. It is the engine that deg
 
 | Component | Package | Kind | Path | Notes |
 |---|---|---|---|---|
-| `scribbit-fee-oracle` | `@bsh/fee-oracle` | library (+ optional server) | `packages/fee-oracle` | Multi-source fee aggregation (mempool.space, Esplora, bitcoind, Libre Relay block lane): median, outlier rejection, min-relay floor, TTL cache, source health. Provides `contracts/openapi/scribbit-fees.yaml` |
+| `scribbit-fee-oracle` | `@bsh/scribbit-fee-oracle` | library (+ optional server) | `packages/fee-oracle` | Multi-source fee aggregation (mempool.space, Esplora, bitcoind, Libre Relay block lane): median, outlier rejection, min-relay floor, TTL cache, source health. Provides `contracts/openapi/scribbit-fees.yaml` |
 | `scribbit-cli` | `@bsh/scribbit-cli` | tool | `apps/cli` | Developer CLI `scribbit`: exact `quote`, `envelope` dump, `commit-address`, self-`rescue`; `--json` everywhere |
 
 ## Components to come

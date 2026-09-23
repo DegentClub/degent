@@ -1,8 +1,82 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-23T20:27:06.600Z",
+  "generatedAt": "2026-09-23T20:54:35.196Z",
   "schema": "schemas/component.schema.json",
   "components": [
+    {
+      "name": "blockspace-certify",
+      "package": "@bsh/blockspace-certify",
+      "kind": "service",
+      "product": "blockspace",
+      "owner": "team-blockspace",
+      "summary": "\"Verified by block.space\" collection certification - parent/child + inscribed-manifest membership, reproducible stats, BIP340-signed attestations.",
+      "lifecycle": "experimental",
+      "depends_on": [
+        "@bsh/edge"
+      ],
+      "provides": [
+        "contracts/openapi/blockspace-collections.yaml"
+      ],
+      "stores": [
+        "memory:blockspace_certify_snapshots"
+      ],
+      "secrets": [
+        "services/blockspace-certify/attestation-key",
+        "services/blockspace-certify/admin-token"
+      ],
+      "env_schema": "./env.schema.json",
+      "slo": {
+        "availability": "99.9",
+        "p95_ms": 200
+      },
+      "runbook": "./RUNBOOK.md",
+      "docs": "./README.md",
+      "commands": {
+        "dev": "dev",
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "products/blockspace/services/certify",
+      "version": "0.1.0",
+      "scripts": {
+        "dev": "tsx watch src/main.ts",
+        "manifest:from-collection-json": "tsx src/cli/manifest-from-collection-json.ts",
+        "start": "tsx src/main.ts",
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "env_schema": "products/blockspace/services/certify/env.schema.json",
+        "runbook": "products/blockspace/services/certify/RUNBOOK.md",
+        "docs": "products/blockspace/services/certify/README.md"
+      },
+      "dependents": []
+    },
+    {
+      "name": "blockspace-meter-client",
+      "package": "@bsh/meter-client",
+      "kind": "library",
+      "product": "blockspace",
+      "owner": "team-blockspace",
+      "summary": "Typed, zero-dependency client for the live block.space Meter API with retries, timeouts, abort and contract-drift guards.",
+      "lifecycle": "experimental",
+      "depends_on": [],
+      "docs": "./README.md",
+      "commands": {
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "products/blockspace/packages/meter-client",
+      "version": "0.1.0",
+      "scripts": {
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "docs": "products/blockspace/packages/meter-client/README.md"
+      },
+      "dependents": []
+    },
     {
       "name": "catalog-tool",
       "package": "@bsh/catalog-tool",
@@ -42,7 +116,8 @@
       "lifecycle": "beta",
       "depends_on": [
         "@bsh/inscription",
-        "@bsh/degent-mint-sdk"
+        "@bsh/degent-mint-sdk",
+        "@bsh/events"
       ],
       "provides": [
         "contracts/openapi/degent-mint.yaml",
@@ -56,7 +131,10 @@
       ],
       "secrets": [
         "services/degent-mint/parent-key",
-        "services/degent-mint/art-review-api-key"
+        "services/degent-mint/art-review-api-key",
+        "services/degent-mint/reveal-encryption-key",
+        "services/degent-mint/libre-rpc-pass",
+        "services/degent-mint/slipstream-api-key"
       ],
       "env_schema": "./env.schema.json",
       "slo": {
@@ -73,7 +151,7 @@
       "path": "products/degent/services/mint",
       "version": "0.1.0",
       "scripts": {
-        "dev": "tsx watch src/main.ts",
+        "dev": "NETWORK=${NETWORK:-regtest} tsx watch src/main.ts",
         "start": "tsx src/main.ts",
         "test": "vitest run",
         "typecheck": "tsc --noEmit -p ."
@@ -154,6 +232,96 @@
       "dependents": []
     },
     {
+      "name": "edge",
+      "package": "@bsh/edge",
+      "kind": "library",
+      "product": "platform",
+      "owner": "team-platform",
+      "summary": "Shared Hono edge middleware - request ids, JSON errors, CORS allowlist, security headers, body limit, rate limits, API keys.",
+      "lifecycle": "beta",
+      "depends_on": [],
+      "stores": [
+        "memory:edge-rate-limits",
+        "memory:edge-api-keys"
+      ],
+      "docs": "./README.md",
+      "commands": {
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "platform/edge",
+      "version": "0.1.0",
+      "scripts": {
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "docs": "platform/edge/README.md"
+      },
+      "dependents": [
+        "blockspace-certify"
+      ]
+    },
+    {
+      "name": "events",
+      "package": "@bsh/events",
+      "kind": "library",
+      "product": "platform",
+      "owner": "team-platform",
+      "summary": "CloudEvents envelope, versioned topic registry with schema validation, AMQP-style bus, transactional outbox and RabbitMQ adapter.",
+      "lifecycle": "beta",
+      "depends_on": [],
+      "provides": [
+        "contracts/asyncapi/platform-events.yaml"
+      ],
+      "docs": "./README.md",
+      "commands": {
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "platform/events",
+      "version": "0.1.0",
+      "scripts": {
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "docs": "platform/events/README.md"
+      },
+      "dependents": [
+        "degent-mint",
+        "notify"
+      ]
+    },
+    {
+      "name": "identity",
+      "package": "@bsh/identity",
+      "kind": "library",
+      "product": "platform",
+      "owner": "team-platform",
+      "summary": "Blockspace ID primitives - Sign in with Bitcoin (BIP-322 simple + legacy signmessage), nonce replay store, Ed25519 JWS sessions.",
+      "lifecycle": "beta",
+      "depends_on": [],
+      "stores": [
+        "memory:siwb-nonces"
+      ],
+      "docs": "./README.md",
+      "commands": {
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "platform/identity",
+      "version": "0.1.0",
+      "scripts": {
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "docs": "platform/identity/README.md"
+      },
+      "dependents": []
+    },
+    {
       "name": "inscription",
       "package": "@bsh/inscription",
       "kind": "library",
@@ -178,7 +346,115 @@
       },
       "dependents": [
         "degent-mint",
-        "degent-web"
+        "degent-web",
+        "scribbit-cli"
+      ]
+    },
+    {
+      "name": "notify",
+      "package": "@bsh/notify",
+      "kind": "library",
+      "product": "platform",
+      "owner": "team-platform",
+      "summary": "Notification core - topic subscriptions fanned out to signed webhooks, email and Telegram with retries and idempotency keys.",
+      "lifecycle": "beta",
+      "depends_on": [
+        "@bsh/events"
+      ],
+      "docs": "./README.md",
+      "commands": {
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "platform/notify",
+      "version": "0.1.0",
+      "scripts": {
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "docs": "platform/notify/README.md"
+      },
+      "dependents": []
+    },
+    {
+      "name": "scribbit-cli",
+      "package": "@bsh/scribbit-cli",
+      "kind": "tool",
+      "product": "scribbit",
+      "owner": "team-scribbit",
+      "summary": "Developer CLI `scribbit` - exact inscription quotes, envelope dumps, commit addresses and self-rescue transactions, with --json everywhere.",
+      "lifecycle": "beta",
+      "depends_on": [
+        "@bsh/inscription",
+        "@bsh/scribbit-fee-oracle"
+      ],
+      "consumes": [
+        "contracts/openapi/scribbit-fees.yaml"
+      ],
+      "docs": "./README.md",
+      "commands": {
+        "dev": "dev",
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "products/scribbit/apps/cli",
+      "version": "0.1.0",
+      "scripts": {
+        "dev": "tsx src/bin.ts --help",
+        "scribbit": "tsx src/bin.ts",
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "docs": "products/scribbit/apps/cli/README.md"
+      },
+      "dependents": []
+    },
+    {
+      "name": "scribbit-fee-oracle",
+      "package": "@bsh/scribbit-fee-oracle",
+      "kind": "library",
+      "product": "scribbit",
+      "owner": "team-scribbit",
+      "summary": "Multi-source Bitcoin fee oracle (mempool.space, Esplora, bitcoind, Libre Relay block lane) with median aggregation, TTL cache and optional Hono server.",
+      "lifecycle": "beta",
+      "depends_on": [],
+      "provides": [
+        "contracts/openapi/scribbit-fees.yaml"
+      ],
+      "stores": [
+        "memory:fee_cache"
+      ],
+      "secrets": [
+        "services/scribbit-fee-oracle/bitcoind-rpc-password",
+        "services/scribbit-fee-oracle/libre-relay-rpc-password"
+      ],
+      "env_schema": "./env.schema.json",
+      "slo": {
+        "availability": "99.9",
+        "p95_ms": 200
+      },
+      "docs": "./README.md",
+      "commands": {
+        "dev": "dev",
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "products/scribbit/packages/scribbit-fee-oracle",
+      "version": "0.1.0",
+      "scripts": {
+        "dev": "tsx watch src/main.ts",
+        "start": "tsx src/main.ts",
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "env_schema": "products/scribbit/packages/scribbit-fee-oracle/env.schema.json",
+        "docs": "products/scribbit/packages/scribbit-fee-oracle/README.md"
+      },
+      "dependents": [
+        "scribbit-cli"
       ]
     },
     {
@@ -212,9 +488,17 @@
   "products": {
     "blockspace": {
       "path": "products/blockspace",
-      "components": [],
-      "owners": [],
-      "kinds": {}
+      "components": [
+        "blockspace-certify",
+        "blockspace-meter-client"
+      ],
+      "owners": [
+        "team-blockspace"
+      ],
+      "kinds": {
+        "library": 1,
+        "service": 1
+      }
     },
     "degent": {
       "path": "products/degent",
@@ -235,21 +519,33 @@
     "platform": {
       "path": "platform",
       "components": [
+        "edge",
+        "events",
+        "identity",
         "inscription",
+        "notify",
         "wallet-kit"
       ],
       "owners": [
         "team-platform"
       ],
       "kinds": {
-        "library": 2
+        "library": 6
       }
     },
     "scribbit": {
       "path": "products/scribbit",
-      "components": [],
-      "owners": [],
-      "kinds": {}
+      "components": [
+        "scribbit-cli",
+        "scribbit-fee-oracle"
+      ],
+      "owners": [
+        "team-scribbit"
+      ],
+      "kinds": {
+        "library": 1,
+        "tool": 1
+      }
     },
     "tooling": {
       "path": "tools",
@@ -268,22 +564,51 @@
     {
       "path": "contracts/asyncapi/degent-mint.yaml",
       "kind": "asyncapi",
-      "exists": false,
+      "exists": true,
       "providers": [
         "degent-mint"
       ],
       "consumers": []
     },
     {
+      "path": "contracts/asyncapi/platform-events.yaml",
+      "kind": "asyncapi",
+      "exists": true,
+      "providers": [
+        "events"
+      ],
+      "consumers": []
+    },
+    {
+      "path": "contracts/openapi/blockspace-collections.yaml",
+      "kind": "openapi",
+      "exists": true,
+      "providers": [
+        "blockspace-certify"
+      ],
+      "consumers": []
+    },
+    {
       "path": "contracts/openapi/degent-mint.yaml",
       "kind": "openapi",
-      "exists": false,
+      "exists": true,
       "providers": [
         "degent-mint",
         "degent-mint-sdk"
       ],
       "consumers": [
         "degent-web"
+      ]
+    },
+    {
+      "path": "contracts/openapi/scribbit-fees.yaml",
+      "kind": "openapi",
+      "exists": true,
+      "providers": [
+        "scribbit-fee-oracle"
+      ],
+      "consumers": [
+        "scribbit-cli"
       ]
     },
     {
@@ -308,8 +633,23 @@
       "type": "consumes"
     },
     {
+      "from": "scribbit-cli",
+      "to": "contracts/openapi/scribbit-fees.yaml",
+      "type": "consumes"
+    },
+    {
+      "from": "blockspace-certify",
+      "to": "edge",
+      "type": "depends_on"
+    },
+    {
       "from": "degent-mint",
       "to": "degent-mint-sdk",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-mint",
+      "to": "events",
       "type": "depends_on"
     },
     {
@@ -333,6 +673,26 @@
       "type": "depends_on"
     },
     {
+      "from": "notify",
+      "to": "events",
+      "type": "depends_on"
+    },
+    {
+      "from": "scribbit-cli",
+      "to": "inscription",
+      "type": "depends_on"
+    },
+    {
+      "from": "scribbit-cli",
+      "to": "scribbit-fee-oracle",
+      "type": "depends_on"
+    },
+    {
+      "from": "blockspace-certify",
+      "to": "contracts/openapi/blockspace-collections.yaml",
+      "type": "provides"
+    },
+    {
       "from": "degent-mint",
       "to": "contracts/asyncapi/degent-mint.yaml",
       "type": "provides"
@@ -345,6 +705,16 @@
     {
       "from": "degent-mint-sdk",
       "to": "contracts/openapi/degent-mint.yaml",
+      "type": "provides"
+    },
+    {
+      "from": "events",
+      "to": "contracts/asyncapi/platform-events.yaml",
+      "type": "provides"
+    },
+    {
+      "from": "scribbit-fee-oracle",
+      "to": "contracts/openapi/scribbit-fees.yaml",
       "type": "provides"
     }
   ]

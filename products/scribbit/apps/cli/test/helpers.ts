@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import type { FetchLike } from '@bsh/fee-oracle';
+import type { FetchLike } from '@bsh/scribbit-fee-oracle';
 import { run, type CliIO } from '../src/index.js';
 
 export const FIXTURES = fileURLToPath(new URL('./fixtures/', import.meta.url));

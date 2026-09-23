@@ -4,7 +4,7 @@ import { Ajv2020 } from 'ajv/dist/2020.js';
 import { parse } from 'yaml';
 import { expect } from 'vitest';
 import type { Hono } from 'hono';
-import { createApp } from '../src/app.js';
+import { createApp, type AppOptions } from '../src/app.js';
 import { CertifyService, type CollectionConfig } from '../src/application/certify-service.js';
 import { FakeOrd } from '../src/adapters/fake-ord.js';
 import { InMemoryAttestationSigner } from '../src/adapters/memory-signer.js';
@@ -60,11 +60,11 @@ export interface World {
   refresh: (slug?: string) => Promise<Response>;
 }
 
-export function world(collections: CollectionConfig[], ord = new FakeOrd({ height: 900_000, pageSize: 2 })): World {
+export function world(collections: CollectionConfig[], ord = new FakeOrd({ height: 900_000, pageSize: 2 }), rateLimits?: AppOptions['rateLimits']): World {
   const signer = InMemoryAttestationSigner.fromHex('3c'.repeat(32));
   const clock = { now: () => FIXED_NOW };
   const service = new CertifyService({ ord, signer, store: new MemorySnapshotStore(), clock, collections, concurrency: 3 });
-  const app = createApp({ service, ord, clock, adminToken: ADMIN });
+  const app = createApp({ service, ord, clock, adminToken: ADMIN, ...(rateLimits ? { rateLimits } : {}) });
   const req = async (method: string, path: string, init: { headers?: Record<string, string> } = {}) =>
     app.request(path, { method, headers: init.headers ?? {} });
   return {

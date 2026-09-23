@@ -18,7 +18,8 @@
     "@noble/curves": "^2.4.0",
     "@scure/btc-signer": "^2.4.1",
     "@scure/base": "^2.4.0",
-    "@anthropic-ai/sdk": "^0.128.0"
+    "@anthropic-ai/sdk": "^0.128.0",
+    "@bsh/events": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5",

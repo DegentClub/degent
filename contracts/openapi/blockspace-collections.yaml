@@ -22,8 +22,9 @@ info:
     (JCS) for the value domain used here: object keys sorted by UTF-16 code units, no insignificant
     whitespace, ECMAScript number serialisation. Public keys are served at `GET /v1/keys`.
 
-    All errors use the `Error` schema. Reads are public and CORS-open; `refresh` needs the admin
-    bearer token.
+    All errors use the `Error` schema (the `@bsh/edge` body) and every response carries
+    `X-Request-Id`. Reads are public, CORS-open (`*`, no credentials) and rate-limited per client IP
+    (429 `rate_limited` with `Retry-After`); `refresh` needs the admin bearer token.
   license:
     name: Proprietary
 servers:
@@ -39,6 +40,7 @@ paths:
       operationId: getHealth
       summary: Liveness plus ord reachability.
       responses:
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '200':
           description: Always 200 while the process serves; `status` is `degraded` when ord is unreachable.
           content:
@@ -50,6 +52,7 @@ paths:
       operationId: listKeys
       summary: Public keys that sign attestations.
       responses:
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '200':
           description: Active signing key(s).
           content:
@@ -63,6 +66,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Slug'
       responses:
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '200':
           description: Latest attestation, its digest, and the inscriptions that were considered but excluded.
           content:
@@ -83,12 +87,14 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Slug'
       responses:
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '200':
           description: The new attestation (same shape as `GET /v1/collections/{slug}`).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CollectionResponse' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '401':
           description: Missing or wrong admin token (`unauthorized`).
           content:
@@ -127,6 +133,7 @@ paths:
           required: false
           schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
       responses:
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '200':
           description: One page of members.
           content:
@@ -147,6 +154,19 @@ components:
       required: true
       schema: { $ref: '#/components/schemas/Slug' }
   responses:
+    TooManyRequests:
+      description: Per-IP rate limit exceeded (`rate_limited`); see `Retry-After`.
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    PayloadTooLarge:
+      description: Request body over 1 KiB (`payload_too_large`); refresh takes no body.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     BadRequest:
       description: Malformed slug, cursor or limit (`bad_request`).
       content:
@@ -169,6 +189,7 @@ components:
       type: string
       pattern: '^[0-9a-f]{64}$'
     Error:
+      description: The platform-wide error body produced by `@bsh/edge`.
       type: object
       additionalProperties: false
       required: [error]
@@ -176,7 +197,7 @@ components:
         error:
           type: object
           additionalProperties: false
-          required: [code, message]
+          required: [code, message, requestId]
           properties:
             code:
               type: string
@@ -191,9 +212,15 @@ components:
                 - manifest_not_found
                 - parent_not_found
                 - upstream_error
-                - internal
-            message: { type: string }
-            details: {}
+                - rate_limited
+                - payload_too_large
+                - internal_error
+            message:
+              type: string
+              description: Human-readable; never contains internals for 5xx.
+            requestId:
+              type: [string, 'null']
+              description: Same value as the `X-Request-Id` response header.
     Health:
       type: object
       additionalProperties: false

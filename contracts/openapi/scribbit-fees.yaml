@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   summary: Aggregated Bitcoin fee rates for inscription quotes, including the non-standard block lane.
   description: |
-    Provided by `scribbit-fee-oracle` (`@bsh/fee-oracle`, products/scribbit/packages/fee-oracle).
+    Provided by `scribbit-fee-oracle` (`@bsh/scribbit-fee-oracle`, products/scribbit/packages/fee-oracle).
 
     The oracle polls several sources (mempool.space-compatible `/api/v1/fees/recommended` and
     `/api/v1/fees/mempool-blocks`, Esplora `/fee-estimates`, bitcoind `estimatesmartfee`, and a Libre Relay
@@ -23,7 +23,7 @@ info:
     name: Proprietary
 servers:
   - url: http://localhost:8080
-    description: Local (`pnpm --filter @bsh/fee-oracle dev`)
+    description: Local (`pnpm --filter @bsh/scribbit-fee-oracle dev`)
 tags:
   - name: fees
 paths:

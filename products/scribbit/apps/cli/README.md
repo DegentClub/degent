@@ -1,7 +1,7 @@
 # @bsh/scribbit-cli
 
 `scribbit` is a developer CLI for scribb.it, built on [`@bsh/inscription`](../../../../platform/inscription)
-(exact envelope, weight and fee maths) and [`@bsh/fee-oracle`](../../packages/fee-oracle). It quotes an
+(exact envelope, weight and fee maths) and [`@bsh/scribbit-fee-oracle`](../../packages/fee-oracle). It quotes an
 inscription exactly, dumps its tapscript, derives commit addresses, and builds the self-rescue transaction
 from a half-signed reveal. It never holds keys that move funds and never broadcasts anything.
 
@@ -32,7 +32,7 @@ numbers.
 2. Otherwise `--fee-source <url>` is used. A URL ending in `/v1/fees` is treated as a scribb.it fee server
    (`contracts/openapi/scribbit-fees.yaml`). Any other URL is treated as a mempool.space-compatible base
    (e.g. `https://mempool.space/signet`), and the CLI aggregates `/api/v1/fees/recommended` and
-   `/api/v1/fees/mempool-blocks` in-process with `@bsh/fee-oracle`.
+   `/api/v1/fees/mempool-blocks` in-process with `@bsh/scribbit-fee-oracle`.
 3. If neither flag is given, the CLI uses the public mempool.space for the network. regtest has no public
    source, so it needs `--fee-rate`.
 

@@ -3,14 +3,14 @@
  * the CertifyService, maps errors to the contract's error codes.
  */
 import { Hono } from 'hono';
-import { cors } from 'hono/cors';
+import { bodyLimit, corsAllowlist, jsonErrorHandler, jsonErrors, jsonNotFound, rateLimit, requestId, securityHeaders, type RateLimitStore } from '@bsh/edge';
 import { bytesToHex } from './domain/hash.js';
 import { ATTESTATION_TAG, SLUG, type Item, type Snapshot } from './domain/model.js';
 import { compareItems } from './domain/stats.js';
 import { CertifyService, ServiceError } from './application/certify-service.js';
 import type { Clock } from './ports/clock.js';
 import type { OrdPort } from './ports/ord.js';
-import { bearerAuth, errorBody, HttpError, requestId, securityHeaders } from './http/middleware.js';
+import { adminBearer, httpError } from './http/middleware.js';
 
 export const SERVICE_NAME = 'blockspace-certify';
 
@@ -21,6 +21,8 @@ export interface AppOptions {
   adminToken: string;
   version?: string;
   log?: (msg: string, fields: Record<string, unknown>) => void;
+  /** Per-IP limits (token bucket). Defaults: reads 600/min, refresh 12/min. */
+  rateLimits?: { reads?: { windowMs: number; max: number }; refresh?: { windowMs: number; max: number }; store?: RateLimitStore };
 }
 
 const DEFAULT_LIMIT = 100;
@@ -31,7 +33,7 @@ export function encodeCursor(last: Pick<Item, 'number' | 'inscriptionId'>): stri
 }
 
 export function decodeCursor(cursor: string): Pick<Item, 'number' | 'inscriptionId'> {
-  const bad = () => new HttpError(400, 'bad_request', 'invalid cursor');
+  const bad = () => httpError(400, 'bad_request', 'invalid cursor');
   if (cursor.length > 256 || !/^[A-Za-z0-9_-]+$/.test(cursor)) throw bad();
   let v: unknown;
   try {
@@ -61,33 +63,45 @@ export function createApp(o: AppOptions): Hono {
   const log = o.log ?? (() => {});
   const signer = o.service.signer;
 
-  app.use('*', requestId());
-  app.use('*', securityHeaders());
-  // Public, read-only data: CORS-open like the Meter API. The admin route needs a bearer token,
-  // which browsers never send cross-origin without credentials mode, so `*` is safe here.
-  app.use('/v1/*', cors({ origin: '*', allowMethods: ['GET', 'POST', 'OPTIONS'], allowHeaders: ['authorization', 'content-type'], maxAge: 600 }));
+  const rl = o.rateLimits ?? {};
+  const onUnexpected = (err: Error, c: { req: { path: string }; get: (k: 'requestId') => string }) =>
+    log('unhandled error', { path: c.req.path, requestId: c.get('requestId'), error: err.message });
 
-  app.onError((err, c) => {
-    if (err instanceof HttpError) return c.json(errorBody(err.code, err.message, err.details), err.status);
-    if (err instanceof ServiceError) return c.json(errorBody(err.code, err.message, err.details), STATUS[err.code]);
-    log('unhandled error', { path: c.req.path, error: err instanceof Error ? err.message : String(err) });
-    return c.json(errorBody('internal', 'internal error'), 500);
-  });
-  app.notFound((c) => c.json(errorBody('not_found', 'no such endpoint'), 404));
+  // @bsh/edge stack: every error leaves as { error: { code, message, requestId } }.
+  app.onError(jsonErrorHandler({ onUnexpected }));
+  app.notFound(jsonNotFound());
+  app.use('*', requestId());
+  app.use('*', jsonErrors({ onUnexpected }));
+  // Public data meant to be embedded anywhere (badges): readable cross-origin.
+  app.use('*', securityHeaders({ crossOriginResourcePolicy: 'cross-origin' }));
+  // Reads are public and CORS-open like the Meter API; `*` never carries credentials, and refresh
+  // authenticates with a bearer token a browser would have to be handed explicitly.
+  app.use('/v1/*', corsAllowlist(['*'], { allowMethods: ['GET', 'POST', 'OPTIONS'], allowHeaders: ['authorization', 'content-type'] }));
+  /** Domain errors → contract codes (rendered by the edge error handler). */
+  const call = async <T>(p: Promise<T>): Promise<T> => {
+    try {
+      return await p;
+    } catch (e) {
+      if (e instanceof ServiceError) throw httpError(STATUS[e.code], e.code, e.message);
+      throw e;
+    }
+  };
+  const readLimit = rateLimit({ ...(rl.reads ?? { windowMs: 60_000, max: 600 }), prefix: 'certify-read', ...(rl.store ? { store: rl.store } : {}) });
+  const refreshLimit = rateLimit({ ...(rl.refresh ?? { windowMs: 60_000, max: 12 }), prefix: 'certify-refresh', ...(rl.store ? { store: rl.store } : {}) });
 
   const slugOf = (raw: string | undefined): string => {
     const slug = raw ?? '';
-    if (!SLUG.test(slug)) throw new HttpError(400, 'bad_request', 'invalid collection slug');
-    if (!o.service.collection(slug)) throw new HttpError(404, 'collection_not_found', `unknown collection ${slug}`);
+    if (!SLUG.test(slug)) throw httpError(400, 'bad_request', 'invalid collection slug');
+    if (!o.service.collection(slug)) throw httpError(404, 'collection_not_found', `unknown collection ${slug}`);
     return slug;
   };
   const latestOrThrow = async (slug: string): Promise<Snapshot> => {
-    const s = await o.service.latest(slug);
-    if (!s) throw new HttpError(404, 'not_certified', `collection ${slug} has no attestation yet`);
+    const s = await call(o.service.latest(slug));
+    if (!s) throw httpError(404, 'not_certified', `collection ${slug} has no attestation yet`);
     return s;
   };
 
-  app.get('/v1/health', async (c) => {
+  app.get('/v1/health', readLimit, async (c) => {
     let ord: { ok: boolean; detail?: string };
     try {
       ord = { ok: true, detail: `height ${await o.ord.blockHeight()}` };
@@ -104,7 +118,7 @@ export function createApp(o: AppOptions): Hono {
     });
   });
 
-  app.get('/v1/keys', (c) => {
+  app.get('/v1/keys', readLimit, (c) => {
     c.header('cache-control', 'public, max-age=300');
     return c.json({
       keys: [
@@ -119,17 +133,17 @@ export function createApp(o: AppOptions): Hono {
     });
   });
 
-  app.get('/v1/collections/:slug', async (c) => {
+  app.get('/v1/collections/:slug', readLimit, async (c) => {
     const slug = slugOf(c.req.param('slug'));
     const s = await latestOrThrow(slug);
     c.header('cache-control', 'public, max-age=60');
     return c.json(collectionBody(s));
   });
 
-  app.post('/v1/collections/:slug/refresh', bearerAuth(o.adminToken), async (c) => {
+  app.post('/v1/collections/:slug/refresh', refreshLimit, bodyLimit(1024), adminBearer(o.adminToken), async (c) => {
     const slug = slugOf(c.req.param('slug'));
     const started = Date.now();
-    const s = await o.service.refresh(slug);
+    const s = await call(o.service.refresh(slug));
     log('collection refreshed', {
       slug,
       items: s.attestation.stats.itemCount,
@@ -140,13 +154,13 @@ export function createApp(o: AppOptions): Hono {
     return c.json(collectionBody(s));
   });
 
-  app.get('/v1/collections/:slug/items', async (c) => {
+  app.get('/v1/collections/:slug/items', readLimit, async (c) => {
     const slug = slugOf(c.req.param('slug'));
     const limitRaw = c.req.query('limit');
     let limit = DEFAULT_LIMIT;
     if (limitRaw !== undefined) {
       if (!/^\d{1,4}$/.test(limitRaw) || Number(limitRaw) < 1 || Number(limitRaw) > MAX_LIMIT)
-        throw new HttpError(400, 'bad_request', `limit must be an integer 1..${MAX_LIMIT}`);
+        throw httpError(400, 'bad_request', `limit must be an integer 1..${MAX_LIMIT}`);
       limit = Number(limitRaw);
     }
     const cursorRaw = c.req.query('cursor');

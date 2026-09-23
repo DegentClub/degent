@@ -1,6 +1,6 @@
 # Component manifest - validated against schemas/component.schema.json by `pnpm validate`.
 name: scribbit-fee-oracle
-package: "@bsh/fee-oracle"
+package: "@bsh/scribbit-fee-oracle"
 kind: library
 product: scribbit
 owner: team-scribbit

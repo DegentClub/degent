@@ -5,7 +5,7 @@ product: blockspace
 owner: team-blockspace
 summary: '"Verified by block.space" collection certification - parent/child + inscribed-manifest membership, reproducible stats, BIP340-signed attestations.'
 lifecycle: experimental
-depends_on: []
+depends_on: ["@bsh/edge"]
 provides: [contracts/openapi/blockspace-collections.yaml]
 stores: ["memory:blockspace_certify_snapshots"]
 secrets: ["services/blockspace-certify/attestation-key", "services/blockspace-certify/admin-token"]

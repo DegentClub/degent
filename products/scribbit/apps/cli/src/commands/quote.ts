@@ -6,7 +6,7 @@ import {
   publicMempoolUrl,
   type FeeProvider,
   type FeesResponse,
-} from '@bsh/fee-oracle';
+} from '@bsh/scribbit-fee-oracle';
 import {
   estimateRevealWeight,
   inscriptionScriptLength,

@@ -1,4 +1,4 @@
-import type { FetchLike } from '@bsh/fee-oracle';
+import type { FetchLike } from '@bsh/scribbit-fee-oracle';
 
 /** Every side effect the CLI performs goes through this port, so tests run it in-process. */
 export interface CliIO {
