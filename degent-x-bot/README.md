@@ -29,7 +29,7 @@ cp .env.example .env
 # Install dependencies
 npm install
 
-# Start Postgres + Redis via Docker
+# Start Postgres + Redis via Docker (POSTGRES_PASSWORD / REDIS_PASSWORD must be in .env)
 docker compose up -d postgres redis
 
 # Push database schema
@@ -45,9 +45,37 @@ npm start
 docker compose up -d
 ```
 
+## Safety & approval tiers
+
+Nothing the model writes reaches X without passing three gates, in order:
+
+1. **Safety check** (`src/lib/content-safety.js`): no wallet addresses
+   (bech32/bech32m `bc1…`, P2SH `3…`, P2PKH `1…`), no banned phrases, at
+   most two hashtags, <= 280 chars.
+2. **Tier classifier** (`src/lib/content-classifier.js`): deterministic
+   keyword/regex rules sort the text into a tier. The tier is decided by the
+   *text*, not by the content type that was requested, so a "meme" that
+   mentions a dollar figure is still `manual`.
+
+   | Tier | Triggers | Posts on its own? |
+   |------|----------|-------------------|
+   | `manual` | `$` amounts, "floor", "price", `Nx` multipliers, "guaranteed", ROI, invest, "at completion", "will 10x", token talk | **Never.** A human writes it or approves it under their own name. |
+   | `review` | numbers in facts (mint counts, GB, sat/vB, %), partnership / announcement wording | Never — sits in the queue until approved. |
+   | `auto` | memes, gm, replies, banter | Only when `REVIEW_QUEUE_ENABLED=false`. |
+
+3. **Queue status**: generated content is inserted as `pending` unless it is
+   `auto` tier *and* the review queue is off. "NFA." is appended only to
+   review-tier market talk; it is never used to unlock manual-tier content.
+
+`REVIEW_QUEUE_ENABLED=true` (the default) means a human approves everything.
+See `docs/OPERATIONS.md` for how to work the queue, and
+`brain/DEGENT_X_BOT_BRAIN.md` → "CONTENT APPROVAL TIERS" for the editorial
+rules behind it.
+
 ## Environment Variables
 
-See `.env.example` for the full list. Key ones:
+See `.env.example` for the full list and `docs/OPERATIONS.md` for the
+validation rules. Key ones:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -57,8 +85,12 @@ See `.env.example` for the full list. Key ones:
 | `X_ACCESS_TOKEN_SECRET` | Yes | Twitter access token secret |
 | `X_BEARER_TOKEN` | Yes | Twitter bearer token |
 | `ANTHROPIC_API_KEY` | Yes* | Claude API key (*or OPENAI_API_KEY) |
-| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `DATABASE_URL` | Yes | PostgreSQL connection string (default rejected in production) |
 | `REDIS_URL` | Yes | Redis connection string |
+| `POSTGRES_PASSWORD`, `REDIS_PASSWORD` | Yes (compose) | Passwords for the compose services |
+| `JWT_SECRET` | Yes | >= 32 random chars; placeholders rejected in production |
+| `ADMIN_PASSWORD` | Yes | >= 12 chars; placeholders rejected in production |
+| `REVIEW_QUEUE_ENABLED` | No (`true`) | `false` lets `auto` tier post unattended |
 | `TELEGRAM_BOT_TOKEN` | No | For Telegram pipeline |
 
 ## API Endpoints
@@ -110,6 +142,12 @@ src/
 ## The Agent Brain
 
 The bot's personality, voice, and strategy are defined in `brain/DEGENT_X_BOT_BRAIN.md`. This file is loaded at runtime for every AI generation call. Edit it to tune the bot's behavior without code changes.
+
+## Tests
+
+```bash
+npm test
+```
 
 ## Job Schedule
 
