@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const config = require('./config');
+const { validateConfig } = require('./config/validate');
 const logger = require('./lib/logger');
 const { buildServer } = require('./api/server');
 const { setupQueues, startWorkers, stopAll } = require('./modules/orchestrator/scheduler');
@@ -31,6 +32,14 @@ async function main() {
   logger.info('   DEGENT X BOT Starting...             ');
   logger.info('=========================================');
   logger.info({ nodeEnv: config.nodeEnv, port: config.port });
+
+  // 0. Refuse to run with placeholder secrets outside development
+  try {
+    validateConfig(config, { logger });
+  } catch (err) {
+    logger.fatal({ problems: err.problems }, err.message);
+    process.exit(1);
+  }
 
   // 1. Initialize database connection
   try {
