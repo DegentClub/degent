@@ -8,7 +8,7 @@ lifecycle: beta
 depends_on: ["@bsh/inscription", "@bsh/degent-mint-sdk", "@bsh/events", "@bsh/identity"]
 provides: [contracts/openapi/degent-mint.yaml, contracts/asyncapi/degent-mint.yaml]
 consumes: ["events:block.indexed.{network}", "deps/scribbit/contracts/asyncapi/platform-events.yaml#/channels/degentMintOrderStatus"]
-stores: ["sqlite:degent_mint", "file:data/roster.json"]
+stores: ["sqlite:degent_mint"]
 secrets: ["services/degent-mint/parent-key", "services/degent-mint/art-review-api-key", "services/degent-mint/reveal-encryption-key", "services/degent-mint/libre-rpc-pass", "services/degent-mint/slipstream-api-key", "services/degent-mint/session-key"]
 env_schema: ./env.schema.json
 slo: { availability: "99.9", p95_ms: 300 }

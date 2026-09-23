@@ -83,3 +83,19 @@ returned hex from any wallet or node. The inscription lands on the user's addres
 - Support cannot fetch a rescue without the order token. If the user lost both the token and the recovery
   bundle, the rescue tx is not recoverable by support; the half-signed reveal stays encrypted in the
   `reveals` table and must not be exported.
+
+## Member review (ADR-0005)
+
+- **Orders piling up in `member_review`.** Members are not voting. Check `GET /v1/review` with a holder session (or
+  `GET /v1/stats` → `approvals.inReview`) and ping the club. Nothing is stranded: after `REVIEW_SLA_SECONDS`
+  (default 14 days) the worker moves undecided orders to `rescue_available` and the front end offers the
+  parent-less reveal. Lowering `APPROVAL_QUORUM` is a club decision, not an ops one.
+- **Holder sign-in fails with `not_a_holder` for a known member.** The `roster-chain` registry could not see the
+  Degent in the address's UTXOs: check `ORD_URL` serves `/r/utxo/<outpoint>` and `/r/inscription/<id>` (ord >= 0.18
+  with `--index-addresses` not required) and that `ESPLORA_URL` lists the address's UTXOs. Answers are cached 60 s.
+- **`auth_failed: domain_mismatch`.** `SIWB_DOMAIN` must equal the host the front end is served from (lower-case
+  host[:port]); the challenge is bound to it.
+- **Rotating `SESSION_KEY`.** Set a new key with a new `SESSION_KID`; sessions issued by the old key are refused
+  after restart (TTL default 1 h), members simply sign in again.
+- **Register update.** `node scripts/register-batch.mjs --db $DATABASE_PATH --since <last inscribed n> --out
+  update.json`; the owner inscribes `update.json` as a child of the parent (docs/REGISTER.md §1.3).

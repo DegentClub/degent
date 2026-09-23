@@ -1,10 +1,13 @@
 # @bsh/degent-mint
 
-Automated, non-custodial mint service for degent.club (ADR-0002). Takes an order, reviews the art before
-payment, stores the user's half-signed reveal, watches for the commit, attaches the collection parent,
-has the policy signer co-sign input 0, broadcasts through the tier's lane, then tracks the order to
-`delivered` after checking ord serves the exact bytes. If it cannot reveal in time, the user gets a
-parent-less self-rescue transaction.
+Automated, non-custodial mint service for degent.club (ADR-0002, ADR-0005). Four stages — **Design → Mint →
+Confirm → Approve**: takes an order, reviews the art before payment, stores the user's half-signed reveal,
+watches for the commit and its confirmation, opens a **member review** in which existing Degent holders vote
+with BIP-322 signatures, and only on the approval quorum attaches the collection parent, has the policy signer
+co-sign input 0, broadcasts through the tier's lane, then tracks the order to `delivered` after checking ord
+serves the exact bytes. If the members decline, or nobody decides within the review SLA, or it cannot reveal in
+time, the user gets a parent-less self-rescue transaction. It also serves the **Register** (the club's roll:
+the 4,112 Gallery members from `data/roster.json` plus every approved child).
 
 Contracts: [`contracts/openapi/degent-mint.yaml`](../../../../contracts/openapi/degent-mint.yaml) (HTTP) and
 [`contracts/asyncapi/degent-mint.yaml`](../../../../contracts/asyncapi/degent-mint.yaml) (events). Shared rules,
@@ -74,11 +77,16 @@ Layout:
 ## Order lifecycle
 
 ```
-awaiting_content -> reviewing -> approved | rejected
+awaiting_content -> reviewing -> approved | rejected                      (Design)
 approved -> awaiting_payment              (half-signed reveal verified + stored)
-awaiting_payment -> paid -> queued -> revealing -> revealed -> confirmed -> verified -> delivered
+awaiting_payment -> paid -> confirming                                    (Mint, Confirm)
+confirming -> member_review               (commit confirmed; members vote, ADR-0005)   (Approve)
+member_review -> queued (APPROVAL_QUORUM; Degent number = 4112 + rank) | declined (DECLINE_QUORUM)
+member_review -> rescue_available         (no decision within REVIEW_SLA_SECONDS, default 14 days)
+queued -> revealing -> revealed -> confirmed -> verified -> delivered
 pre-paid states -> expired  (expired -> paid if the commit is funded late: the fee is fixed in the commit)
-paid | queued | revealing -> rescue_available -> revealed (commit spent on chain: rescue or late reveal)
+paid | confirming | queued | revealing -> rescue_available (timeout from payment, or from approval once approved)
+rescue_available | declined -> revealed (commit spent on chain: self-rescue without the parent, or late reveal)
 awaiting_payment -> failed (commit funded with the wrong value/script), confirmed -> failed (ord bytes differ)
 revealing -> queued (broadcast rejected; lease released)
 ```
@@ -113,11 +121,33 @@ Policy signer (ADR §3), stricter in one respect: the parent return must equal t
 postage, the lane fee band and that the fee rate matches the quote. A refusal moves the order straight to
 `rescue_available`.
 
+## Member approval (ADR-0005)
+
+`application/approval-service.ts` wires the platform's SIWB (`issueChallenge` / `verifySignIn`, nonce store in
+memory or sqlite) and `SessionKeyRing` to orders and holders; `domain/approval.ts` holds the pure rules (one vote
+per address per order, holder at vote time, no self-votes, exact statement, quorums, `4112 + rank`).
+`ports/holder-registry.ts` answers who is a member: `adapters/memory-holder-registry.ts` (tests, regtest) or
+`adapters/roster-chain-holder-registry.ts` (roster JSON + ord `/r/inscription`, `/r/utxo` + esplora, injectable
+fetch, 60 s cache). `application/register-service.ts` serves the Register from the roster plus delivered children.
+
+Scripts: `scripts/build-roster.mjs` (marketplace manifest → `data/roster.json`), `scripts/register-batch.mjs`
+(newly approved members + approver signatures as JSON for the owner to inscribe), `scripts/blockspace-query.mjs`
+(reproducible blockspace report). Settings: `APPROVAL_QUORUM`, `DECLINE_QUORUM`, `REVIEW_SLA_SECONDS`,
+`SIWB_DOMAIN`, `SIWB_URI`, `SESSION_KEY`, `SESSION_KID`, `SESSION_TTL_SECONDS`, `HOLDER_REGISTRY`, `ROSTER_FILE`,
+`ORD_PUBLIC_URL`, `GALLERY_INSCRIPTION_ID` (see `env.schema.json`).
+
 ## API summary
 
 | Method | Path | Auth | Result |
 |---|---|---|---|
 | GET | `/v1/health` | - | status + checks (store, chain, parent) |
+| POST | `/v1/auth/challenge` | - | SIWB challenge for a holder address (`@bsh/identity`) |
+| POST | `/v1/auth/verify` | - | verify the signed challenge; holder session token (403 `not_a_holder` otherwise) |
+| GET | `/v1/review` | holder session | orders in `member_review` with tallies |
+| POST | `/v1/orders/{id}/votes` | holder session | cast a BIP-322-signed vote (`Approve Degent order <id> (<ref>)`) |
+| GET | `/v1/orders/{id}/votes` | - | public tally + signed votes (voters' Degent numbers, never addresses) |
+| GET | `/v1/register`, `/v1/register/{n}`, `/v1/register/holder/{address}`, `/v1/register/verify/{id}` | - | the Register |
+| GET | `/v1/explorer`, `/v1/stats` | - | paginated members with image URLs; collection statistics |
 | GET | `/v1/config` | - | collection rules, tiers, collection address, upload limit |
 | GET | `/v1/fees` | - | sat/vB per lane |
 | GET | `/v1/queue` | - | lane waiting / in-flight / capacity / ETA |

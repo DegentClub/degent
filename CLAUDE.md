@@ -15,8 +15,10 @@ and the catalog tool come from `DegentClub/scribbit`, vendored as a git submodul
 | `contracts/` | Contracts **this product provides**: `openapi/degent-mint.yaml`, `asyncapi/degent-mint.yaml`. Platform contracts are at `deps/scribbit/contracts/` |
 | `deps/scribbit/` | SUBMODULE, read-only here: `platform/*`, `tools/catalog`, platform contracts, platform ADRs. Change it in DegentClub/scribbit, then bump the pin |
 | `catalog/catalog.json` | GENERATED index of every component, platform ones marked `external` (`pnpm catalog`). Query this before grepping |
-| `docs/adr/` | ADR-0002 (mint architecture). Platform ADRs: `deps/scribbit/docs/adr/`. Numbering is global across the three repos |
-| `schemas/component.schema.json` | Copy of the platform's manifest schema; refresh it when bumping the pin |
+| `docs/adr/` | ADR-0002 (mint architecture), ADR-0005 (member approval + the Register). Platform ADRs: `deps/scribbit/docs/adr/`. Numbering is global across the three repos |
+| `docs/REGISTER.md` | The on-chain roll: parent, Gallery, children, numbering, custody, the Register API |
+| `roadmap.yaml` | Machine-readable roadmap (`schemas/roadmap.schema.json`); `pnpm test:root` validates it and every `verify` it names |
+| `schemas/component.schema.json` | Copy of the platform's manifest schema; refresh it when bumping the pin. `roadmap.schema.json`, `register.schema.json`: our own |
 
 Product slugs are fixed and used identically everywhere: `platform`, `blockspace`, `scribbit`, `degent`, `tooling`.
 Only `degent` has code here.
@@ -50,6 +52,7 @@ Only `degent` has code here.
 git submodule update --init  # once, after cloning
 pnpm install                 # once
 pnpm check                   # validate manifests + boundaries + typecheck + tests (what CI runs)
+pnpm contracts:diff          # statuses our AsyncAPI carries that the platform's shared topic does not (yet)
 pnpm catalog                 # regenerate catalog/catalog.json
 pnpm --filter @bsh/catalog-tool run codeowners --org DegentClub   # regenerate .github/CODEOWNERS
 pnpm --filter @bsh/degent-web dev        # run the degent.club mint front end

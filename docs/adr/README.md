@@ -10,3 +10,4 @@ start from `deps/scribbit/docs/adr/template.md` and take the next free number.
 | ADR | Title | Status |
 |---|---|---|
 | [0002](0002-degent-mint-architecture.md) | degent.club automated mint: non-custodial, parent-linked, block-sized | Accepted |
+| [0005](0005-member-approval-and-register.md) | Member approval gates the parent link; the Register is the club's roll | Accepted |
