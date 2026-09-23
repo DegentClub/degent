@@ -1,121 +1,125 @@
 # Degen Minter
 
-## Description
-Degen Minter is a Bitcoin Ordinals inscription minting application built with Next.js and React. Create your Decentralized Gentleman NFTs on the Bitcoin blockchain with ease!
+Mint a "Degent" Bitcoin Ordinals inscription from the browser. The app takes an
+image, gets a quote from the [Skrybit](https://skrybit.io) API, asks the user's
+wallet to pay the quoted amount to the quoted address, and then tracks the
+payment until it confirms. Mainnet only.
 
-## Features
-- **UniSat Wallet Integration**: Connect your Bitcoin wallet seamlessly
-- **Image Compression**: Automatic image optimization to meet size requirements (200kb-400kb)
-- **Custom Fee Rates**: Adjust transaction fee rates for faster or more economical confirmations
-- **Real-time Cost Calculation**: See inscription costs instantly via Skrybit API
-- **Degent Club Branding**: Powered by [Degent Club](https://degent.club)
+Built with Next.js 14 (App Router), React 18, Tailwind 3 and TypeScript.
 
-## Installation
-To install the project, clone the repository and install the dependencies:
+## How a mint works
 
-```bash
-git clone <repository-url>
-cd degen-minter
-npm install
-```
+1. **Connect** a wallet (UniSat, Xverse, Leather, OKX or Magic Eden). The app
+   refuses anything that is not Bitcoin mainnet and needs a taproot (`bc1p`)
+   address to receive the inscription; if the wallet's address is not taproot
+   you paste one.
+2. **Create**: upload a JPG/PNG/GIF/WebP and use the quality slider until the
+   file is between 200 KB and 400 KB (a collection rule, enforced in the proxy).
+3. **Review**: pick a fee rate (live presets from mempool.space, editable, 0.13
+   to 500 sat/vB, confirmation above 50). The app fetches a quote from Skrybit
+   for exactly these bytes, this recipient and this fee rate, and shows the
+   total in sats, BTC and USD.
+4. **Sign**: the wallet sends the quoted sats to the quoted payment address.
+   The button is only enabled while the quote matches what is on screen, and it
+   locks for good once a payment is sent.
+5. **Track**: the txid, amount and Skrybit inscription id are stored in your
+   browser and polled on mempool.space until the payment confirms. Skrybit
+   reveals the inscription after that. "Mint another" starts a new order.
 
-## Environment Setup
-Create a `.env.local` file in the root directory with the following:
+The state machine behind this is in `lib/mint-machine.ts`; see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the diagram and
+[docs/SECURITY.md](docs/SECURITY.md) for the threat model.
 
-```bash
-NEXT_PUBLIC_AUTH_TOKEN=your_skrybit_api_token_here
-```
+## Environment variables
 
-Get your API token from [Skrybit](https://skrybit.io). This token is required for the inscription API to work.
+| Variable                 | Required | Description                                                                                       |
+| ------------------------ | -------- | ------------------------------------------------------------------------------------------------- |
+| `SKRYBIT_API_KEY`        | yes      | Bearer key for `api.skrybit.io`. Server-side only.                                                |
+| `SKRYBIT_API_URL`        | no       | Upstream base URL, default `https://api.skrybit.io`.                                              |
+| `NEXT_PUBLIC_AUTH_TOKEN` | legacy   | Old name for the key. Still honoured with a one-time warning; rename it, the prefix is misleading. |
 
-## Usage
-To run the application in development mode, use:
+Copy `.env.example` to `.env.local` for local development.
 
-```bash
-npm run dev
-```
-
-The application will be available at `http://localhost:3000`
-
-**Note:** Make sure you have set up the `NEXT_PUBLIC_AUTH_TOKEN` environment variable before running the app, otherwise inscription calculations will fail.
-
-To build the application for production, use:
-
-```bash
-npm run build
-```
-
-To start the production server, use:
+## Run locally
 
 ```bash
-npm start
+npm ci
+cp .env.example .env.local   # add your key
+npm run dev                  # http://localhost:3000
 ```
 
-## Creating Your Decentralized Gentleman
+Quote requests are proxied through `/api/inscriptions/create-commit`, so the
+key never reaches the browser. mempool.space is called directly from the
+browser for fee presets, BTC price and tx status; each falls back gracefully.
 
-### Image Requirements:
-- Must be Pepe in a tuxedo
-- Bowtie is **mandatory**
-- Must include text: "DEGEN", "DEGENT", or "REGEN"
-- Final file size must be between 200kb-400kb (automatic compression available)
-
-### How to Generate:
-1. Use any AI image generator (ChatGPT, Midjourney, etc.)
-2. Download the sample image (Degen.jpg) from the app as reference
-3. Use the prompt: "Make one like this"
-4. Upload your image to the app - it will automatically compress if needed
-5. Adjust the fee rate based on your urgency
-6. Connect your UniSat wallet and mint!
-
-## Docker
-To run the application using Docker, ensure you have Docker installed, then use:
+## Quality gates
 
 ```bash
-docker-compose up --build
+npm run lint        # next lint (eslint-config-next 14)
+npm run typecheck   # tsc --noEmit
+npm test            # vitest (jsdom + Testing Library)
+npm run build       # next build (standalone output)
 ```
 
-This will build the image and start the application on port 3000.
+The same four steps plus a Docker build run in GitHub Actions
+(`.github/workflows/ci.yml`) on every push and pull request.
 
-## Technology Stack
-- **Framework**: Next.js 14.2.5
-- **UI Library**: React 18.3.1
-- **Styling**: Tailwind CSS
-- **Language**: TypeScript
-- **Image Processing**: browser-image-compression
-- **HTTP Client**: Axios
-- **Wallet Integration**: UniSat Wallet
-- **API**: Skrybit Ordinals API
+Tests live in `tests/` and cover the mint machine (no double pay, stale quotes
+blocked, reset), fee handling, address validation (bc1p/bc1q/legacy, wrong
+network, bad checksum), the rate limiter, order persistence and the key
+components.
 
-## Project Structure
-```
-├── app/
-│   └── page.tsx          # Main application page
-├── components/
-│   ├── WalletConnect.tsx # Wallet connection UI
-│   ├── AIInstructions.tsx # Image creation instructions
-│   ├── FileUpload.tsx    # File upload interface
-│   ├── FileValidation.tsx # File validation & compression
-│   ├── MintButton.tsx    # Minting interface with fee controls
-│   ├── QualitySlider.tsx # Image quality adjustment
-│   └── StatusDisplay.tsx # Transaction status display
-├── lib/
-│   ├── api.ts           # Skrybit API integration
-│   └── wallet.ts        # UniSat wallet integration
-└── public/
-    ├── icon.jpg         # Degen icon
-    ├── icon_flipped.jpg # Flipped degen icon
-    └── Degen.jpg        # Sample Degent image
+## Deploy
+
+### Docker
+
+```bash
+docker build -t degen-minter .
+docker run -p 3000:3000 -e SKRYBIT_API_KEY=... degen-minter
 ```
 
-## Contributing
-Contributions are welcome! Please submit a pull request or open an issue for discussion.
+The image is multi-stage, runs as a non-root user on Node 22, ships only the
+Next.js standalone output and exposes a `HEALTHCHECK` on `/api/health`.
 
-For major changes, please open an issue first to discuss what you would like to change.
+### docker-compose
 
-## License
-This project is licensed under the MIT License.
+`docker-compose.yml` runs the app behind `nginx-proxy` with automatic Let's
+Encrypt certificates for `mint.degent.club`. Provide `SKRYBIT_API_KEY` and
+`DEFAULT_EMAIL` in the environment, then `docker compose up --build -d`.
+
+### Scaling note
+
+The rate limiter is in-process. Run one replica, or move the limiter to Redis
+before adding more (details in `docs/SECURITY.md`).
+
+## Project layout
+
+```
+app/
+  page.tsx                          flow wiring (useReducer + quote effect)
+  layout.tsx                        fonts (next/font), toast provider
+  api/inscriptions/create-commit/   validating, rate-limited proxy to Skrybit
+  api/health/                       liveness probe
+components/                         Stepper, WalletConnect, WalletPicker, FileUpload,
+                                    FileValidation, MintButton, OrderTracker, Toast, ...
+lib/
+  mint-machine.ts  fees.ts  address.ts  wallet.ts  api.ts  orders.ts  rate-limit.ts
+tests/                              vitest suites
+docs/                               ARCHITECTURE.md, SECURITY.md, skrybit-api.md
+```
+
+## Image requirements (Degent collection)
+
+- Pepe in a tuxedo, bowtie mandatory.
+- Must include the text "DEGEN", "DEGENT" or "REGEN".
+- Final file 200–400 KB. Compression only shrinks files, so start from a large
+  enough source.
 
 ## Links
+
 - [Degent Club](https://degent.club)
-- [UniSat Wallet](https://unisat.io)
-- [Skrybit API](https://skrybit.com)
+- [Skrybit API facts](docs/skrybit-api.md)
+
+## License
+
+MIT
