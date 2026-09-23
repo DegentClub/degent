@@ -1,0 +1,20 @@
+# Component manifest - validated against schemas/component.schema.json by `pnpm validate`.
+# Replace every __component__ / __product__ placeholder (the schema rejects them until you do).
+name: __component__                 # kebab-case, unique across the estate; usually <product>-<thing>
+package: "@bsh/__component__"       # must equal package.json "name"
+kind: service
+product: __product__                # platform | blockspace | scribbit | degent | tooling (must match the folder)
+owner: team-__product__             # GitHub team slug; drives .github/CODEOWNERS
+summary: One sentence (10-200 chars) that tells an agent what this component is for.
+lifecycle: experimental
+depends_on: []                      # every @bsh/* you import; mirror it in package.json as "workspace:*"
+docs: ./README.md
+commands: { dev: dev, test: test, typecheck: typecheck }
+# Contract first: add the OpenAPI/AsyncAPI file under contracts/ before listing it here.
+# provides: [contracts/openapi/__component__.yaml]
+# consumes: ["events:block.indexed.{network}"]
+# stores: ["postgres:__component__"]
+# secrets: ["services/__component__/api-key"]   # secret PATHS only, never values
+# env_schema: ./env.schema.json
+# runbook: ./RUNBOOK.md
+# slo: { availability: "99.9", p95_ms: 300 }

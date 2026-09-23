@@ -1,0 +1,18 @@
+# GENERATED from component.yaml `owner` fields by `pnpm --filter @bsh/catalog-tool run codeowners`.
+# Do not edit by hand; change the manifest instead. CI runs the same command with --check.
+# GitHub applies the last matching pattern, so fallbacks come first.
+
+*                                    @blockspace-holdings/team-platform
+/.github/                            @blockspace-holdings/team-platform
+/schemas/                            @blockspace-holdings/team-platform
+/templates/                          @blockspace-holdings/team-platform
+/docs/                               @blockspace-holdings/team-platform
+/catalog/                            @blockspace-holdings/team-platform
+/contracts/                          @blockspace-holdings/team-platform
+/tools/                              @blockspace-holdings/team-platform
+/platform/inscription/               @blockspace-holdings/team-platform
+/platform/wallet-kit/                @blockspace-holdings/team-platform
+/products/degent/apps/web/           @blockspace-holdings/team-degent
+/products/degent/packages/mint-sdk/  @blockspace-holdings/team-degent
+/products/degent/services/mint/      @blockspace-holdings/team-degent
+/tools/catalog/                      @blockspace-holdings/team-platform

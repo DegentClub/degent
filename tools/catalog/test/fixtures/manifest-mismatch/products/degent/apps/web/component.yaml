@@ -1,0 +1,9 @@
+name: degent-web
+package: "@bsh/degent-web"
+kind: app
+product: scribbit
+owner: team-scribbit
+summary: Fixture component degent-web for catalog-tool tests.
+lifecycle: beta
+depends_on: []
+commands: { test: test, dev: dev }

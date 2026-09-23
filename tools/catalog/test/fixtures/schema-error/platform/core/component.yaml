@@ -1,0 +1,7 @@
+name: core
+package: "@bsh/core"
+kind: widget
+product: platform
+owner: platform
+lifecycle: beta
+colour: blue

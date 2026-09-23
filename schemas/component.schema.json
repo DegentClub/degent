@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://blockspace.holdings/schemas/component.schema.json",
+  "title": "Component manifest",
+  "description": "Every package, app and service in the monorepo declares itself in a component.yaml next to its package.json. The catalog tool validates these files and generates catalog/catalog.json. Machines (CI, agents, the Fleet API) read the catalog instead of inferring structure from code.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "package", "kind", "product", "owner", "summary", "lifecycle"],
+  "properties": {
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "description": "Kebab-case component name, unique across the estate." },
+    "package": { "type": "string", "pattern": "^@bsh/[a-z][a-z0-9-]*$", "description": "The workspace package name (must match package.json)." },
+    "kind": { "enum": ["library", "service", "app", "indexer", "job", "tool"] },
+    "product": { "enum": ["platform", "blockspace", "scribbit", "degent", "tooling"] },
+    "owner": { "type": "string", "pattern": "^team-[a-z0-9-]+$" },
+    "summary": { "type": "string", "minLength": 10, "maxLength": 200 },
+    "lifecycle": { "enum": ["experimental", "beta", "production", "deprecated"] },
+    "depends_on": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^@bsh/[a-z][a-z0-9-]*$" },
+      "description": "Workspace packages this component may import. The boundary linter rejects any @bsh import not listed here."
+    },
+    "provides": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^contracts/(openapi|asyncapi|schemas)/[a-z0-9.-]+\\.(ya?ml|json)(#.+)?$" }
+    },
+    "consumes": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^(contracts/(openapi|asyncapi|schemas)/[a-z0-9.-]+\\.(ya?ml|json)(#.+)?|events:[a-z0-9.*{}-]+)$" }
+    },
+    "stores": { "type": "array", "items": { "type": "string", "pattern": "^(postgres|sqlite|s3|redis|memory):[a-z0-9_-]+$" } },
+    "secrets": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9_/*.-]+$" }, "description": "Secret PATHS only (SOPS / Infisical). Never values." },
+    "env_schema": { "type": "string", "description": "Relative path to a JSON Schema describing required environment variables." },
+    "slo": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "availability": { "type": "string", "pattern": "^9\\d(\\.\\d+)?$" },
+        "p95_ms": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "runbook": { "type": "string" },
+    "docs": { "type": "string" },
+    "commands": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Standard verbs (dev, test, build, typecheck) mapped to package scripts."
+    }
+  }
+}

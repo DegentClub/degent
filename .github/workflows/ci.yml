@@ -1,0 +1,80 @@
+# CI for the Blockspace Holdings monorepo.
+# Structure gates (manifests, boundaries, catalog, CODEOWNERS) always run on the whole repo: they are
+# cheap and a change anywhere can break them. Typecheck/test run on affected packages only for PRs
+# (changed packages + their dependents, via pnpm's "...[origin/main]" filter) and on everything on main.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so "...[origin/main]" can diff against the base
+
+      - uses: pnpm/action-setup@v4 # version comes from package.json "packageManager"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Validate component manifests
+        run: pnpm validate
+
+      - name: Enforce import boundaries
+        run: pnpm lint:boundaries
+
+      - name: Catalog is up to date
+        run: pnpm catalog --check
+
+      - name: CODEOWNERS is up to date
+        run: pnpm --filter @bsh/catalog-tool run codeowners --check
+
+      - name: No breaking OpenAPI changes (oasdiff)
+        if: github.event_name == 'pull_request'
+        run: |
+          base="origin/${{ github.base_ref }}"
+          status=0
+          for f in $(git diff --name-only --diff-filter=M "$base"...HEAD -- 'contracts/openapi/*.yaml' 'contracts/openapi/*.yml' 'contracts/openapi/*.json'); do
+            mkdir -p /tmp/base/$(dirname "$f")
+            git show "$base:$f" > "/tmp/base/$f"
+            echo "::group::oasdiff $f"
+            docker run --rm -v /tmp/base:/base -v "$PWD":/head tufin/oasdiff breaking "/base/$f" "/head/$f" --fail-on ERR || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
+      - name: Typecheck (affected)
+        if: github.event_name == 'pull_request'
+        run: pnpm --filter "...[origin/${{ github.base_ref }}]" run --if-present typecheck
+
+      - name: Test (affected)
+        if: github.event_name == 'pull_request'
+        run: pnpm --filter "...[origin/${{ github.base_ref }}]" run --if-present test
+
+      - name: Typecheck (all)
+        if: github.event_name != 'pull_request'
+        run: pnpm typecheck
+
+      - name: Test (all)
+        if: github.event_name != 'pull_request'
+        run: pnpm test
+
+      - name: Build web app
+        run: pnpm --filter @bsh/degent-web build

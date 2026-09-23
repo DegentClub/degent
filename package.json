@@ -1,0 +1,27 @@
+{
+  "name": "blockspace-monorepo",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "build": "pnpm -r --if-present build",
+    "catalog": "pnpm --filter @bsh/catalog-tool run catalog",
+    "validate": "pnpm --filter @bsh/catalog-tool run validate",
+    "lint:boundaries": "pnpm --filter @bsh/catalog-tool run boundaries",
+    "check": "pnpm validate && pnpm lint:boundaries && pnpm typecheck && pnpm test"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "vitest": "^5.0.1",
+    "@types/node": "^22.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

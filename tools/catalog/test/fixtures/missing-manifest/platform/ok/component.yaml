@@ -1,0 +1,9 @@
+name: ok
+package: "@bsh/ok"
+kind: library
+product: platform
+owner: team-platform
+summary: Fixture component ok for catalog-tool tests.
+lifecycle: beta
+depends_on: []
+commands: { test: test, typecheck: typecheck }
