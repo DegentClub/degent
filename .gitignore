@@ -1,5 +1,9 @@
 node_modules/
-market.db
-market.db-wal
-market.db-shm
+data/
+*.db
+*.db-wal
+*.db-shm
 *.db-journal
+.env
+.env.local
+coverage/

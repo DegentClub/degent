@@ -1,3 +1,48 @@
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  LEGACY — DO NOT USE. Kept only as an audit record of the defect.        ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+//
+// This is the pre-rewrite browser-side PSBT encoder. It is no longer loaded by
+// the site (public/ does not include it) and nothing imports it. It is retained
+// so the failure can be studied against the fixed engine in src/psbt/.
+//
+// WHY IT WAS UNSAFE
+//
+// 1. Wrong ordinal routing (buyer lost the inscription). buildFinalPsbt placed
+//    the inscription UTXO at INPUT 0 and the seller's payment at OUTPUT 0.
+//    Ordinal theory assigns sats first-in-first-out: the inscribed sat, at
+//    offset 0 of input 0, is the first sat of the transaction and therefore
+//    lands in output 0 — the seller's payout. The seller received both the
+//    price and the inscription; the buyer received only "postage" sats.
+//    See src/psbt/ordinals.js (computeOrdinalDestination) and the test that
+//    reproduces this layout in tests/ordinals.test.js.
+//
+// 2. Dummy-input signing trick. buildBuyerSigningPsbt had the buyer sign
+//    (SIGHASH_ALL|ANYONECANPAY) a transaction whose input 0 was a zeroed
+//    placeholder, specifically so the wallet could not see that an inscription
+//    was being spent and would not warn. The signature was then transplanted
+//    onto the real transaction. The wallet's warning was correct; suppressing
+//    it removed the only user-facing safety check.
+//
+// 3. Wrong tap_internal_key. The taproot internal key field was populated with
+//    the 32-byte witness program from the address, i.e. the already-tweaked
+//    output key, instead of the wallet's untweaked x-only internal key.
+//
+// 4. No signature verification. verifySellerSig only checked the byte length
+//    and that the last byte was 0x83; it never verified the Schnorr signature
+//    against a sighash, so any 65-byte blob ending in 0x83 was "valid".
+//
+// 5. Bech32 decoding without checksum. bech32Decode stripped the last six
+//    characters without verifying them, so a mistyped address produced a
+//    plausible but wrong scriptPubKey.
+//
+// 6. Hard-coded fee of 1 sat/vB × 255 vB, regardless of mempool conditions or
+//    actual transaction size.
+//
+// The replacement lives in src/psbt/ (built on @scure/btc-signer) and is
+// exercised only server-side; the browser no longer constructs transactions.
+// ─────────────────────────────────────────────────────────────────────────────
+
 // psbt.js — Minimal PSBT builder for Ordinals inscription listings
 // Handles: P2TR (Taproot) address decoding, PSBT construction, signature extraction
 // Reference: BIP 174, BIP 371 (Taproot PSBT extensions)
