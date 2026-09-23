@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
     environment:
       NODE_ENV: production
-      NEXT_PUBLIC_AUTH_TOKEN: ${SKRYBIT_API_KEY}
+      SKRYBIT_API_KEY: ${SKRYBIT_API_KEY}
       VIRTUAL_HOST: mint.degent.club
       LETSENCRYPT_HOST: mint.degent.club
       # Optional: Add your email for Let's Encrypt notifications

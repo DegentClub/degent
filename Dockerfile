@@ -1,23 +1,37 @@
-# Use the official Node.js image
-FROM node:24-alpine3.22
+# syntax=docker/dockerfile:1.7
 
-# Set the working directory
+# ---- deps: install exactly what the lockfile says --------------------------
+FROM node:22-alpine AS deps
 WORKDIR /app
-
-# Copy package.json and package-lock.json
 COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 
-# Install dependencies
-RUN npm install
-
-# Copy the rest of the application files
+# ---- build: compile the Next.js standalone bundle ---------------------------
+FROM node:22-alpine AS build
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-
-# Build the Next.js application
 RUN npm run build
 
-# Expose the port the app runs on
+# ---- runtime: minimal, non-root, only the standalone output ----------------
+FROM node:22-alpine AS runtime
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+
+RUN addgroup -S app && adduser -S -G app app
+
+COPY --from=build --chown=app:app /app/.next/standalone ./
+COPY --from=build --chown=app:app /app/.next/static ./.next/static
+COPY --from=build --chown=app:app /app/public ./public
+
+USER app
 EXPOSE 3000
 
-# Start the application
-CMD ["npm", "start"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1:3000/api/health || exit 1
+
+CMD ["node", "server.js"]

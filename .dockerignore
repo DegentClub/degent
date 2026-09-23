@@ -1,0 +1,15 @@
+node_modules
+.next
+.git
+.github
+coverage
+docs
+tests
+*.md
+.env
+.env*.local
+acme
+conf
+certs
+vhost
+html
