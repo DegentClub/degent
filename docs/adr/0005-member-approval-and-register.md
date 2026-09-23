@@ -93,10 +93,11 @@ front end presents "keep your inscription". The existing `rescue_available` sema
 
 Contract first: `contracts/openapi/degent-mint.yaml` gains the routes and schemas above; `contracts/asyncapi/
 degent-mint.yaml` gains the statuses. The shared topic `degent.mint.order.{status}` is owned by the platform
-(`deps/scribbit/contracts/asyncapi/platform-events.yaml`). Since the platform pin cannot be edited here, our status
-enum is a **superset** of the platform's and `contract.test.ts` asserts exactly that (platform values ⊆ ours, and
-the only extras are `confirming`, `member_review`, `declined`); events carrying an extra status are validated
-against our schema only until the pin catches up. `pnpm contracts:diff` prints the delta.
+(`deps/scribbit/contracts/asyncapi/platform-events.yaml`). Shared topics are changed platform-first: while the pin
+lagged, our status enum was a **superset** of the platform's and `contract.test.ts` asserted exactly that (platform
+values ⊆ ours, extras limited to `confirming`, `member_review`, `declined`). The platform adopted them in topic
+1.1.0 (scribbit `9c69557`, pinned here at `401682f`), so the test asserts equality again; `pnpm contracts:diff`
+prints any future delta.
 
 ## Alternatives considered
 
@@ -126,11 +127,12 @@ against our schema only until the pin catches up. `pnpm contracts:diff` prints t
 
 ## Follow-ups
 
-1. **Platform PR (DegentClub/scribbit):** add `confirming`, `member_review`, `declined` to
-   `contracts/asyncapi/platform-events.yaml` (channel `degentMintOrderStatus` parameter enum,
-   `MintOrderStatusChanged.status` and `.previousStatus`; additive → `x-topic-version` 1.1.0) and to
-   `platform/events/src/platform-topics.ts`; then bump the pin here and tighten `contract.test.ts` from superset to
-   equality. `pnpm contracts:diff` shows exactly this delta.
+1. ~~**Platform PR (DegentClub/scribbit):** add `confirming`, `member_review`, `declined` to
+   `contracts/asyncapi/platform-events.yaml` and `platform/events/src/platform-topics.ts` (additive →
+   `x-topic-version` 1.1.0); then bump the pin and tighten `contract.test.ts` from superset to equality.~~
+   Done: scribbit `9c69557` (topic 1.1.0), pin bumped to `401682f`, test tightened. The same pin brought
+   `@bsh/inscription.inscriptionDestination` (ordinal FIFO), which the worker now uses to locate the delivered
+   child instead of a hard-coded output index.
 2. Owner: inscribe the Club parent and the signed Gallery of the 4,112 (`docs/REGISTER.md` §1.1–1.2); set
    `PARENT_INSCRIPTION_ID`, `GALLERY_INSCRIPTION_ID`.
 3. Run `scripts/build-roster.mjs --indexer <club ord>` to fill heights/timestamps (mints-per-week for the Gallery).

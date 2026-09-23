@@ -23,6 +23,7 @@ import {
   addressToScript,
   attachParent,
   finalizeReveal,
+  inscriptionDestination,
   inscriptionIdFromReveal,
 } from '@bsh/inscription';
 import type { Lane, OrderStatus } from '@bsh/degent-mint-sdk';
@@ -439,14 +440,23 @@ export class MintWorker {
     await this.each('deliver', ['verified'], async (r) => {
       const tx = await this.d.chain.getTx(r.revealTxid!);
       if (!tx) return;
-      const childIndex = r.rescued ? 0 : 1;
-      const out = tx.vout[childIndex];
-      const expected = bytesToHex(addressToScript(r.recipientAddress, this.s.network));
-      if (out?.scriptHex.toLowerCase() !== expected) {
-        this.log.error('child output does not pay the recipient', { orderId: r.id, txid: tx.txid });
+      // Where the new inscription landed, by ordinal FIFO (one implementation: @bsh/inscription). The
+      // inscription is made on the first sat of the commit input: input 1 behind the parent (whose value the
+      // policy signer returns unchanged in output 0), or input 0 of a self-rescue [commit] -> [child].
+      const commitValue = BigInt(r.quote!.commitValueSats);
+      const inputs = r.rescued ? [{ value: commitValue }] : [{ value: tx.vout[0]?.value ?? 0n }, { value: commitValue }];
+      const dest = inscriptionDestination({ inputs, outputs: tx.vout.map((o) => ({ value: o.value })) }, r.rescued ? 0 : 1);
+      if (dest === 'fee') {
+        this.log.error('inscription sat fell into the fee', { orderId: r.id, txid: tx.txid });
         return;
       }
-      await this.move(r, 'delivered', { detail: `child at ${tx.txid}:${childIndex}`, txid: tx.txid });
+      const out = tx.vout[dest.vout];
+      const expected = bytesToHex(addressToScript(r.recipientAddress, this.s.network));
+      if (out?.scriptHex.toLowerCase() !== expected) {
+        this.log.error('child output does not pay the recipient', { orderId: r.id, txid: tx.txid, vout: dest.vout });
+        return;
+      }
+      await this.move(r, 'delivered', { detail: `child at ${tx.txid}:${dest.vout}`, txid: tx.txid });
     });
   }
 

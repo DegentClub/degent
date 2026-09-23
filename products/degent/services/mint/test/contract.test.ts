@@ -161,13 +161,11 @@ describe('AsyncAPI contract', () => {
 describe('degent.mint.order.{status} stays compatible with the platform topic (deps/scribbit/contracts/asyncapi/platform-events.yaml)', () => {
   // The platform schema is canonical for the shared topic; this contract's OrderStatusEvent is the producer's
   // view and must not drift from it. Both files are plain YAML with local $refs only.
-  // ADR-0005 added statuses here first: our enum must be a SUPERSET of the platform's, and the only extra
-  // members allowed are the ones the platform PR listed under ADR-0005 "Follow-ups". `pnpm contracts:diff`
-  // prints the delta; once the pin carries them the sets are equal.
-  const ADR_0005_ADDITIONS = ['confirming', 'member_review', 'declined'];
+  // ADR-0005 added statuses here first (superset period); the pin now carries them (topic 1.1.0), so the
+  // enums must be equal again. `pnpm contracts:diff` prints any future delta.
   const superset = (ours: unknown[], theirs: unknown[], what: string) => {
     expect(theirs.filter((x) => !ours.includes(x)), `${what}: platform values missing here`).toEqual([]);
-    expect(ours.filter((x) => !theirs.includes(x) && !ADR_0005_ADDITIONS.includes(x as string)), `${what}: unexpected extra values`).toEqual([]);
+    expect(ours.filter((x) => !theirs.includes(x)), `${what}: values the platform does not carry (platform PR pending?)`).toEqual([]);
   };
   const deref = (doc: any, n: any): any =>
     n?.$ref ? deref(doc, n.$ref.replace(/^#\//, '').split('/').reduce((x: any, k: string) => x?.[k], doc)) : n;
@@ -179,13 +177,16 @@ describe('degent.mint.order.{status} stays compatible with the platform topic (d
   const enumOf = (doc: any, node: any): unknown[] =>
     (deref(doc, node).enum ?? deref(doc, node).oneOf?.flatMap((b: any) => deref(doc, b).enum ?? (b.type === 'null' ? [null] : []))) as unknown[];
 
-  it('the platform declares the channel with the same address; our status parameter enum is a superset of its enum', () => {
+  it('the platform declares the channel with the same address and status parameter enum (topic >= 1.1.0)', () => {
     expect(theirs).toBeDefined();
     superset(ours.parameters.status.enum, theirs.parameters.status.enum, 'channel status parameter');
+    expect(theirs.parameters.status.enum).toEqual(ours.parameters.status.enum);
     expect(ours.parameters.status.enum).toEqual([...ORDER_STATUSES]);
+    const msg = platformEvents.components.messages.MintOrderStatusChanged;
+    expect(Number(String(msg['x-topic-version']).split('.')[1])).toBeGreaterThanOrEqual(1);
   });
 
-  it('same required fields, same property set, superset status / previousStatus enums, same network / lane enums', () => {
+  it('same required fields, same property set, same status / previousStatus / network / lane enums', () => {
     expect([...ourEvent.required].sort()).toEqual([...theirEvent.required].sort());
     expect(Object.keys(ourEvent.properties).sort()).toEqual(Object.keys(theirEvent.properties).sort());
     for (const k of ['status', 'previousStatus']) superset(enumOf(asyncapi, ourEvent.properties[k]), enumOf(platformEvents, theirEvent.properties[k]), k);
@@ -201,7 +202,7 @@ describe('degent.mint.order.{status} stays compatible with the platform topic (d
     for (const ex of examples) expect(check(ex.payload, theirEvent)).toEqual([]);
   });
 
-  it('every event the service emits validates against the platform schema, except the statuses the platform has not adopted yet', async () => {
+  it('every event the service emits (member review included) validates against the platform schema', async () => {
     const h = makeHarness();
     const b = await browserMintToPayment(h);
     await fundAndApprove(h, b);
@@ -209,11 +210,7 @@ describe('degent.mint.order.{status} stays compatible with the platform topic (d
     h.chain.mine();
     await h.worker.tick();
     expect(h.events.events.length).toBeGreaterThanOrEqual(11);
-    const platformStatuses: unknown[] = enumOf(platformEvents, theirEvent.properties.status);
-    for (const e of h.events.events) {
-      const pending = [e.status, e.previousStatus].some((x) => ADR_0005_ADDITIONS.includes(x as string) && !platformStatuses.includes(x));
-      if (pending) continue;
-      expect(check(e, theirEvent)).toEqual([]);
-    }
+    expect(h.events.events.map((e) => e.status)).toEqual(expect.arrayContaining(['confirming', 'member_review', 'queued']));
+    for (const e of h.events.events) expect(check(e, theirEvent)).toEqual([]);
   });
 });

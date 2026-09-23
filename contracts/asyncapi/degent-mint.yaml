@@ -11,10 +11,10 @@ info:
     Event type == routing key == `degent.mint.order.{status}`. Payloads never contain half-signed reveals,
     order tokens, keys or raw transactions.
 
-    Status enum: a SUPERSET of the platform's canonical `degent.mint.order.{status}` enum
-    (deps/scribbit/contracts/asyncapi/platform-events.yaml). ADR-0005 added `confirming`, `member_review` and
-    `declined` here first; the platform PR adding them is listed under ADR-0005 "Follow-ups" and
-    `pnpm contracts:diff` prints the delta until it lands. Consumers must ignore unknown statuses.
+    Status enum: equal to the platform's canonical `degent.mint.order.{status}` enum
+    (deps/scribbit/contracts/asyncapi/platform-events.yaml, topic 1.1.0, which adopted ADR-0005's `confirming`,
+    `member_review` and `declined`). `pnpm contracts:diff` prints any delta; contract.test.ts asserts equality.
+    Consumers must ignore unknown statuses.
 
     Transport: in-process bus in dev/tests; RabbitMQ topic exchange `degent.mint` in production (persistent
     messages, `message_id` = eventId, `content_type` = application/json). Bind with e.g.

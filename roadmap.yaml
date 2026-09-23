@@ -63,7 +63,7 @@ phases:
       - { id: p2.13, repo: degent, title: "Fee-era histogram and roster heights/timestamps (run build-roster.mjs --indexer against a club ord)", status: todo, owner_action: true, depends_on: [p2.9] }
       - { id: p2.7, repo: xbot, title: "Bot reads mint/sales numbers from the collection API", status: todo, depends_on: [p2.5] }
       - { id: p2.8, repo: degent, title: "Monthly published byte-count comparison", status: todo, owner_action: true, depends_on: [p2.2] }
-      - { id: p2.14, repo: platform, title: "platform-events.yaml adds confirming, member_review, declined to degent.mint.order.{status} (pnpm contracts:diff prints the delta until the pin carries it)", status: in_progress, verify: "pnpm contracts:diff", depends_on: [p1.9] }
+      - { id: p2.14, repo: platform, title: "platform-events.yaml adds confirming, member_review, declined to degent.mint.order.{status} (topic 1.1.0; pnpm contracts:diff prints any delta)", status: done, verify: "pnpm contracts:diff", depends_on: [p1.9] }
   - id: p3
     name: Exchange and the Club
     exit: "External review signs off the exchange; 100 real trades settle with the inscription in the buyer output."
