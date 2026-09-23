@@ -98,7 +98,7 @@ export function jsonErrors(opts: JsonErrorsOptions = {}): MiddlewareHandler {
     const headers = new Headers(c.res.headers);
     for (const h of ['content-type', 'content-length', 'content-encoding', 'content-range', 'etag', 'last-modified'])
       headers.delete(h);
-    for (const [k, v] of replacement.headers) headers.set(k, v);
+    replacement.headers.forEach((v, k) => headers.set(k, v));
     c.res = undefined as unknown as Response;
     c.res = new Response(replacement.body, { status: replacement.status, headers });
   };

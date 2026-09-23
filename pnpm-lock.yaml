@@ -167,6 +167,9 @@ importers:
         specifier: ^4.13.8
         version: 4.13.8
     devDependencies:
+      '@scure/btc-signer':
+        specifier: ^2.4.1
+        version: 2.4.1
       '@types/node':
         specifier: ^22
         version: 22.20.4
@@ -324,6 +327,9 @@ importers:
       '@scure/base':
         specifier: ^2.4.0
         version: 2.4.0
+      '@scure/btc-signer':
+        specifier: ^2.4.1
+        version: 2.4.1
       '@types/node':
         specifier: ^22
         version: 22.20.4

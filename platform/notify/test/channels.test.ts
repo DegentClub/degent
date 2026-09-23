@@ -67,7 +67,7 @@ describe('WebhookChannel', () => {
     const { fetch } = fakeFetch([resp]);
     const r = await new WebhookChannel({ fetch, secrets: async () => 's', nowSec: () => T }).send(note('webhook', 'https://h.example.com'));
     expect(r).toMatchObject({ ok: false, retryable });
-    if (!(resp instanceof Error) && resp.headers) expect(r).toMatchObject({ retryAfterMs: 120_000 });
+    if (!(resp instanceof Error) && 'headers' in resp) expect(r).toMatchObject({ retryAfterMs: 120_000 });
   });
 
   it('validates targets (https only, no credentials, no private literal hosts)', async () => {

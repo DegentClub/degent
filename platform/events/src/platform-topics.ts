@@ -124,7 +124,7 @@ export interface CollectionCertified {
 export const collectionCertified = defineTopic<CollectionCertified>({
   name: 'collection.certified',
   version: '1.0.0',
-  producer: 'blockspace-certification',
+  producer: 'blockspace-certify',
   description: 'A collection passed provenance certification (parent/child links and optional content hashes).',
   dataschema: `${SCHEMA_BASE}CollectionCertified`,
   schema: {
@@ -162,7 +162,7 @@ export const degentMintOrder = defineTopic<MintOrderStatusChanged>({
   version: '1.0.0',
   producer: 'degent-mint',
   description:
-    'A degent.club mint order changed status. Mirrors the OrderStatusEvent of contracts/asyncapi/degent-mint.yaml (canonical; owned by degent-mint).',
+    'A degent.club mint order changed status. Payload mirrors OrderStatusEvent in contracts/asyncapi/degent-mint.yaml (canonical, owned by degent-mint); on this bus it travels as CloudEvents `data`.',
   params: { status: { description: 'The status the order moved to.', enum: MINT_ORDER_STATUSES } },
   dataschema: `${SCHEMA_BASE}MintOrderStatusChanged`,
   schema: {

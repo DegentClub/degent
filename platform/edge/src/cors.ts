@@ -23,7 +23,7 @@ function normaliseOrigin(o: string): string {
   } catch {
     throw new Error(`corsAllowlist: invalid origin ${JSON.stringify(o)}`);
   }
-  if (url.origin === 'null' || url.origin !== o)
+  if (url.origin === 'null' || url.origin !== o || o.includes('*'))
     throw new Error(`corsAllowlist: origin must be exactly scheme://host[:port] (got ${JSON.stringify(o)}, expected ${url.origin})`);
   return o;
 }
