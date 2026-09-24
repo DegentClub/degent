@@ -57,6 +57,25 @@ export interface WorkerDeps {
   log?: Logger;
 }
 
+/** Log line names the ops dashboard/alerts read (products/degent/ops; checked by test/ops.test.ts). */
+export const LOG_GAUGES = 'mint gauges';
+export const LOG_BROADCAST_FAILED = 'broadcast failed';
+export const LOG_NO_PARENT = 'no parent UTXO configured; cannot reveal';
+
+/** Point-in-time counts logged as `mint gauges` (flat fields so LogQL `| json` can unwrap them; booleans logged as 0/1). */
+export interface MintGauges {
+  memberReview: number;
+  /** Age of the oldest order waiting for members, from reviewStartedAt; 0 when none. */
+  memberReviewOldestAgeSeconds: number;
+  rescueAvailable: number;
+  queued: number;
+  revealing: number;
+  awaitingConfirmation: number;
+  parentKnown: boolean;
+  parentConfirmed: boolean;
+  parentLeased: boolean;
+}
+
 export interface TickReport {
   transitions: Array<{ orderId: string; from: OrderStatus; to: OrderStatus }>;
   errors: Array<{ orderId: string; step: string; error: string }>;
@@ -81,7 +100,6 @@ export class MintWorker {
   private async move(r: OrderRecord, to: OrderStatus, opts: Parameters<OrderService['transition']>[2] = {}): Promise<OrderRecord> {
     const saved = await this.d.orders.transition(r, to, opts);
     this.report.transitions.push({ orderId: r.id, from: r.status, to });
-    this.log.info('order transition', { orderId: r.id, from: r.status, to, detail: opts.detail, txid: opts.txid });
     return saved;
   }
 
@@ -121,9 +139,45 @@ export class MintWorker {
     }
   }
 
-  /** Tick every `intervalMs` until the signal aborts. */
-  async run(intervalMs: number, signal: AbortSignal): Promise<void> {
+  /** Counts for the ops dashboard; non-terminal statuses only, so the cost does not grow with history. */
+  async gauges(): Promise<MintGauges> {
+    const rows = await this.d.store.listByStatus(['member_review', 'rescue_available', 'queued', 'revealing', 'paid', 'confirming', 'revealed', 'confirmed', 'verified']);
+    const count = (st: OrderStatus) => rows.filter((r) => r.status === st).length;
+    const oldest = rows
+      .filter((r) => r.status === 'member_review' && r.reviewStartedAt)
+      .reduce((min, r) => Math.min(min, Date.parse(r.reviewStartedAt!)), Infinity);
+    const parent = await this.d.parents.current();
+    return {
+      memberReview: count('member_review'),
+      memberReviewOldestAgeSeconds: Number.isFinite(oldest) ? Math.max(0, Math.round((this.nowMs() - oldest) / 1000)) : 0,
+      rescueAvailable: count('rescue_available'),
+      queued: count('queued'),
+      revealing: count('revealing'),
+      awaitingConfirmation: count('paid') + count('confirming') + count('revealed') + count('confirmed') + count('verified'),
+      parentKnown: parent !== null,
+      parentConfirmed: parent?.confirmed ?? false,
+      parentLeased: (await this.d.parents.leasedBy()) !== null,
+    };
+  }
+
+  /** Tick every `intervalMs` until the signal aborts; log `mint gauges` at most every `gaugeEveryMs`. */
+  async run(intervalMs: number, signal: AbortSignal, gaugeEveryMs = 60_000): Promise<void> {
+    let lastGauges = -Infinity;
     while (!signal.aborted) {
+      if (this.nowMs() - lastGauges >= gaugeEveryMs) {
+        lastGauges = this.nowMs();
+        await this.gauges()
+          // Booleans as 0/1 so LogQL can `unwrap` them.
+          .then((g) =>
+            this.log.info(LOG_GAUGES, {
+              ...g,
+              parentKnown: g.parentKnown ? 1 : 0,
+              parentConfirmed: g.parentConfirmed ? 1 : 0,
+              parentLeased: g.parentLeased ? 1 : 0,
+            }),
+          )
+          .catch((e) => this.log.error('gauges failed', { error: e instanceof Error ? e.message : String(e) }));
+      }
       const rep = await this.tick().catch((e) => {
         this.log.error('tick failed', { error: e instanceof Error ? e.message : String(e) });
         return null;
@@ -248,7 +302,7 @@ export class MintWorker {
       await this.onRevealSeen(r, parentValue);
       return true;
     }
-    this.log.warn('broadcast failed', { orderId: r.id, lane: r.lane, via: res.via, error: res.error, retryable: res.retryable });
+    this.log.warn(LOG_BROADCAST_FAILED, { orderId: r.id, lane: r.lane, via: res.via, error: res.error, retryable: res.retryable });
     if (res.retryable) {
       // Keep the lease and the exact tx: retrying the same bytes is idempotent.
       await this.d.orders.patch(r, { broadcastAttempts: r.broadcastAttempts + 1, lastError: res.error });
@@ -322,7 +376,7 @@ export class MintWorker {
       if (await this.d.parents.leasedBy()) return; // a reveal is mid-flight on the parent
       const parent = await this.d.parents.current();
       if (!parent) {
-        this.log.error('no parent UTXO configured; cannot reveal', {});
+        this.log.error(LOG_NO_PARENT, {});
         return;
       }
       if (o.lane === 'standard' && !parent.confirmed && parent.createdByLane === 'block') continue;

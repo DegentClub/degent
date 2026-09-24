@@ -16,10 +16,11 @@ import type {
   QueueInfo,
   QueueResponse,
   RescueResponse,
+  ReviewResult,
   SubmitRevealRequest,
   Tier,
 } from '@bsh/degent-mint-sdk';
-import { BLOCK_INTERVAL_MINUTES, isSha256Hex, sha256Hex, tierForSize, validateContentMeta } from '@bsh/degent-mint-sdk';
+import { ADVISORY_RULE_IDS, BLOCK_INTERVAL_MINUTES, isSha256Hex, sha256Hex, tierForSize, validateContentMeta } from '@bsh/degent-mint-sdk';
 import { checkRecipientAddress } from '../domain/address.js';
 import { DomainError, conflict, invalid, notFound } from '../domain/errors.js';
 import { approvalInfo } from '../domain/approval.js';
@@ -36,6 +37,7 @@ import type { ParentUtxoProvider } from '../ports/parent-utxo.js';
 import type { RevealVault } from '../ports/reveal-vault.js';
 import type { VoteStore } from '../ports/vote-store.js';
 import type { MintSettings } from './settings.js';
+import { silentLogger, type Logger } from './logger.js';
 
 export interface OrderServiceDeps {
   settings: MintSettings;
@@ -51,13 +53,26 @@ export interface OrderServiceDeps {
   chain?: ChainPort;
   newId?: () => string;
   newToken?: () => string;
+  /** Structured log sink; the observability files in products/degent/ops are built on these lines. */
+  log?: Logger;
 }
+
+/**
+ * Log line names and fields the dashboards and alerts in products/degent/ops depend on
+ * (test/ops.test.ts at the repository root checks that every field they reference appears here or in the worker).
+ */
+export const LOG_ORDER_TRANSITION = 'order transition';
+export const LOG_ART_REVIEW = 'art review verdict';
 
 const hashToken = (t: string) => createHash('sha256').update(t, 'utf8').digest();
 const APPROVED_COUNT_KEY = 'approval.approvedCount';
 
 export class OrderService {
-  constructor(private readonly d: OrderServiceDeps) {}
+  private readonly log: Logger;
+
+  constructor(private readonly d: OrderServiceDeps) {
+    this.log = d.log ?? silentLogger;
+  }
 
   get settings(): MintSettings {
     return this.d.settings;
@@ -104,6 +119,20 @@ export class OrderService {
     if (opts.txid) ev.txid = opts.txid;
     const next: OrderRecord = { ...r, ...opts.patch, status: to, updatedAt: at, timeline: [...r.timeline, ev] };
     const saved = await this.d.store.save(next);
+    // One line per transition, API or worker. msInPreviousStatus: time spent in `from` (time-in-status);
+    // payToDeliveredMs: payment seen -> delivered, only on the delivered transition.
+    const enteredPrevious = r.timeline[r.timeline.length - 1]?.at ?? r.createdAt;
+    this.log.info(LOG_ORDER_TRANSITION, {
+      orderId: saved.id,
+      from: r.status,
+      to,
+      lane: saved.lane,
+      tier: saved.tier,
+      msInPreviousStatus: Date.parse(at) - Date.parse(enteredPrevious),
+      ...(to === 'delivered' && saved.paidAt ? { payToDeliveredMs: Date.parse(at) - Date.parse(saved.paidAt) } : {}),
+      ...(opts.detail ? { detail: opts.detail } : {}),
+      ...(opts.txid ? { txid: opts.txid } : {}),
+    });
     await this.d.events.publish({
       type: `degent.mint.order.${to}`,
       eventId: `${saved.id}:${saved.timeline.length}`,
@@ -329,6 +358,7 @@ export class OrderService {
       throw new DomainError('review_unavailable', 503, 'automated review is temporarily unavailable; retry the upload');
     }
 
+    this.logReview(r, review);
     r = await this.transition(r, 'reviewing', { detail: `review by ${this.d.review.name}` });
     if (!review.approved) {
       r = await this.transition(r, 'rejected', { detail: review.reasons.join('; ').slice(0, 500), patch: { review } });
@@ -355,6 +385,26 @@ export class OrderService {
     });
     r = await this.transition(r, 'approved', { detail: 'binding quote issued', patch: { review, quote, expiresAt: quote.expiresAt } });
     return this.publicOrder(r);
+  }
+
+  /** One line per review: the hard verdict plus the advisory rules (never PII: no bytes, no addresses). */
+  private logReview(r: OrderRecord, review: ReviewResult): void {
+    const rules = review.rules;
+    this.log.info(LOG_ART_REVIEW, {
+      orderId: r.id,
+      reviewer: this.d.review.name,
+      approved: review.approved,
+      reasonCount: review.reasons.length,
+      ...(rules
+        ? {
+            square: rules.square,
+            pepeInTuxWithBowtie: rules.pepeInTuxWithBowtie,
+            framedWithPlacard: rules.framedWithPlacard,
+            placardText: rules.placardText,
+            advisoryFails: ADVISORY_RULE_IDS.filter((id) => rules[id] === 'fail').length,
+          }
+        : {}),
+    });
   }
 
   async submitReveal(orderId: string, authorization: string | undefined, body: unknown): Promise<Order> {

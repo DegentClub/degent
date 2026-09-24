@@ -226,7 +226,7 @@ pnpm --filter @bsh/degent-mint test         # unit + API + worker + e2e on a fak
 pnpm --filter @bsh/degent-mint typecheck
 ```
 
-Operations: [RUNBOOK.md](./RUNBOOK.md). One certified count (roster vs export vs ord vs the site claims): `scripts/reconcile-count.mjs` ([REGISTER.md §2.1](../../../../docs/REGISTER.md)). Launch (Club parent, signed Gallery, env): [docs/LAUNCH-CHAIN-SETUP.md](../../../../docs/LAUNCH-CHAIN-SETUP.md).
+Operations: [RUNBOOK.md](./RUNBOOK.md); dashboard + alerts from the JSON logs: [products/degent/ops](../../ops/README.md). One certified count (roster vs export vs ord vs the site claims): `scripts/reconcile-count.mjs` ([REGISTER.md §2.1](../../../../docs/REGISTER.md)). Launch (Club parent, signed Gallery, env): [docs/LAUNCH-CHAIN-SETUP.md](../../../../docs/LAUNCH-CHAIN-SETUP.md).
 
 ## Known gaps
 

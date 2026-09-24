@@ -49,6 +49,8 @@ phases:
       - { id: p1.12, repo: degent, title: "Member review queue (/review): existing members approve or decline; APPROVAL_QUORUM / DECLINE_QUORUM configurable; review SLA hands the order to self-rescue", status: done, verify: "pnpm --filter @bsh/degent-web test -- members" }
       - { id: p1.13, repo: degent, title: "Art review aligned with the site's Minting Rules: advisory rules {square (exact), pepeInTuxWithBowtie, framedWithPlacard, placardText} with notes, never rejecting; hard verdict unchanged; schema-validated vision verdict", status: done, depends_on: [p1.1], verify: "pnpm --filter @bsh/degent-mint test -- review" }
       - { id: p1.14, repo: degent, title: "Web renders the advisory rules before payment (Validate) and in the member review queue (UI contract in services/mint/README.md)", status: todo, depends_on: [p1.13, p1.12] }
+      - { id: p1.15, repo: degent, title: "Observability as files: Grafana dashboard + Loki alert rules (products/degent/ops) from degent-mint's JSON logs (order transition with time-in-status and pay->delivered, art review verdict, mint gauges); fields and runbook anchors checked against the code", status: done, doc: products/degent/ops/README.md, verify: "pnpm --filter @bsh/degent-mint test -- observability" }
+      - { id: p1.16, repo: degent, title: "Ship degent-mint stdout to Loki as job=degent-mint, import the dashboard and load the alert rules in the deployment", status: todo, depends_on: [p1.15] }
   - id: p2
     name: Register and collection API
     exit: "Anyone can verify membership and the blockspace claim from a node and the published query."
