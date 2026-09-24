@@ -7,7 +7,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "pnpm -r --if-present test",
+    "test": "pnpm -r --workspace-concurrency=1 --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
     "build": "pnpm -r --if-present build",
     "catalog": "pnpm --filter @bsh/catalog-tool run catalog",
