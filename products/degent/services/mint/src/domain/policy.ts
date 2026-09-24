@@ -5,10 +5,13 @@
  * outpoint] and outputs are [parent return == parentValue, child == order recipient & postage];
  * nothing else is accepted.
  *
- * One deliberate tightening versus the ADR text ("value >= its input value"): the parent return
- * must carry EXACTLY the parent input value. ord places the child on the first sat of the commit
- * input, i.e. at offset parentValue; a larger output 0 would swallow the child into the
- * collection address. @bsh/inscription.signParentInput enforces the same equality.
+ * One deliberate tightening versus the ADR-0002 text ("value >= its input value"): the parent
+ * return must carry EXACTLY the parent input value. ord places the child on the first sat of the
+ * commit input, i.e. at offset parentValue; a larger output 0 would swallow the child into the
+ * collection address. @bsh/inscription.signParentInput enforces the same equality. Since ADR-0005
+ * the browser signs output 0 with that exact value (SIGHASH_ALL|ANYONECANPAY), so a PSBT that
+ * reaches this check with any other output 0 is already unspendable; the check stays as defence
+ * in depth and as the policy signer's own, independent statement of what it will co-sign.
  */
 import { hex } from '@scure/base';
 import { Transaction } from '@scure/btc-signer';
@@ -83,7 +86,7 @@ export function evaluateParentPolicy(psbtBase64: string, ctx: PolicyContext, cfg
   if (in0.witnessUtxo?.amount !== ctx.parentValue) v.push('input 0 value differs from the parent UTXO value');
   if (!eq(in0.witnessUtxo?.script, ctx.parentScript)) v.push('input 0 script differs from the parent UTXO script');
 
-  // input 1: this order's commit output, already signed by the user (0x83)
+  // input 1: this order's commit output, already signed by the user (0x81, ADR-0005)
   if (txidOf(in1.txid) !== ctx.commitOutpoint.txid.toLowerCase() || in1.index !== ctx.commitOutpoint.vout)
     v.push("input 1 is not this order's commit output");
   if (in1.witnessUtxo?.amount !== ctx.commitValue) v.push('input 1 value differs from the order commit value');

@@ -8,6 +8,12 @@ export interface MintSettings {
   collection: CollectionConfig;
   /** P2TR address holding the parent inscription (== policy signer key's address). */
   collectionAddress: string;
+  /**
+   * The parent UTXO's constant value (sats). Every reveal returns exactly this much to
+   * `collectionAddress` in output 0, and the browser signs that output up front (0x81, ADR-0005).
+   * The worker refuses to reveal on a parent UTXO whose value differs.
+   */
+  parentValueSats: number;
   serviceFeeAddress: string | null;
   maxUploadBytes: number;
   /** Standard lane: max reveals in flight (revealing + revealed-unconfirmed). <= 24 (mempool chain limit). */

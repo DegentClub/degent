@@ -4,20 +4,32 @@
  *
  *   openOrder:        K_e generated → POST /orders (pubkey only) → PUT content → wait for review
  *   verifyCommit:     recompute commit address locally; must equal the service's quote
- *   preparePayment:   UTXOs → funding PSBT + txid → half-signed reveal → POST reveal
- *                     → save recovery bundle → discard K_e
+ *   preparePayment:   UTXOs → funding PSBT + txid → half-signed reveal (0x81, parent return signed
+ *                     up front) → POST reveal → save recovery bundle (WITH K_e) → discard K_e from memory
  *   signAndBroadcast: wallet signs funding PSBT → txid re-checked → broadcast
+ *   rescue:           GET /rescue inputs (or the bundle alone) → re-sign [commit] → [child] with K_e
+ *                     from the bundle → broadcast
  *
  * Nothing asks the wallet to sign before the reveal is stored server-side AND the recovery bundle
  * is saved locally, so funds can never be sent to a commit address nobody can spend from.
  */
-import type { CollectionConfig, Network, Order, Tier } from '@bsh/degent-mint-sdk';
-import type { Services, WalletSession, RescueTx } from '../services/types';
+import type { Network, Order, RescueInputs, ServiceConfig, Tier } from '@bsh/degent-mint-sdk';
+import { laneForWeight, type Lane } from '@bsh/degent-mint-sdk';
+import { hex } from '@scure/base';
+import type { Services, WalletSession, RescueTx, InscriptionContentInput } from '../services/types';
 import type { AppConfig } from '../config';
 import type { Artwork } from './state';
 import type { KeyVault } from './keyVault';
 import { buildFundingPsbt, extractSignedTx, type FundingPsbt } from '../lib/funding';
-import { RECOVERY_NOTE, RECOVERY_WARNING, saveRecovery, type KeyValueStore, type RecoveryBundle } from '../lib/recovery';
+import {
+  base64ToBytes,
+  bytesToBase64,
+  RECOVERY_NOTE,
+  RECOVERY_WARNING,
+  saveRecovery,
+  type KeyValueStore,
+  type RecoveryBundle,
+} from '../lib/recovery';
 
 export class MissingTokenError extends Error {
   constructor() {
@@ -38,6 +50,26 @@ function requireToken(vault: KeyVault, orderId: string): string {
 
 export type Sleep = (ms: number) => Promise<void>;
 export const realSleep: Sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function envelopeContent(artwork: Pick<Artwork, 'contentType' | 'bytes'>, parentInscriptionId: string | null): InscriptionContentInput {
+  return {
+    contentType: artwork.contentType,
+    body: artwork.bytes,
+    ...(parentInscriptionId ? { parentId: parentInscriptionId } : {}),
+  };
+}
+
+/**
+ * Exact lane the reveal of this artwork will travel (ADR-0005 §3): decided by weight, not by tier.
+ * A Standard Degent of ~397-400 KB comes back as 'block'.
+ */
+export function laneForArtwork(
+  services: Services,
+  args: { artwork: Pick<Artwork, 'contentType' | 'bytes'>; recipientAddress: string; config: Pick<ServiceConfig, 'parentInscriptionId'>; network: Network },
+): { weight: number; lane: Lane | null } {
+  const weight = services.inscription.revealWeight(envelopeContent(args.artwork, args.config.parentInscriptionId), args.recipientAddress, args.network);
+  return { weight, lane: laneForWeight(weight) };
+}
 
 export async function openOrder(
   deps: { services: Services; vault: KeyVault; sleep?: Sleep; pollMs?: number; maxPolls?: number },
@@ -71,18 +103,17 @@ export async function openOrder(
 
 export function verifyCommit(
   services: Services,
-  args: { order: Order; artwork: Artwork; config: CollectionConfig; network: Network },
+  args: { order: Order; artwork: Artwork; config: Pick<ServiceConfig, 'parentInscriptionId'>; network: Network },
 ): { localAddress: string; match: boolean } {
   if (!args.order.quote) throw new Error('No quote on this order yet.');
   if (args.artwork.sha256 !== args.order.contentSha256) {
     return { localAddress: '(content hash differs from order)', match: false };
   }
-  const content = {
-    contentType: args.artwork.contentType,
-    body: args.artwork.bytes,
-    ...(args.config.parentInscriptionId ? { parentId: args.config.parentInscriptionId } : {}),
-  };
-  const localAddress = services.inscription.commitAddress(args.order.revealPubkey, content, args.network);
+  const localAddress = services.inscription.commitAddress(
+    args.order.revealPubkey,
+    envelopeContent(args.artwork, args.config.parentInscriptionId),
+    args.network,
+  );
   // An indicative quote (no commit address yet) can never be "verified".
   const serviceAddress = args.order.quote.binding ? args.order.quote.commitAddress : null;
   return { localAddress, match: serviceAddress !== null && localAddress === serviceAddress };
@@ -106,17 +137,20 @@ export async function preparePayment(
     order: Order;
     artwork: Artwork;
     wallet: WalletSession;
-    config: CollectionConfig;
+    config: ServiceConfig;
     onPhase?: (p: PreparePhase) => void;
   },
 ): Promise<{ funding: FundingPsbt; bundle: RecoveryBundle; order: Order; savedLocally: boolean }> {
-  const { order, wallet } = args;
+  const { order, wallet, config } = args;
   const quote = order.quote;
   if (!quote || !quote.binding || !quote.commitAddress) throw new Error('No binding quote on this order.');
   const commitAddress = quote.commitAddress;
   const privkey = deps.vault.get(order.id);
   if (!privkey) throw new MissingKeyError();
   const orderToken = requireToken(deps.vault, order.id);
+  if (!config.collectionAddress || !Number.isSafeInteger(config.parentValueSats) || config.parentValueSats <= 0) {
+    throw new Error('The service config has no collection address / parent value: the reveal cannot be signed.');
+  }
   const { chain, inscription, mintApi } = deps.services;
 
   args.onPhase?.('fetching-utxos');
@@ -139,18 +173,19 @@ export async function preparePayment(
         : null,
     feeRate: quote.feeRate,
   });
+  // ADR-0005 §1: SIGHASH_ALL|ANYONECANPAY over [parent return, child]. Output 0 is signed up front to
+  // the collection address with the parent's constant value, so nobody holding the PSBT can add,
+  // swap or resize an output.
   const reveal = inscription.buildHalfSignedReveal({
     network: deps.app.network,
     revealPrivkey: privkey,
-    content: {
-      contentType: args.artwork.contentType,
-      body: args.artwork.bytes,
-      ...(args.config.parentInscriptionId ? { parentId: args.config.parentInscriptionId } : {}),
-    },
+    content: envelopeContent(args.artwork, config.parentInscriptionId),
     commitOutpoint: { txid: funding.txid, vout: funding.commitVout },
     commitValue: BigInt(quote.commitValueSats),
     recipientAddress: order.recipientAddress,
     postage: BigInt(quote.postageSats),
+    parentReturnAddress: config.collectionAddress,
+    parentValue: BigInt(config.parentValueSats),
   });
 
   args.onPhase?.('submitting-reveal');
@@ -161,9 +196,10 @@ export async function preparePayment(
     commitAddress,
   });
 
+  // ADR-0005 §2: the user keeps K_e. It only ever controls the commit output funded below.
   const bundle: RecoveryBundle = {
     kind: 'degent.club/recovery',
-    version: 1,
+    version: 2,
     orderId: order.id,
     network: deps.app.network,
     mintApiUrl: deps.app.mintApiUrl,
@@ -172,15 +208,21 @@ export async function preparePayment(
     commitVout: funding.commitVout,
     commitValueSats: quote.commitValueSats,
     recipientAddress: order.recipientAddress,
+    postageSats: quote.postageSats,
     contentType: order.contentType,
     contentSha256: order.contentSha256,
-    halfSignedRevealPsbt: reveal.psbtBase64,
+    contentBase64: bytesToBase64(args.artwork.bytes),
+    parentInscriptionId: config.parentInscriptionId,
+    collectionAddress: config.collectionAddress,
+    parentValueSats: config.parentValueSats,
+    revealPrivkey: hex.encode(privkey),
+    revealPubkey: order.revealPubkey,
     orderToken,
     note: RECOVERY_NOTE,
     warning: RECOVERY_WARNING,
   };
   const savedLocally = saveRecovery(bundle, deps.store);
-  // The reveal is signed and stored in two places; K_e has no further purpose.
+  // The reveal is signed and stored; K_e now lives in the bundle only, not in this tab's memory.
   deps.vault.discard(order.id);
   args.onPhase?.('recovery-saved');
   return { funding, bundle, order: updated, savedLocally };
@@ -211,16 +253,34 @@ export async function signAndBroadcast(
     finalize: true,
     broadcast: false,
   });
-  const { hex, txid } = extractSignedTx(signed.psbtBase64);
+  const { hex: rawHex, txid } = extractSignedTx(signed.psbtBase64);
   if (txid !== args.funding.txid) throw new FundingTxidMismatchError(args.funding.txid, txid);
   args.onPhase?.('broadcasting');
-  const pushed = args.wallet.pushTx ? await args.wallet.pushTx(hex) : await deps.services.chain.broadcast(hex);
+  const pushed = args.wallet.pushTx ? await args.wallet.pushTx(rawHex) : await deps.services.chain.broadcast(rawHex);
   return pushed || txid;
 }
 
+export class MissingBundleError extends Error {
+  constructor() {
+    super(
+      'Self-rescue needs your recovery bundle: it holds the one-time reveal key that can spend your commit ' +
+        'output. Paste the bundle you saved when you paid. Without it nobody, including the mint, can move those sats.',
+    );
+    this.name = 'MissingBundleError';
+  }
+}
+
+export class RescueInputsMismatchError extends Error {
+  constructor(field: string) {
+    super(`The mint’s rescue inputs disagree with your recovery bundle (${field}). Refusing to sign; check the bundle.`);
+    this.name = 'RescueInputsMismatchError';
+  }
+}
+
 /**
- * Self-rescue (ADR-0002 §2): prefer the service's rescue transaction; if the service is gone, build
- * it locally from the recovery bundle. Broadcast via the wallet if it can relay, else esplora.
+ * Self-rescue (ADR-0005 §2). The service returns INPUTS (it holds nothing broadcastable without the
+ * parent); the transaction is built and signed HERE with K_e from the recovery bundle, so the rescue
+ * works with or without the service. When both are available they must agree.
  */
 export async function rescue(
   deps: { services: Services },
@@ -230,23 +290,46 @@ export async function rescue(
     bundle: RecoveryBundle | null;
     wallet: WalletSession | null;
     network: Network;
+    /** Local bytes, if still in memory; otherwise the bundle's copy is used. */
+    artwork?: Pick<Artwork, 'bytes' | 'sha256'> | null;
   },
-): Promise<{ txid: string; source: 'service' | 'local' }> {
-  let tx: RescueTx;
-  let source: 'service' | 'local' = 'service';
-  const token = args.orderToken ?? args.bundle?.orderToken ?? null;
+): Promise<{ txid: string; source: 'service' | 'local'; tx: RescueTx }> {
+  const { bundle } = args;
+  if (!bundle) throw new MissingBundleError();
+  const token = args.orderToken ?? bundle.orderToken ?? null;
+  let inputs: RescueInputs | null = null;
   try {
     if (!token) throw new MissingTokenError();
-    tx = await deps.services.mintApi.getRescue(args.orderId, token);
+    inputs = await deps.services.mintApi.getRescue(args.orderId, token);
   } catch (e) {
-    // The half-signed reveal alone is enough to rescue; the token is only needed for the service path.
-    if (!args.bundle) throw e;
-    tx = deps.services.inscription.buildRescueReveal({
-      network: args.network,
-      halfSignedPsbtBase64: args.bundle.halfSignedRevealPsbt,
-    });
-    source = 'local';
+    // Service gone: the bundle alone is enough. A 409 (not rescue_available) is a real answer though.
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/409|rescue_unavailable/.test(msg)) throw e;
+    inputs = null;
   }
+  if (inputs) {
+    const check: Array<[string, unknown, unknown]> = [
+      ['commitTxid', inputs.commitTxid, bundle.commitTxid],
+      ['commitVout', inputs.commitVout, bundle.commitVout],
+      ['commitValueSats', inputs.commitValueSats, bundle.commitValueSats],
+      ['contentSha256', inputs.contentSha256, bundle.contentSha256],
+      ['recipientAddress', inputs.recipientAddress, bundle.recipientAddress],
+      ['postageSats', inputs.postageSats, bundle.postageSats],
+      ['revealPubkey', inputs.revealPubkey, bundle.revealPubkey],
+    ];
+    for (const [field, a, b] of check) if (a !== b) throw new RescueInputsMismatchError(field);
+  }
+  const bytes = args.artwork && args.artwork.sha256 === bundle.contentSha256 ? args.artwork.bytes : base64ToBytes(bundle.contentBase64);
+  if (deps.services.inscription.sha256Hex(bytes) !== bundle.contentSha256) throw new RescueInputsMismatchError('content bytes');
+  const tx = deps.services.inscription.buildResignedRescue({
+    network: args.network,
+    revealPrivkey: hex.decode(bundle.revealPrivkey),
+    content: envelopeContent({ contentType: bundle.contentType, bytes }, bundle.parentInscriptionId),
+    commitOutpoint: { txid: bundle.commitTxid, vout: bundle.commitVout },
+    commitValue: BigInt(bundle.commitValueSats),
+    recipientAddress: bundle.recipientAddress,
+    postage: BigInt(bundle.postageSats),
+  });
   const txid = args.wallet?.pushTx ? await args.wallet.pushTx(tx.hex) : await deps.services.chain.broadcast(tx.hex);
-  return { txid: txid || tx.txid, source };
+  return { txid: txid || tx.txid, source: inputs ? 'service' : 'local', tx };
 }

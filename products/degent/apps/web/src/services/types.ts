@@ -9,6 +9,7 @@ import type {
   CreateOrderRequest,
   Network,
   Order,
+  RescueInputs,
   SubmitRevealRequest,
 } from '@bsh/degent-mint-sdk';
 
@@ -39,6 +40,9 @@ export interface QueueSnapshot {
 export interface RescueTx {
   hex: string;
   txid: string;
+  /** Exact weight (WU) and fee (sats) of the re-signed rescue. */
+  weight: number;
+  fee: bigint;
 }
 
 /**
@@ -61,8 +65,11 @@ export interface MintApi {
   /** POST /v1/orders/{id}/reveal with the half-signed reveal. */
   submitReveal(orderId: string, orderToken: string, req: SubmitRevealRequest): Promise<Order>;
   getOrder(orderId: string): Promise<Order>;
-  /** GET /v1/orders/{id}/rescue: the parent-less [commit] -> [child] reveal, fully signed. */
-  getRescue(orderId: string, orderToken: string): Promise<RescueTx>;
+  /**
+   * GET /v1/orders/{id}/rescue (ADR-0005 §2): the INPUTS for a parent-less rescue. The transaction
+   * itself is built and signed here, in the browser, with K_e from the recovery bundle.
+   */
+  getRescue(orderId: string, orderToken: string): Promise<RescueInputs>;
 }
 
 // ---------------------------------------------------------------- wallet
@@ -147,6 +154,16 @@ export interface EphemeralKey {
 export interface InscriptionOps {
   generateEphemeralKey(): EphemeralKey;
   commitAddress(pubkeyHex: string, content: InscriptionContentInput, network: Network): string;
+  /**
+   * Exact weight (WU) of the parent-linked reveal for this content and recipient. The lane is decided
+   * from it (`laneForWeight`), so the UI can say before the quote that a 397-400 KB Standard Degent
+   * travels the block lane (ADR-0005 §3).
+   */
+  revealWeight(content: InscriptionContentInput, recipientAddress: string, network: Network): number;
+  /**
+   * ADR-0005 §1: `[commit] -> [parent return, child]`, commit input signed SIGHASH_ALL|ANYONECANPAY
+   * (0x81). `parentReturnAddress` / `parentValue` come from GET /v1/config and are signed up front.
+   */
   buildHalfSignedReveal(args: {
     network: Network;
     revealPrivkey: Uint8Array;
@@ -155,8 +172,22 @@ export interface InscriptionOps {
     commitValue: bigint;
     recipientAddress: string;
     postage: bigint;
+    parentReturnAddress: string;
+    parentValue: bigint;
   }): { psbtBase64: string };
-  buildRescueReveal(args: { network: Network; halfSignedPsbtBase64: string }): RescueTx;
+  /**
+   * ADR-0005 §2: self-rescue by re-signing `[commit] -> [child]` with K_e (SIGHASH_DEFAULT). K_e only
+   * ever controls the user's own commit output.
+   */
+  buildResignedRescue(args: {
+    network: Network;
+    revealPrivkey: Uint8Array;
+    content: InscriptionContentInput;
+    commitOutpoint: { txid: string; vout: number };
+    commitValue: bigint;
+    recipientAddress: string;
+    postage: bigint;
+  }): RescueTx;
   sha256Hex(bytes: Uint8Array): string;
 }
 

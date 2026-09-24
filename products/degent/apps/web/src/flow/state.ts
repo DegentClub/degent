@@ -1,4 +1,4 @@
-import type { CollectionConfig, Order, Tier } from '@bsh/degent-mint-sdk';
+import type { Order, ServiceConfig, Tier } from '@bsh/degent-mint-sdk';
 import type { FeeSnapshot, QueueSnapshot, WalletSession } from '../services/types';
 import type { RecoveryBundle } from '../lib/recovery';
 import type { FundingPsbt } from '../lib/funding';
@@ -54,7 +54,8 @@ export type CommitCheck = 'unchecked' | 'match' | 'mismatch';
 
 export interface FlowState {
   step: Step;
-  config: CollectionConfig | null;
+  /** GET /v1/config: rules plus collectionAddress / parentValueSats (needed to sign the reveal). */
+  config: ServiceConfig | null;
   fees: FeeSnapshot | null;
   queue: QueueSnapshot | null;
   wallet: WalletSession | null;

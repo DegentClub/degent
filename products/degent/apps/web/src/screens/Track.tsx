@@ -5,7 +5,7 @@ import { rescue } from '../flow/effects';
 import { ScreenHeading } from '../components/ScreenHeading';
 import { Alert, Badge, Button, CopyBlock, ExternalLink, Mono, Panel, errorText, useObjectUrl } from '../components/ui';
 import { buildTimeline, isTerminal, STATUS_COPY } from '../lib/timeline';
-import { clearRecovery, recoveryJson } from '../lib/recovery';
+import { clearRecovery, parseRecovery, recoveryJson } from '../lib/recovery';
 import { formatTimestamp, shortHash } from '../lib/format';
 
 type HashCheck = { state: 'idle' | 'checking' } | { state: 'match' | 'mismatch'; onChain: string } | { state: 'error'; message: string };
@@ -51,6 +51,8 @@ export function Track() {
   const [rescueState, setRescueState] = useState<
     { state: 'idle' | 'busy' } | { state: 'done'; txid: string; source: 'service' | 'local' } | { state: 'error'; message: string }
   >({ state: 'idle' });
+  const [pasted, setPasted] = useState('');
+  const [pasteError, setPasteError] = useState<string | null>(null);
 
   // Poll the order until it reaches a terminal state.
   useEffect(() => {
@@ -113,9 +115,10 @@ export function Track() {
           bundle: state.recovery,
           wallet: state.wallet,
           network: app.network,
+          artwork: state.artwork,
         },
       );
-      setRescueState({ state: 'done', ...r });
+      setRescueState({ state: 'done', txid: r.txid, source: r.source });
     } catch (e) {
       setRescueState({ state: 'error', message: errorText(e) });
     }
@@ -166,8 +169,17 @@ export function Track() {
         </p>
         {order?.queue && order.queue.position !== null ? (
           <p className="small">
-            Queue: position <span className="mono">{order.queue.position}</span> in the {order.queue.lane} lane · ETA{' '}
-            <span className="mono">~{order.queue.etaMinutes ?? '?'} min</span>
+            {order.queue.lane === 'block' ? (
+              <>
+                Block lane: block slot <span className="mono">{order.queue.position}</span> (shared by weight, a Full Block Degent
+                alone) · ETA <span className="mono">~{order.queue.etaMinutes ?? '?'} min</span>
+              </>
+            ) : (
+              <>
+                Standard lane: position <span className="mono">{order.queue.position}</span> · ETA{' '}
+                <span className="mono">~{order.queue.etaMinutes ?? '?'} min</span>
+              </>
+            )}
           </p>
         ) : null}
         {order ? <Timeline order={order} explorerUrl={app.explorerUrl} /> : null}
@@ -176,16 +188,50 @@ export function Track() {
       {order?.status === 'rescue_available' ? (
         <Panel title="Rescue your Degent" kicker="Self-custody, as promised">
           <p>
-            The mint has not revealed your Degent in time. Your pre-signed reveal was signed with{' '}
-            <Mono>SIGHASH_SINGLE | ANYONECANPAY</Mono>, so the same signature also works in a simple one-input, one-output
-            transaction: <em>commit → your ordinals address</em>. Broadcasting it lands the inscription now, without the
-            on-chain parent link to the collection. Your sats and your art are never stranded.
+            The mint has not revealed your Degent in time. Your reveal was signed with{' '}
+            <Mono>SIGHASH_ALL | ANYONECANPAY</Mono>, which pins every output (that is what stops anyone redirecting it), so
+            a rescue is a <em>fresh</em> one-input, one-output transaction — <em>commit → your ordinals address</em> — signed
+            right here with the one-time key from your recovery bundle. The mint only supplies the order facts and cannot
+            sign anything. Broadcasting it lands the inscription now, without the on-chain parent link to the collection.
+            Your sats and your art are never stranded.
           </p>
           {!state.recovery ? (
-            <p className="small muted">No local recovery bundle on this device: the mint’s rescue endpoint will be used.</p>
+            <div className="field">
+              <label htmlFor="paste-bundle" className="label">
+                No recovery bundle on this device — paste the one you saved when you paid
+              </label>
+              <textarea
+                id="paste-bundle"
+                className="copyblock__text mono"
+                rows={6}
+                value={pasted}
+                onChange={(e) => setPasted(e.currentTarget.value)}
+                spellCheck={false}
+              />
+              <div className="row">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    const b = parseRecovery(pasted);
+                    if (!b) return setPasteError('That is not a degent.club recovery bundle (version 2).');
+                    if (b.orderId !== orderId) return setPasteError(`That bundle is for order ${b.orderId}, not ${orderId}.`);
+                    setPasteError(null);
+                    dispatch({ type: 'RESUME', bundle: b });
+                  }}
+                >
+                  Use this bundle
+                </Button>
+                {pasteError ? <span role="alert" className="small">{pasteError}</span> : null}
+              </div>
+            </div>
           ) : null}
           <div className="actions">
-            <Button variant="danger" busy={rescueState.state === 'busy'} disabled={rescueState.state === 'done'} onClick={() => void doRescue()}>
+            <Button
+              variant="danger"
+              busy={rescueState.state === 'busy'}
+              disabled={rescueState.state === 'done' || !state.recovery}
+              onClick={() => void doRescue()}
+            >
               Rescue now (reveal without parent)
             </Button>
           </div>
@@ -193,7 +239,9 @@ export function Track() {
             {rescueState.state === 'done' ? (
               <Alert tone="good" title="Rescue broadcast">
                 Reveal tx <ExternalLink href={`${app.explorerUrl}/tx/${rescueState.txid}`}>{rescueState.txid}</ExternalLink>
-                {rescueState.source === 'local' ? ' — built in your browser from the recovery bundle.' : ' — built by the mint service.'}
+                {rescueState.source === 'local'
+                  ? ' — signed in your browser from the recovery bundle alone (the mint was unreachable).'
+                  : ' — signed in your browser with your key; the mint supplied the order facts and they matched your bundle.'}
               </Alert>
             ) : null}
             {rescueState.state === 'error' ? <Alert tone="bad" title="Rescue failed">{rescueState.message}</Alert> : null}

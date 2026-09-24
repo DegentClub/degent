@@ -136,10 +136,13 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
     problems.push('REVEAL_ENCRYPTION_KEY must be 32 bytes of hex (64 characters)');
   if (!revealEncryptionKey && !dev) problems.push(`REVEAL_ENCRYPTION_KEY is required on ${net} (dev default is regtest-only)`);
 
+  const parentValueSats = int('PARENT_VALUE_SATS', 10_000, 330, 100_000_000);
+
   const serviceFeeAddress = str('SERVICE_FEE_ADDRESS');
   const feeStd = int('SERVICE_FEE_SATS_STANDARD', 0, 0, 10_000_000);
-  const feeBlk = int('SERVICE_FEE_SATS_BLOCK', 0, 0, 10_000_000);
-  if ((feeStd > 0 || feeBlk > 0) && !serviceFeeAddress) problems.push('SERVICE_FEE_ADDRESS is required when a service fee is set');
+  const feeLarge = int('SERVICE_FEE_SATS_LARGE', 0, 0, 10_000_000);
+  const feeFull = int('SERVICE_FEE_SATS_FULLBLOCK', 0, 0, 10_000_000);
+  if ((feeStd > 0 || feeLarge > 0 || feeFull > 0) && !serviceFeeAddress) problems.push('SERVICE_FEE_ADDRESS is required when a service fee is set');
   if (serviceFeeAddress && addressKind(serviceFeeAddress, net) === null) problems.push(`SERVICE_FEE_ADDRESS is not a ${net} address`);
 
   const corsOrigins = (str('CORS_ORIGINS') ?? '')
@@ -171,9 +174,10 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
         minFeeRate,
         quoteTtlSeconds,
         rescueAfterSeconds,
-        serviceFeeSats: { standard: feeStd, block: feeBlk },
+        serviceFeeSats: { standard: feeStd, large: feeLarge, fullblock: feeFull },
       } satisfies CollectionConfig,
       collectionAddress: collectionAddress ?? '',
+      parentValueSats,
       serviceFeeAddress,
       maxUploadBytes: MAX_UPLOAD_BYTES,
       standardConcurrency,

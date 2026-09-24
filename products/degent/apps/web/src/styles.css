@@ -41,6 +41,8 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  /* Solid canvas under everything: long pages never show the UA's default dark grey. */
+  background-color: var(--lacquer-0);
 }
 
 body {
@@ -50,13 +52,26 @@ body {
   font-size: 16px;
   line-height: 1.55;
   color: var(--ivory);
+  background: transparent;
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * The lacquer backdrop lives on a fixed layer instead of `background-attachment: fixed` on body:
+ * that combination painted a viewport-sized band with hard edges on long pages (seen in the first
+ * real-browser renders) and is ignored by iOS Safari.
+ */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
   background:
     radial-gradient(1200px 600px at 80% -10%, rgba(201, 165, 90, 0.1), transparent 60%),
     radial-gradient(900px 700px at -10% 30%, rgba(22, 54, 39, 0.9), transparent 70%),
     repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.012) 0 1px, transparent 1px 7px),
     linear-gradient(180deg, var(--lacquer-1), var(--lacquer-0) 70%);
-  background-attachment: fixed;
-  -webkit-font-smoothing: antialiased;
 }
 
 #root {
@@ -683,7 +698,7 @@ details.panel summary {
 
 .tiers {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 20px;
 }
 
@@ -692,6 +707,13 @@ details.panel summary {
   border-radius: var(--radius);
   border: 1px solid var(--line);
   background: linear-gradient(160deg, rgba(22, 54, 39, 0.8), rgba(7, 19, 14, 0.9));
+}
+
+.tier--large {
+  border-color: var(--line);
+  background:
+    radial-gradient(400px 200px at 100% 0%, rgba(201, 165, 90, 0.08), transparent 70%),
+    linear-gradient(160deg, rgba(22, 54, 39, 0.8), rgba(7, 19, 14, 0.9));
 }
 
 .tier--block {
@@ -1404,6 +1426,25 @@ input[type='range'] {
     grid-template-columns: 1fr 1fr;
   }
 
+  /* All seven steps fit at 360-400 px without a clipped, scrolled-off last step. */
+  .progress ol {
+    gap: 2px;
+  }
+  .progress__btn {
+    padding: 8px 6px 10px;
+    gap: 6px;
+  }
+
+  /* A wrapped segmented control cannot stay a pill: stack it as a rounded list. */
+  .seg {
+    display: grid;
+    width: 100%;
+    border-radius: 14px;
+  }
+  .seg label {
+    border-radius: 10px;
+  }
+
   .header__tag {
     display: none;
   }
@@ -1426,4 +1467,15 @@ input[type='range'] {
   .badge {
     border: 1px solid CanvasText;
   }
+}
+
+/* Funding outputs on Pay: keep each shortened address on one line (it split at the ellipsis at 400 px). */
+.plain li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+.plain .mono {
+  white-space: nowrap;
 }

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMint } from '../flow/context';
-import { openOrder } from '../flow/effects';
+import { laneForArtwork, openOrder } from '../flow/effects';
 import { ScreenHeading } from '../components/ScreenHeading';
 import { Alert, Badge, Button, Panel, errorText } from '../components/ui';
 import { allPassed, runLocalRules, type RuleCheck } from '../lib/rules';
@@ -40,9 +40,13 @@ export function Validate() {
   const review = order?.review ?? null;
   const reviewing = busy || order?.status === 'reviewing' || order?.status === 'awaiting_content';
 
+  // Block-lane reveals (by weight, ADR-0005 §3) default to the block-lane fee recommendation.
+  const lane = state.wallet
+    ? laneForArtwork(services, { artwork: art, recipientAddress: state.wallet.ordinals.address, config, network: app.network }).lane
+    : null;
   const defaultRate =
     state.feeRate ??
-    (state.tier === 'block' ? state.fees?.blockRecommended : undefined) ??
+    (lane === 'block' ? state.fees?.blockRecommended : undefined) ??
     state.fees?.normal ??
     config.minFeeRate;
 

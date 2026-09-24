@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-23T21:10:37.931Z",
+  "generatedAt": "2026-09-24T00:33:12.036Z",
   "schema": "schemas/component.schema.json",
   "components": [
     {
@@ -33,9 +33,34 @@
       "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
         "root": "deps/scribbit"
       }
+    },
+    {
+      "name": "degent-market",
+      "package": "@bsh/degent-market",
+      "kind": "library",
+      "product": "degent",
+      "owner": "team-degent",
+      "summary": "Non-custodial Degent marketplace transaction construction - seller 0x83 listings, buyer purchases with padding inputs so the inscription sat lands with the buyer.",
+      "lifecycle": "beta",
+      "depends_on": [],
+      "docs": "./README.md",
+      "commands": {
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "products/degent/packages/market",
+      "version": "0.1.0",
+      "scripts": {
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "docs": "products/degent/packages/market/README.md"
+      },
+      "dependents": []
     },
     {
       "name": "degent-mint",
@@ -154,6 +179,7 @@
       "scripts": {
         "build": "vite build",
         "dev": "vite",
+        "e2e": "vite build && node e2e/demo.e2e.mjs",
         "preview": "vite preview",
         "test": "vitest run",
         "typecheck": "tsc --noEmit -p ."
@@ -193,7 +219,7 @@
       "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
         "root": "deps/scribbit"
       }
     },
@@ -229,7 +255,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
         "root": "deps/scribbit"
       }
     },
@@ -262,7 +288,7 @@
       "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
         "root": "deps/scribbit"
       }
     },
@@ -272,7 +298,7 @@
       "kind": "library",
       "product": "platform",
       "owner": "team-platform",
-      "summary": "Ordinals envelope, commit/reveal construction with SIGHASH_SINGLE|ANYONECANPAY, exact weight and fee maths.",
+      "summary": "Ordinals envelope, commit/reveal construction with SIGHASH_ALL|ANYONECANPAY (0x83 legacy), exact weight and fee maths.",
       "lifecycle": "beta",
       "depends_on": [],
       "docs": "./README.md",
@@ -295,7 +321,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
         "root": "deps/scribbit"
       }
     },
@@ -327,7 +353,7 @@
       "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
         "root": "deps/scribbit"
       }
     },
@@ -359,7 +385,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
         "root": "deps/scribbit"
       }
     }
@@ -374,6 +400,7 @@
     "degent": {
       "path": "products/degent",
       "components": [
+        "degent-market",
         "degent-mint",
         "degent-mint-sdk",
         "degent-web"
@@ -383,7 +410,7 @@
       ],
       "kinds": {
         "app": 1,
-        "library": 1,
+        "library": 2,
         "service": 1
       }
     },
@@ -431,6 +458,13 @@
       "providers": [
         "degent-mint"
       ],
+      "consumers": []
+    },
+    {
+      "path": "contracts/openapi/degent-atelier.yaml",
+      "kind": "openapi",
+      "exists": true,
+      "providers": [],
       "consumers": []
     },
     {

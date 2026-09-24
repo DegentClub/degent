@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { fakes, renderApp, stateAtQuote, testApp } from './helpers';
+import { artworkOfSize, fakes, renderApp, stateAtQuote, testApp } from './helpers';
 import { formatBtc, formatSats } from '../src/lib/format';
 
 describe('Quote screen', () => {
@@ -37,17 +37,49 @@ describe('Quote screen', () => {
     expect(screen.queryByText(/Verified: matches service/)).not.toBeInTheDocument();
   });
 
-  it('Block Degents show queue position, ETA and a cost warning', async () => {
+  it('Large Degents show the block slot, ETA and a cost warning', async () => {
     const services = fakes({ images: { fullSize: 6_000_000, width: 3000, height: 3000 } });
     const app = testApp();
-    // stateAtQuote encodes at q=0.2 → ~1.4 MB, a Block-sized file.
-    const { state, vault } = await stateAtQuote(services, app, undefined, 'block');
+    // stateAtQuote encodes at q=0.2 → ~1.58 MB, a Large Degent.
+    const { state, vault } = await stateAtQuote(services, app, undefined, 'large');
+    expect(state.order!.tier).toBe('large');
     expect(state.order!.quote!.lane).toBe('block');
     renderApp(services, { initial: state, vault, app });
-    expect(await screen.findByText('Block Degent: read this twice')).toBeInTheDocument();
-    expect(screen.getByText('4th in line')).toBeInTheDocument();
+    expect(await screen.findByText('Large Degent: read this twice')).toBeInTheDocument();
+    expect(screen.getByText(/Large Degent · block lane/)).toBeInTheDocument();
+    expect(screen.getByText('4th block')).toBeInTheDocument();
     expect(screen.getByText('~40 min')).toBeInTheDocument();
     expect(screen.getByText(/an estimate, not a promise/)).toBeInTheDocument();
+    expect(screen.queryByText(/travels the block lane/)).not.toBeInTheDocument();
+  });
+
+  it('Full Block Degents say they take a block alone', async () => {
+    const services = fakes({ images: { fullSize: 6_000_000, width: 3000, height: 3000 } });
+    const app = testApp();
+    const art = await artworkOfSize(services, 3_600_000, 6_000_000);
+    expect(art.size).toBeGreaterThanOrEqual(3_500_000);
+    const { state, vault } = await stateAtQuote(services, app, undefined, 'fullblock', art);
+    expect(state.order!.tier).toBe('fullblock');
+    renderApp(services, { initial: state, vault, app });
+    expect(await screen.findByText('Full Block Degent: read this twice')).toBeInTheDocument();
+    expect(screen.getByText('Block lane (a block of its own)')).toBeInTheDocument();
+  });
+
+  it('a Standard Degent of ~398 KB is quoted honestly on the block lane', async () => {
+    const services = fakes();
+    const app = testApp();
+    const art = await artworkOfSize(services, 398_000);
+    expect(art.size).toBeGreaterThanOrEqual(397_000);
+    expect(art.size).toBeLessThanOrEqual(400_000);
+    const { state, vault } = await stateAtQuote(services, app, undefined, 'standard', art);
+    expect(state.order!.tier).toBe('standard');
+    expect(state.order!.quote!.lane).toBe('block');
+    renderApp(services, { initial: state, vault, app });
+    expect(await screen.findByText('Your Standard Degent travels the block lane')).toBeInTheDocument();
+    expect(screen.getByText(/Standard Degent · block lane/)).toBeInTheDocument();
+    expect(screen.getByText(/over the 400,000 WU limit/)).toBeInTheDocument();
+    expect(screen.getByText('4th block')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Continue to Pay' })).toBeEnabled();
   });
 
   it('custom fee rate is clamped to the minimum and requires a re-quote before paying', async () => {

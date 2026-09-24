@@ -17,8 +17,10 @@ import type {
   Order,
   OrderStatus,
   Quote,
+  RescueInputs,
   SubmitRevealRequest,
 } from '@bsh/degent-mint-sdk';
+import { BLOCK_LANE_WEIGHT_BUDGET, laneForWeight, TIER_LABELS } from '@bsh/degent-mint-sdk';
 import type {
   ChainApi,
   EncodedImage,
@@ -28,7 +30,6 @@ import type {
   InscriptionOps,
   MintApi,
   QueueSnapshot,
-  RescueTx,
   Services,
   SourceImage,
   Utxo,
@@ -50,7 +51,8 @@ export type CallLog = string[];
 export function demoConfig(network: Network): ServiceConfig {
   return {
     network,
-    collectionAddress: fakeAddress('degent-collection', network),
+    collectionAddress: fakeCollectionAddress(network),
+    parentValueSats: 10_000,
     serviceFeeAddress: fakeAddress('degent-service-fee', network),
     maxUploadBytes: 4 * 1024 * 1024,
     collectionName: 'Decentralized Gentlemen Club',
@@ -60,24 +62,35 @@ export function demoConfig(network: Network): ServiceConfig {
       {
         tier: 'standard',
         minBytes: 200_000,
-        maxBytes: 390_000,
+        maxBytes: 400_000,
         lane: 'standard',
-        label: 'Standard Degent',
-        description: 'Relays through the normal mempool. Many per block.',
+        sharesBlock: true,
+        label: TIER_LABELS.standard,
+        description: 'Usually relays through the normal mempool, many per block. The last few KB of the range travel the block lane.',
       },
       {
-        tier: 'block',
-        minBytes: 390_001,
+        tier: 'large',
+        minBytes: 400_001,
+        maxBytes: 3_499_999,
+        lane: 'block',
+        sharesBlock: true,
+        label: TIER_LABELS.large,
+        description: 'Non-standard relay. Shares a block with other Large Degents when their weights fit the budget.',
+      },
+      {
+        tier: 'fullblock',
+        minBytes: 3_500_000,
         maxBytes: 3_900_000,
         lane: 'block',
-        label: 'Block Degent',
-        description: 'Fills (almost) an entire block. One per block, non-standard relay.',
+        sharesBlock: false,
+        label: TIER_LABELS.fullblock,
+        description: 'Fills a Bitcoin block on its own. Always revealed alone.',
       },
     ],
     maxDimensionPx: 4096,
     minDimensionPx: 500,
     postageSats: 546,
-    serviceFeeSats: { standard: 25_000, block: 250_000 },
+    serviceFeeSats: { standard: 25_000, large: 100_000, fullblock: 250_000 },
     minFeeRate: 1,
     quoteTtlSeconds: 900,
     rescueAfterSeconds: 6 * 3600,
@@ -106,6 +119,22 @@ export function fakeAddress(label: string, network: Network): string {
   return btc.p2wpkh(pub, scureNetwork(network)).address!;
 }
 
+/** The collection (parent) address is taproot, like the real one. */
+export function fakeCollectionAddress(network: Network): string {
+  return btc.p2tr(validXOnly(enc.encode('degent-collection')), undefined, scureNetwork(network)).address!;
+}
+
+/**
+ * Simulated reveal weight, calibrated to the @bsh/inscription README table (parent-linked, P2TR):
+ * body bytes + 3 WU per 520-byte PUSHDATA2 chunk + 966 WU of envelope/tx overhead + content type.
+ * 390,000 B -> 393,226 WU, 400,000 B -> 403,286 WU (real: 393,226 / 403,285), so the lane boundary
+ * (~396,700 bytes) falls where the real maths puts it. Never used for real money.
+ */
+export function fakeRevealWeight(contentLength: number, contentType: string): number {
+  const chunks = Math.ceil(contentLength / 520);
+  return contentLength + chunks * 3 + 966 + contentType.length;
+}
+
 export function createFakeInscription(log: CallLog = []): InscriptionOps {
   return {
     generateEphemeralKey() {
@@ -117,24 +146,39 @@ export function createFakeInscription(log: CallLog = []): InscriptionOps {
       log.push('inscription.commitAddress');
       return fakeCommitAddress(pubkeyHex, sha256Hex(content.body), content.contentType, content.parentId, network);
     },
+    revealWeight(content) {
+      return fakeRevealWeight(content.body.length, content.contentType);
+    },
     buildHalfSignedReveal(args) {
       log.push('inscription.buildHalfSignedReveal');
       if (args.revealPrivkey.every((b) => b === 0)) throw new Error('reveal key was wiped');
+      // Same preconditions as @bsh/inscription for 0x81 with a parent.
+      if (!args.parentReturnAddress) throw new Error('parentReturnAddress is required for sighash all_anyonecanpay with a parent');
+      if (typeof args.parentValue !== 'bigint' || args.parentValue <= 0n) throw new Error('parentValue must be a positive bigint');
       const payload = {
         simulated: true,
         commit: args.commitOutpoint,
         commitValue: args.commitValue.toString(),
-        recipient: args.recipientAddress,
-        postage: args.postage.toString(),
-        sighash: '0x83',
+        outputs: [
+          { address: args.parentReturnAddress, value: args.parentValue.toString() },
+          { address: args.recipientAddress, value: args.postage.toString() },
+        ],
+        sighash: '0x81',
         contentSha256: sha256Hex(args.content.body),
       };
       return { psbtBase64: base64.encode(enc.encode(JSON.stringify(payload))) };
     },
-    buildRescueReveal(args) {
-      log.push('inscription.buildRescueReveal');
-      const raw = sha256(enc.encode(`rescue|${args.halfSignedPsbtBase64}`));
-      return { hex: hex.encode(raw), txid: hex.encode(dsha(raw).reverse()) };
+    buildResignedRescue(args) {
+      log.push('inscription.buildResignedRescue');
+      if (args.revealPrivkey.length !== 32 || args.revealPrivkey.every((b) => b === 0)) throw new Error('reveal key missing');
+      if (args.commitValue <= args.postage) throw new Error('commitValue must exceed postage');
+      const raw = sha256(
+        enc.encode(
+          `rescue|${hex.encode(args.revealPrivkey)}|${args.commitOutpoint.txid}:${args.commitOutpoint.vout}|${args.commitValue}|${args.recipientAddress}|${args.postage}|${sha256Hex(args.content.body)}`,
+        ),
+      );
+      const weight = fakeRevealWeight(args.content.body.length, args.content.contentType) - 402 - 1;
+      return { hex: hex.encode(raw), txid: hex.encode(dsha(raw).reverse()), weight, fee: args.commitValue - args.postage };
     },
     sha256Hex,
   };
@@ -258,10 +302,11 @@ export function createFakeMintApi(
   };
 
   const quoteFor = (req: CreateOrderRequest): Quote => {
-    const tierRule = config.tiers.find((t) => t.tier === req.tier)!;
-    // Simulated weight: witness bytes weigh 1 WU; ~1,300 WU of non-witness overhead with parent.
-    const chunks = Math.ceil(req.contentLength / 520);
-    const revealWeight = req.contentLength + chunks * 2 + 1_300 + req.contentType.length;
+    if (!config.tiers.some((t) => t.tier === req.tier)) throw new Error(`422 validation_failed: unknown tier ${req.tier}`);
+    // ADR-0005 §3: the lane comes from the weight, not from the tier.
+    const revealWeight = fakeRevealWeight(req.contentLength, req.contentType);
+    const lane = laneForWeight(revealWeight);
+    if (!lane) throw new Error(`422 validation_failed: reveal weight ${revealWeight} exceeds every lane`);
     const revealVsize = Math.ceil(revealWeight / 4);
     const revealFeeSats = Math.ceil(revealVsize * req.feeRate);
     const serviceFeeSats = config.serviceFeeSats[req.tier];
@@ -276,7 +321,7 @@ export function createFakeMintApi(
     const queue = opts.queue ?? { blockLaneLength: 3, blockLaneEtaMinutes: 30, standardLaneLength: 14 };
     return {
       tier: req.tier,
-      lane: tierRule.lane,
+      lane,
       feeRate: req.feeRate,
       revealWeight,
       revealVsize,
@@ -288,10 +333,11 @@ export function createFakeMintApi(
       commitAddress: opts.tamperCommit ? fakeAddress('attacker-commit', opts.network) : commitAddress,
       binding: true,
       expiresAt: new Date(now() + config.quoteTtlSeconds * 1000).toISOString(),
-      queuePosition: req.tier === 'block' ? queue.blockLaneLength + 1 : null,
-      etaMinutes: req.tier === 'block' ? (queue.blockLaneLength + 1) * 10 : 10,
+      queuePosition: lane === 'block' ? queue.blockLaneLength + 1 : null,
+      etaMinutes: lane === 'block' ? (queue.blockLaneLength + 1) * 10 : 10,
     };
   };
+  void BLOCK_LANE_WEIGHT_BUDGET;
 
   return {
     orders,
@@ -399,15 +445,33 @@ export function createFakeMintApi(
       }
       return push(cur, next, undefined, txid);
     },
-    async getRescue(id, token) {
+    async getRescue(id, token): Promise<RescueInputs> {
       log.push('api.getRescue');
       if (opts.rescueEndpointDown) throw new Error('service unavailable');
       auth(id, token);
       const o = get(id);
-      const raw = sha256(enc.encode(`service-rescue|${id}`));
-      const tx: RescueTx = { hex: hex.encode(raw), txid: hex.encode(dsha(raw).reverse()) };
-      void o;
-      return tx;
+      if (o.status !== 'rescue_available') throw new Error(`409 rescue_unavailable: rescue is not available in status ${o.status}`);
+      const q = o.quote!;
+      const rescueWeight = fakeRevealWeight(o.contentLength, o.contentType) - 403;
+      const rescueFeeSats = q.commitValueSats - q.postageSats;
+      return {
+        orderId: id,
+        network: opts.network,
+        commitTxid: o.commitOutpoint!.txid,
+        commitVout: o.commitOutpoint!.vout,
+        commitValueSats: q.commitValueSats,
+        contentType: o.contentType,
+        contentLength: o.contentLength,
+        contentSha256: o.contentSha256,
+        parentInscriptionId: config.parentInscriptionId,
+        recipientAddress: o.recipientAddress,
+        revealPubkey: o.revealPubkey,
+        postageSats: q.postageSats,
+        rescueWeight,
+        rescueFeeSats,
+        rescueFeeRate: Math.round((rescueFeeSats / Math.ceil(rescueWeight / 4)) * 1000) / 1000,
+        suggestedFeeRate: (opts.fees ?? { normal: 4 }).normal,
+      };
     },
   };
 }
@@ -478,7 +542,12 @@ export function createFakeWallets(log: CallLog = [], opts: FakeWalletOptions = {
       if (opts.withPushTx) {
         session.pushTx = async (txHex: string) => {
           log.push('wallet.pushTx');
-          return btc.Transaction.fromRaw(hex.decode(txHex), { allowUnknownOutputs: true }).id;
+          const raw = hex.decode(txHex);
+          try {
+            return btc.Transaction.fromRaw(raw, { allowUnknownOutputs: true }).id;
+          } catch {
+            return hex.encode(dsha(raw).reverse()); // simulated (non-parseable) rescue hex
+          }
         };
       }
       return session;

@@ -6,9 +6,9 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { p2tr } from '@scure/btc-signer';
-import { addressToScript, buildHalfSignedReveal, commitAddress, networkParams } from '@bsh/inscription';
-import type { CreateOrderResponse, Order, Tier } from '@bsh/degent-mint-sdk';
-import { DEFAULT_CONFIG, MAX_UPLOAD_BYTES, sha256Hex } from '@bsh/degent-mint-sdk';
+import { addressToScript, buildHalfSignedReveal, buildResignedRescue, commitAddress, networkParams } from '@bsh/inscription';
+import type { CreateOrderResponse, Order, RescueInputs, Tier } from '@bsh/degent-mint-sdk';
+import { DEFAULT_CONFIG, MAX_UPLOAD_BYTES, sha256Hex, tierForSize } from '@bsh/degent-mint-sdk';
 import { createApp } from '../../src/app.js';
 import { OrderService } from '../../src/application/order-service.js';
 import type { MintSettings } from '../../src/application/settings.js';
@@ -66,6 +66,7 @@ export function makeHarness(opts: HarnessOptions = {}) {
     version: 'test',
     collection: { ...structuredClone(DEFAULT_CONFIG), network: NET, parentInscriptionId: `${parentTxid}i0` },
     collectionAddress,
+    parentValueSats: Number(parentValue),
     serviceFeeAddress: null,
     maxUploadBytes: MAX_UPLOAD_BYTES,
     standardConcurrency: 3,
@@ -81,6 +82,7 @@ export function makeHarness(opts: HarnessOptions = {}) {
   const events = new MemoryEventBus();
   const review = opts.review ?? new RulesArtReview(settings.collection);
   let n = 0;
+  const fees = new StaticFees({ standard: { slow: 1, normal: 2, fast: 5 }, block: { min: 1, recommended: 3 } }, () => clock.now());
   const orders = new OrderService({
     settings,
     store,
@@ -90,6 +92,7 @@ export function makeHarness(opts: HarnessOptions = {}) {
     events,
     clock,
     chain,
+    fees,
     newId: () => `dgt_test${String(++n).padStart(4, '0')}`,
   });
   const parents = new StoreParentUtxoProvider(store);
@@ -101,7 +104,6 @@ export function makeHarness(opts: HarnessOptions = {}) {
     confirmed: true,
     createdByLane: null,
   });
-  const fees = new StaticFees({ standard: { slow: 1, normal: 2, fast: 5 }, block: { min: 1, recommended: 3 } }, () => clock.now());
   const app = createApp({
     orders,
     fees,
@@ -158,6 +160,16 @@ export function standardArt(size = 200_000, w = 1024, h = 1024): Uint8Array {
   return png(w, h, size);
 }
 
+/** ~1.2M WU reveal: a Large Degent (ADR-0005 §4 test size). */
+export function largeArt(seed: number, size = 1_195_000): Uint8Array {
+  return png(1000 + seed, 1000, size);
+}
+
+/** A Full Block Degent (>= 3.5 MB of content). */
+export function fullBlockArt(seed: number, size = 3_500_000): Uint8Array {
+  return png(1000 + seed, 1000, size);
+}
+
 export async function browserCreate(
   h: Harness,
   o: { bytes?: Uint8Array; contentType?: string; tier?: Tier; feeRate?: number; recipientSeed?: number } = {},
@@ -169,7 +181,7 @@ export async function browserCreate(
   const recipientAddress = regtestAddress(o.recipientSeed ?? 42);
   const res = await api(h, 'POST', '/v1/orders', {
     json: {
-      tier: o.tier ?? (bytes.length > 390_000 ? 'block' : 'standard'),
+      tier: o.tier ?? tierForSize(bytes.length)?.tier ?? 'standard',
       contentType,
       contentLength: bytes.length,
       contentSha256: sha256Hex(bytes),
@@ -190,12 +202,22 @@ export async function browserUpload(h: Harness, b: BrowserMint): Promise<Order> 
   return b.order;
 }
 
-/** Builds the half-signed reveal exactly as the browser does, then submits it. */
-export async function browserReveal(h: Harness, b: BrowserMint, commitTxid = fakeTxid(1000 + Math.floor(Math.random() * 1e6))) {
+/**
+ * Builds the half-signed reveal exactly as the browser does (ADR-0005 §1: SIGHASH_ALL|ANYONECANPAY
+ * over [parent return, child], parent return = collection address + constant parent value from
+ * GET /v1/config), then submits it.
+ */
+export async function browserReveal(
+  h: Harness,
+  b: BrowserMint,
+  commitTxid = fakeTxid(1000 + Math.floor(Math.random() * 1e6)),
+  override: Partial<Parameters<typeof buildHalfSignedReveal>[0]> = {},
+) {
   const quote = b.order.quote!;
   const content = { contentType: b.contentType, body: b.bytes, parentId: h.settings.collection.parentInscriptionId! };
   const commit = commitAddress(schnorr.getPublicKey(b.revealKey), content, NET);
   if (commit.address !== quote.commitAddress) throw new Error('browser and service disagree on the commit address');
+  const cfg = (await api(h, 'GET', '/v1/config')).body as { collectionAddress: string; parentValueSats: number };
   const { psbtBase64 } = buildHalfSignedReveal({
     network: NET,
     revealPrivkey: b.revealKey,
@@ -204,6 +226,9 @@ export async function browserReveal(h: Harness, b: BrowserMint, commitTxid = fak
     commitValue: BigInt(quote.commitValueSats),
     recipientAddress: b.recipientAddress,
     postage: BigInt(quote.postageSats),
+    parentReturnAddress: cfg.collectionAddress,
+    parentValue: BigInt(cfg.parentValueSats),
+    ...override,
   });
   b.commitTxid = commitTxid;
   b.psbt = psbtBase64;
@@ -212,6 +237,28 @@ export async function browserReveal(h: Harness, b: BrowserMint, commitTxid = fak
     token: b.token,
   });
   return res;
+}
+
+/**
+ * Self-rescue as the browser does it (ADR-0005 §2): GET /rescue for the inputs, re-sign
+ * [commit] -> [child] with K_e from the recovery bundle, broadcast it (here: straight into the chain).
+ */
+export async function browserRescue(h: Harness, b: BrowserMint) {
+  const res = await api(h, 'GET', `/v1/orders/${b.orderId}/rescue`, { token: b.token });
+  if (res.status !== 200) throw new Error(`rescue inputs failed: ${JSON.stringify(res.body)}`);
+  const inputs = res.body as RescueInputs;
+  if (inputs.contentSha256 !== sha256Hex(b.bytes)) throw new Error('rescue inputs are for other content');
+  const rescue = buildResignedRescue({
+    network: NET,
+    revealPrivkey: b.revealKey,
+    content: { contentType: inputs.contentType, body: b.bytes, ...(inputs.parentInscriptionId ? { parentId: inputs.parentInscriptionId } : {}) },
+    commitOutpoint: { txid: inputs.commitTxid, vout: inputs.commitVout },
+    commitValue: BigInt(inputs.commitValueSats),
+    recipientAddress: inputs.recipientAddress,
+    postage: BigInt(inputs.postageSats),
+  });
+  const txid = h.chain.acceptRaw(rescue.hex);
+  return { inputs, rescue, txid };
 }
 
 /** The user's wallet broadcasts the funding tx paying the commit address. */

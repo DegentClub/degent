@@ -21,7 +21,9 @@ describe('mint-sdk client <-> service', () => {
     expect((await c.health()).status).toBe('ok');
     expect((await c.config()).collectionAddress).toBe(h.signer.collectionAddress());
     expect((await c.fees()).standard.normal).toBe(2);
-    expect((await c.queue()).block.capacity).toBe(1);
+    expect((await c.queue()).block).toMatchObject({ capacity: 1, weightBudget: 3_990_000, inFlightWeight: 0 });
+    expect((await c.config()).parentValueSats).toBe(h.settings.parentValueSats);
+    expect((await c.config()).tiers.map((t) => t.tier)).toEqual(['standard', 'large', 'fullblock']);
 
     const bytes = standardArt();
     const key = schnorr.utils.randomSecretKey();
@@ -46,6 +48,8 @@ describe('mint-sdk client <-> service', () => {
       commitValue: BigInt(approved.quote!.commitValueSats),
       recipientAddress,
       postage: 546n,
+      parentReturnAddress: h.settings.collectionAddress,
+      parentValue: BigInt(h.settings.parentValueSats),
     });
     const paying = await c.submitReveal(order.id, orderToken, { commitTxid, commitVout: 0, halfSignedRevealPsbt: psbtBase64 });
     expect(paying.status).toBe('awaiting_payment');

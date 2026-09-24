@@ -20,7 +20,10 @@ function build(opts: { feeRate?: number } = {}) {
   const weight = 5000; // pretend quote weight
   const fee = BigInt(Math.ceil((weight / 4) * (opts.feeRate ?? 2)));
   const commitOutpoint = { txid: fakeTxid(1), vout: 0 };
-  const half = buildHalfSignedReveal({ network: NET, revealPrivkey: revealKey, content, commitOutpoint, commitValue: fee + 546n, recipientAddress: recipient, postage: 546n });
+  const half = buildHalfSignedReveal({
+    network: NET, revealPrivkey: revealKey, content, commitOutpoint, commitValue: fee + 546n, recipientAddress: recipient, postage: 546n,
+    parentReturnAddress: signer.collectionAddress(), parentValue: 10_000n, // 0x81 (ADR-0005): output 0 signed up front
+  });
   const parentOutpoint = { txid: fakeTxid(2), vout: 0 };
   const attached = attachParent({ network: NET, halfSignedPsbtBase64: half.psbtBase64, parentOutpoint, parentValue: 10_000n, parentScript: collectionScript, parentReturnAddress: signer.collectionAddress() });
   const ctx: PolicyContext = {
@@ -52,6 +55,12 @@ describe('evaluateParentPolicy', () => {
     expect(evaluateParentPolicy(psbt, ctx)).toEqual([]);
   });
 
+  it('the checks are unchanged under 0x81: a parent whose value differs from the signed output 0 is refused', () => {
+    // The browser signed output 0 = 10,000 sats. A 12,000-sat parent would move the child's sat.
+    const { psbt, ctx } = build();
+    expect(evaluateParentPolicy(psbt, { ...ctx, parentValue: 12_000n }).join('\n')).toMatch(/input 0 value differs|output 0 value must equal/);
+  });
+
   it.each<[string, (c: PolicyContext) => PolicyContext, RegExp]>([
     ['another parent outpoint', (c) => ({ ...c, parentOutpoint: { txid: fakeTxid(9), vout: 0 } }), /input 0 is not the leased parent/],
     ['another commit outpoint', (c) => ({ ...c, commitOutpoint: { txid: fakeTxid(9), vout: 0 } }), /input 1 is not this order/],
@@ -66,10 +75,18 @@ describe('evaluateParentPolicy', () => {
     expect(evaluateParentPolicy(psbt, change(ctx)).join('\n')).toMatch(re);
   });
 
-  it('refuses extra outputs, a bigger parent return, and garbage', () => {
+  it('refuses extra outputs (which 0x81 already makes unsignable) and garbage', () => {
     const { psbt, ctx } = build();
-    const extra = mutate(psbt, (tx) => tx.addOutput({ script: collectionScript, amount: 1000n }));
-    expect(evaluateParentPolicy(extra, ctx).join()).toMatch(/exactly 2 outputs/);
+    // ADR-0005: with SIGHASH_ALL|ANYONECANPAY the outputs are signed; the PSBT library refuses to add one.
+    expect(() => mutate(psbt, (tx) => tx.addOutput({ script: collectionScript, amount: 1000n }))).toThrow(/signed outputs/);
+    // The policy still states the shape independently: an unsigned 3-output PSBT is refused before anything else.
+    const three = new Transaction({ allowUnknownInputs: true });
+    three.addInput({ txid: hex.decode(ctx.parentOutpoint.txid), index: 0, witnessUtxo: { script: collectionScript, amount: 10_000n } });
+    three.addInput({ txid: hex.decode(ctx.commitOutpoint.txid), index: 0, witnessUtxo: { script: ctx.commitScript, amount: ctx.commitValue } });
+    three.addOutput({ script: collectionScript, amount: 10_000n });
+    three.addOutput({ script: ctx.recipientScript, amount: 546n });
+    three.addOutput({ script: collectionScript, amount: 1000n });
+    expect(evaluateParentPolicy(base64.encode(three.toPSBT()), ctx).join()).toMatch(/exactly 2 outputs/);
     expect(evaluateParentPolicy('not-a-psbt', ctx)[0]).toMatch(/unparseable/);
   });
 

@@ -169,6 +169,7 @@ export function createApp(o: AppOptions): Hono {
       ...s.collection,
       network: s.network,
       collectionAddress: s.collectionAddress,
+      parentValueSats: s.parentValueSats,
       serviceFeeAddress: s.serviceFeeAddress,
       maxUploadBytes: s.maxUploadBytes,
     };

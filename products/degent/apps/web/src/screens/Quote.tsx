@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react';
+import { TIER_LABELS } from '@bsh/degent-mint-sdk';
 import { useMint } from '../flow/context';
 import { openOrder, verifyCommit } from '../flow/effects';
 import { canEnter } from '../flow/reducer';
@@ -81,6 +82,11 @@ export function QuoteScreen() {
   };
 
   const isBlock = quote.lane === 'block';
+  const tierLabel = TIER_LABELS[quote.tier];
+  const rule = config.tiers.find((t) => t.tier === quote.tier);
+  // ADR-0005 §3: a Standard Degent can travel the block lane (weight > 400,000 WU). Say it plainly.
+  const laneSurprise = rule !== undefined && rule.lane !== quote.lane;
+  const sharesBlock = rule?.sharesBlock ?? true;
   const canPay = canEnter(state, 'pay') && !rateChanged && !busy;
 
   return (
@@ -149,7 +155,7 @@ export function QuoteScreen() {
         {error ? <Alert tone="bad" title="Could not re-quote">{error}</Alert> : null}
       </Panel>
 
-      <Panel title="Breakdown" kicker={`${quote.tier === 'block' ? 'Block Degent' : 'Standard Degent'} · ${quote.lane} lane`}>
+      <Panel title="Breakdown" kicker={`${tierLabel} · ${quote.lane} lane`}>
         <table className="bill">
           <caption className="sr-only">Quote breakdown</caption>
           <tbody>
@@ -198,15 +204,18 @@ export function QuoteScreen() {
           you sign.
         </p>
         <dl className="facts facts--inline">
-          <Fact label="Lane">{isBlock ? 'Block lane (one per block)' : 'Standard mempool'}</Fact>
+          <Fact label="Tier">{tierLabel}</Fact>
+          <Fact label="Lane">
+            {isBlock ? (sharesBlock ? 'Block lane (shares a block by weight)' : 'Block lane (a block of its own)') : 'Standard mempool'}
+          </Fact>
           {isBlock ? (
-            <Fact label="Queue position">
-              {quote.queuePosition !== null ? <span className="mono">{ordinal(quote.queuePosition)} in line</span> : '—'}
+            <Fact label="Block slot">
+              {quote.queuePosition !== null ? <span className="mono">{ordinal(quote.queuePosition)} block</span> : '—'}
             </Fact>
           ) : null}
           <Fact label="ETA">
             <span className="mono">{formatEta(quote.etaMinutes)}</span>
-            {isBlock ? <span className="small muted"> (position × ~10 min — an estimate, not a promise)</span> : null}
+            {isBlock ? <span className="small muted"> (block slot × ~10 min — an estimate, not a promise)</span> : null}
           </Fact>
           <Fact label="Quote expires in">
             <span className="mono" role="timer" aria-live="off">
@@ -214,11 +223,28 @@ export function QuoteScreen() {
             </span>
           </Fact>
         </dl>
-        {isBlock ? (
-          <Alert tone="warn" title="Block Degent: read this twice">
-            You are buying most of a Bitcoin block: <Money sats={quote.revealFeeSats} /> in reveal fees at{' '}
-            {formatFeeRate(quote.feeRate)}. Only one Block Degent is revealed per block, so you wait your turn in the queue.
-            Your funds are never stranded — if the service fails to reveal, you can rescue it yourself.
+        {laneSurprise && isBlock ? (
+          <Alert tone="warn" title={`Your ${tierLabel} travels the block lane`}>
+            Its reveal weighs {groupDigits(quote.revealWeight)} WU, over the 400,000 WU limit for standard relay, so it goes
+            through Libre Relay / Slipstream, shares a block by weight and waits for a block slot ({quote.queuePosition !== null ? ordinal(quote.queuePosition) : '—'},
+            {' '}{formatEta(quote.etaMinutes)}). Same tier, same price rules; only the transport differs. Trimming a few kB in
+            Create keeps it on the standard lane.
+          </Alert>
+        ) : null}
+        {isBlock && quote.tier === 'large' ? (
+          <Alert tone="warn" title="Large Degent: read this twice">
+            You are buying a large part of a Bitcoin block: <Money sats={quote.revealFeeSats} /> in reveal fees at{' '}
+            {formatFeeRate(quote.feeRate)}. Your reveal shares a block with other Large Degents when the weights fit the
+            3,990,000 WU budget, otherwise it waits for the next slot. Your funds are never stranded — if the service fails
+            to reveal, you rescue it yourself with the key in your recovery bundle.
+          </Alert>
+        ) : null}
+        {quote.tier === 'fullblock' ? (
+          <Alert tone="warn" title="Full Block Degent: read this twice">
+            You are buying a whole Bitcoin block: <Money sats={quote.revealFeeSats} /> in reveal fees at{' '}
+            {formatFeeRate(quote.feeRate)}. A Full Block Degent is never shared, so you wait for a block slot of your own.
+            Your funds are never stranded — if the service fails to reveal, you rescue it yourself with the key in your
+            recovery bundle.
           </Alert>
         ) : null}
         {state.quoteExpired ? (

@@ -1,6 +1,7 @@
 # @bsh/degent-web — the degent.club mint
 
-The automated, non-custodial mint front end for the Decentralized Gentlemen Club (ADR-0002).
+The automated, non-custodial mint front end for the Decentralized Gentlemen Club (ADR-0002, amended by
+[ADR-0005](../../../../docs/adr/0005-strict-reveal-and-tiers.md): 0x81 reveals, user-held rescue key, three tiers).
 **What you see is what lands on chain:** the preview is rendered from the exact bytes that go into the
 envelope, the SHA-256 is shown before upload and re-checked against ord after confirmation, and the
 commit address is recomputed in the browser with `@bsh/inscription` before anything is payable.
@@ -10,19 +11,21 @@ pnpm --filter @bsh/degent-web dev        # http://localhost:5173  (add ?demo=1 f
 pnpm --filter @bsh/degent-web test       # vitest + testing-library (jsdom)
 pnpm --filter @bsh/degent-web typecheck
 pnpm --filter @bsh/degent-web build      # → dist/
+pnpm --filter @bsh/degent-web e2e        # build + real headless Chromium, ?demo=1 at 1280 and 400 px, screenshots
 ```
 
 ## Flow
 
 ```
  Welcome ─► Connect ─► Create ─► Validate ─► Quote ─► Pay ───────────────────────► Track
- tiers,     wallet-kit  exact     mint-sdk    fee rate  1 Prepare                     poll GET /v1/orders/{id}
- live fees  ordinals vs bytes,    rules       breakdown   UTXOs (esplora)             ADR state timeline + tx links
- & queue    payment;    compress  locally,    lane/queue  funding PSBT + txid         verified → ord /content
-            legacy      to tier   then PUT    ETA,        half-signed reveal (K_e)    side-by-side + "hash match ✓"
-            refused     range,    content →   expiry,     POST /reveal                rescue_available → one-click
-                        SHA-256,  art review  commit addr save recovery (localStorage)  rescue (service, or local
-                        preview   (approved?) VERIFIED?   wipe K_e                      from the bundle)
+ 3 tiers,   wallet-kit  tier,     mint-sdk    fee rate  1 Prepare                     poll GET /v1/orders/{id}
+ live fees  ordinals vs exact     rules       breakdown   UTXOs (esplora)             ADR state timeline + tx links
+ & queue    payment;    bytes,    locally,    tier+lane,  funding PSBT + txid         verified → ord /content
+            legacy      compress  then PUT    block slot  half-signed reveal 0x81     side-by-side + "hash match ✓"
+            refused     to tier,  content →   ETA,        (parent return signed)      rescue_available → GET /rescue
+                        weight →  art review  expiry,     POST /reveal                inputs, re-sign [commit]→[child]
+                        LANE      (approved?) commit addr save bundle WITH K_e        with K_e from the bundle,
+                        shown                 VERIFIED?   wipe K_e from memory        broadcast
                                                         2 Sign (wallet) → txid check
    ▲                                                      → broadcast
    └── on load: recovery bundle found in localStorage → "Resume tracking"
@@ -42,7 +45,9 @@ money may have moved. Side effects live in `src/flow/effects.ts` and are written
    **binding** quote. Mismatch or indicative quote → Pay is disabled.
 3. `preparePayment` — fetch payment UTXOs (esplora), build the funding PSBT (commit output at vout 0, service
    fee if > 0, change) and compute its txid from the unsigned tx (nested-SegWit scriptSigs included),
-   `buildHalfSignedReveal` (SIGHASH 0x83), `POST /reveal`, **save the recovery bundle**, **wipe `K_e`**.
+   `buildHalfSignedReveal` with **SIGHASH_ALL|ANYONECANPAY (0x81)** over `[parent return, child]`, where the
+   parent return is `collectionAddress` + `parentValueSats` from `GET /v1/config` (refuses to build without
+   them), `POST /reveal`, **save the recovery bundle (with K_e)**, **wipe `K_e` from tab memory**.
 4. The bundle is shown as copyable JSON (no download links) with a privacy warning; the user confirms they
    kept a copy.
 5. `signAndBroadcast` — the wallet signs **without** broadcasting; we finalize, check the txid equals the one
@@ -51,16 +56,28 @@ money may have moved. Side effects live in `src/flow/effects.ts` and are written
 
 The wallet is never asked to sign before steps 3's reveal upload and recovery save have completed.
 
-### Recovery bundle
+### Recovery bundle (v2, ADR-0005 §2)
 
-`localStorage["degent.club/recovery/v1"]`: order id, network, API URL, funding txid/vout, commit value,
-recipient, content hash, the half-signed reveal PSBT and the **order token**. No private key. It is the only
-place the token is persisted; it never appears in URLs or logs. Anyone holding it can interfere with the
-order (e.g. trigger rescue early), never redirect the Degent or funds — the UI says so.
+`localStorage["degent.club/recovery/v2"]`: order id, network, API URL, funding txid/vout, commit value,
+recipient, postage, content type + SHA-256 + **the exact bytes (base64)**, parent id, collection address and
+parent value, the **one-time reveal key `revealPrivkey` (K_e, hex)** and its pubkey, and the **order token**.
+It is shown as copyable JSON (no download link) before the wallet signs, with a note: the key controls only
+the user's own commit output, and only into their ordinals address through the inscription script; keep it
+private; it lets you rescue without us. v1 bundles (0x83 era) are not loaded.
 
-Rescue (`rescue_available`): `GET /rescue` with the token; if the service is unreachable, the parent-less
-`[commit] → [child]` reveal is built locally from the bundle (`@bsh/inscription.buildRescueReveal`) and
-broadcast via wallet `pushTx` or esplora.
+Rescue (`rescue_available`, `flow/effects.ts#rescue`): `GET /rescue` with the token returns **inputs**, which
+must match the bundle field by field (else refuse); the browser re-signs `[commit] → [child]` with K_e
+(`@bsh/inscription.buildResignedRescue`) and broadcasts via wallet `pushTx` or esplora. Service unreachable →
+the bundle alone is enough. No bundle on this device → Track asks the user to paste it; without it there is
+no key and no rescue.
+
+### Tiers and lanes (ADR-0005 §3)
+
+Create offers **Standard Degent** (200-400 KB), **Large Degent** (400 KB-3.5 MB) and **Full Block Degent**
+(3.5-3.9 MB). As soon as the bytes fit a tier, Create shows the exact reveal weight and its lane
+(`laneForArtwork`: `@bsh/inscription.estimateRevealWeight` → `laneForWeight`); a 397-400 KB Standard Degent
+gets a "travels the block lane" warning there and again on Quote. Quote shows tier, lane, block slot and ETA
+(slot × ~10 min); Large and Full Block Degents get their own cost warnings.
 
 ## Configuration
 
@@ -102,13 +119,32 @@ with the service's own config; the app adds byte-level checks (magic bytes, leng
 - `src/lib/compression.test.ts` — byte-range search with a mocked canvas encoder (fit, too-small, downscale, too-large).
 - `src/lib/funding.test.ts` — coin selection, dust, inscription guard, legacy refusal; precomputed txid equals the
   signed tx id for P2WPKH, P2SH-P2WPKH and P2TR payment addresses.
-- `test/payment.test.ts` — **call order**: reveal POSTed and recovery saved and `K_e` wiped before
-  `wallet.signPsbt`; no wallet call when the reveal upload fails; altered funding tx is never broadcast;
-  order-token handling incl. missing-token errors; commit verification; rescue (service and local).
+- `test/payment.test.ts` — **call order**: reveal POSTed and recovery saved (with K_e, matching the order's
+  pubkey) and `K_e` wiped from memory before `wallet.signPsbt`; the 0x81 reveal's outputs are exactly
+  [collection address + parent value, recipient + postage]; no wallet call when the reveal upload fails or
+  the config lacks parent facts; altered funding tx is never broadcast; order-token handling; commit
+  verification; rescue: inputs fetched then re-signed with K_e, bundle-only when the service is gone,
+  wallet relay, refusal on input/bundle mismatch or wrong bytes, 409 before `rescue_available`, no bundle → no rescue.
+- `test/create.test.tsx` — tier selection table (three tiers: label, byte range, lane, sharing) and the
+  lane message for 397 / 398.5 / 400 KB Standard Degents (block lane) vs 300 KB (standard lane).
 - `test/rules.test.tsx`, `test/quote.test.tsx` — rules display, review results, quote rendering (sats + BTC),
-  commit-address mismatch blocking, Block Degent warnings, fee clamping and re-quote.
+  commit-address mismatch blocking, Large / Full Block warnings, the ~398 KB Standard Degent quoted on the
+  block lane, fee clamping and re-quote.
 - `test/track.test.tsx` — timeline for every ADR status, delivered + hash match, rescue, resume from localStorage.
-- `test/demo.e2e.test.tsx` — the whole flow through the UI in demo mode.
+- `test/demo.e2e.test.tsx` — the whole flow through the UI in demo mode (jsdom).
+- `e2e/demo.e2e.mjs` (`pnpm --filter @bsh/degent-web e2e`) — **real headless Chromium** via `playwright-core`
+  (no bundled browsers: `CHROMIUM_PATH`, default `/opt/pw-browsers/chromium`, a binary or a directory to
+  search). Builds, serves `vite preview` on a free port, drives `?demo=1` through all eight screens (welcome,
+  connect, create with the real canvas encoder, validate, quote, pay, track, delivered) at 1280 px and 400 px,
+  and fails on any console error, page error, horizontal page overflow or clipped progress nav. Google Fonts
+  are stubbed for a hermetic run (system-font fallback in the renders). Screenshots:
+  [`docs/screenshots/`](docs/screenshots) (`1280-01-welcome.png` … `400-08-delivered.png`).
+
+Defects found by the first real renders and fixed: the page backdrop used `background-attachment: fixed`
+on `body`, which painted a viewport-high band with hard edges on long pages (now a fixed `body::before`
+layer over a solid `html` background); the progress nav clipped step 7 at 400 px; the segmented "bytes to
+inscribe" control broke its pill shape when it wrapped at 400 px; shortened addresses on Pay split at the
+ellipsis at 400 px; the footer still said the reveal key never leaves the tab.
 
 ## Accessibility & design
 

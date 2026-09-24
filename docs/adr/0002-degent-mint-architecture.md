@@ -1,6 +1,7 @@
 # ADR-0002: degent.club automated mint: non-custodial, parent-linked, block-sized
 
-- **Status:** Accepted (implementation in progress in this repo)
+- **Status:** Accepted; §1 (tier table), §2 (0x83 sighash, discarded K_e, replay rescue) and §6 (`rescue_available`)
+  superseded by [ADR-0005](0005-strict-reveal-and-tiers.md)
 - **Date:** 2026-09-23
 - **Components:** `@bsh/inscription`, `@bsh/wallet-kit`, `@bsh/degent-mint-sdk`, `@bsh/degent-mint`, `@bsh/degent-web`
 - **Supersedes:** the mint flow in `antron3000/degen-minter-3` (UniSat-only, payment to a Skrybit-held address, no status tracking, no provenance)

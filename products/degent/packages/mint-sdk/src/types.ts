@@ -8,8 +8,17 @@
  */
 
 export type Network = 'mainnet' | 'testnet' | 'signet' | 'regtest';
-export type Tier = 'standard' | 'block';
+
+/**
+ * Tiers are a PRODUCT decision on CONTENT BYTES (ADR-0005 §3): Standard Degent, Large Degent,
+ * Full Block Degent. Lanes are TRANSPORT, decided by the reveal's WEIGHT (`laneForWeight`): a
+ * Standard Degent near the top of its byte range can weigh more than 400,000 WU and then travels
+ * the block lane. The binding quote's `lane` is authoritative.
+ */
+export type Tier = 'standard' | 'large' | 'fullblock';
 export type Lane = 'standard' | 'block';
+
+export const TIERS: readonly Tier[] = ['standard', 'large', 'fullblock'];
 
 export const ORDER_STATUSES = [
   'awaiting_content',
@@ -37,7 +46,13 @@ export interface TierRule {
   minBytes: number;
   /** Maximum content size in bytes (inclusive). */
   maxBytes: number;
+  /**
+   * The lane content of this tier USUALLY travels. Not binding: the quote's `lane` is decided by
+   * the reveal weight (standard <= 400,000 WU, else block).
+   */
   lane: Lane;
+  /** Full Block Degents always take a block alone; the others may share a block's weight budget. */
+  sharesBlock: boolean;
   label: string;
   description: string;
 }
@@ -51,15 +66,21 @@ export interface CollectionConfig {
   maxDimensionPx: number;
   minDimensionPx: number;
   postageSats: number;
-  serviceFeeSats: { standard: number; block: number };
+  serviceFeeSats: Record<Tier, number>;
   minFeeRate: number; // sat/vB
   quoteTtlSeconds: number;
   rescueAfterSeconds: number;
 }
 
-/** GET /v1/config: the collection rules plus the addresses the front end needs to show. */
+/** GET /v1/config: the collection rules plus the addresses and constants the front end needs. */
 export interface ServiceConfig extends CollectionConfig {
+  /** Taproot address holding the parent inscription; output 0 of every reveal returns it here. */
   collectionAddress: string;
+  /**
+   * The parent UTXO's constant value in sats. The browser pre-commits output 0 = (collectionAddress,
+   * parentValueSats) when it signs the reveal with SIGHASH_ALL|ANYONECANPAY (ADR-0005 §1).
+   */
+  parentValueSats: number;
   serviceFeeAddress: string | null;
   maxUploadBytes: number;
 }
@@ -76,6 +97,7 @@ export interface CreateOrderRequest {
 
 export interface Quote {
   tier: Tier;
+  /** Transport lane decided by `revealWeight` (ADR-0005 §3), not by the tier. */
   lane: Lane;
   feeRate: number;
   revealWeight: number;
@@ -90,7 +112,8 @@ export interface Quote {
   /** False: indicative (from declared size, POST /v1/orders). True: binding (after PUT content). */
   binding: boolean;
   expiresAt: string; // ISO 8601
-  queuePosition: number | null; // block lane only
+  /** Block lane only: the 1-based block slot this order would be revealed in (ADR-0005 §4). */
+  queuePosition: number | null;
   etaMinutes: number | null;
 }
 
@@ -115,7 +138,11 @@ export interface OrderEvent {
 
 export interface QueueInfo {
   lane: Lane;
-  /** 1-based position among orders waiting for this lane; null once revealing or later. */
+  /**
+   * Block lane: the 1-based block SLOT (several Large Degents can share one slot within the
+   * 3,990,000 WU budget; a Full Block Degent has a slot to itself). Standard lane: position among
+   * waiting orders. Null once revealing or later.
+   */
   position: number | null;
   etaMinutes: number | null;
 }
@@ -157,16 +184,46 @@ export interface CreateOrderResponse {
 export interface SubmitRevealRequest {
   commitTxid: string;
   commitVout: number;
-  halfSignedRevealPsbt: string; // base64 PSBT, input 1 signed with 0x83
+  /**
+   * base64 PSBT: `[commit] -> [parent return, child]`, commit input signed with
+   * SIGHASH_ALL|ANYONECANPAY (0x81). Output 0 must be (collectionAddress, parentValueSats) from
+   * GET /v1/config; the service inserts the parent input at index 0 later (ADR-0005 §1).
+   */
+  halfSignedRevealPsbt: string;
   /** Optional: the commit address the browser computed. Rejected if it differs from the service's. */
   commitAddress?: string;
 }
 
-export interface RescueResponse {
+/**
+ * GET /v1/orders/{id}/rescue (ADR-0005 §2). The service no longer returns a transaction: a 0x81
+ * half-signed reveal cannot be broadcast without the parent. Instead it returns everything the
+ * browser needs to re-sign `[commit] -> [child]` locally with the ephemeral key K_e kept in the
+ * user's recovery bundle (`@bsh/inscription.buildResignedRescue`). The content bytes themselves
+ * are in the bundle (or still in memory); their hash is here so the browser can check them.
+ */
+export interface RescueInputs {
   orderId: string;
-  txid: string;
-  hex: string;
-  weight: number;
+  network: Network;
+  commitTxid: string;
+  commitVout: number;
+  commitValueSats: number;
+  contentType: string;
+  contentLength: number;
+  contentSha256: string;
+  /** Envelope parent tag (tag 3) the commit was built with; null when the collection has none. */
+  parentInscriptionId: string | null;
+  recipientAddress: string;
+  /** x-only hex of K_e: the browser must hold the matching private key. */
+  revealPubkey: string;
+  postageSats: number;
+  /** Exact weight of the re-signed rescue transaction (`estimateResignedRescueWeight`). */
+  rescueWeight: number;
+  /** commitValue - postage: the whole remainder is the fee (no change output). */
+  rescueFeeSats: number;
+  /** rescueFeeSats / ceil(rescueWeight / 4): what the rescue pays, sat/vB. */
+  rescueFeeRate: number;
+  /** The service's current standard-lane estimate, so the UI can say whether the rescue is competitive. */
+  suggestedFeeRate: number;
 }
 
 export interface HealthResponse {
@@ -189,7 +246,12 @@ export interface LaneQueue {
   lane: Lane;
   waiting: number;
   inFlight: number;
+  /** Standard: reveals in flight allowed. Block: blocks in flight (always 1). */
   capacity: number;
+  /** Block lane: the per-block weight budget (WU); null for the standard lane. */
+  weightBudget: number | null;
+  /** Block lane: weight (WU) of the reveals currently in flight; 0 for the standard lane. */
+  inFlightWeight: number;
   etaMinutesForNext: number | null;
 }
 

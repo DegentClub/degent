@@ -98,8 +98,9 @@ export function App({ app, services, store = browserStore(), vault: vaultProp, i
       </main>
       <footer className="footer">
         <p>
-          The Decentralized Gentlemen Club · non-custodial by design: your reveal key never leaves this tab, and the
-          server only ever holds a half-signed transaction that pays <em>you</em>.
+          The Decentralized Gentlemen Club · non-custodial by design: your one-time reveal key stays with you (in your
+          recovery bundle, never on our server), and the server only ever holds a half-signed transaction that pays{' '}
+          <em>you</em>.
         </p>
         <p className="muted small">
           Network: <span className="mono">{app.network}</span>

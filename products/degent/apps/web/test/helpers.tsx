@@ -1,4 +1,5 @@
 import { render } from '@testing-library/react';
+import type { Tier } from '@bsh/degent-mint-sdk';
 import type { AppConfig } from '../src/config';
 import { App } from '../src/App';
 import { createKeyVault, type KeyVault } from '../src/flow/keyVault';
@@ -41,8 +42,12 @@ export function fakes(o: FakeServicesOptions = {}): FakeServices {
 
 /** Exact bytes of a fake WebP that lands in the Standard range. */
 export async function standardArtwork(services: Services): Promise<Artwork> {
+  return artworkAtQuality(services, 0.2);
+}
+
+export async function artworkAtQuality(services: Services, quality: number): Promise<Artwork> {
   const src = await services.images.decode(new Blob([]));
-  const enc = await services.images.encode(src, { type: 'image/webp', quality: 0.2, scale: 1 });
+  const enc = await services.images.encode(src, { type: 'image/webp', quality, scale: 1 });
   const bytes = new Uint8Array(await enc.blob.arrayBuffer());
   return {
     fileName: 'gent.webp',
@@ -53,9 +58,17 @@ export async function standardArtwork(services: Services): Promise<Artwork> {
     height: enc.height,
     sha256: services.inscription.sha256Hex(bytes),
     origin: 'reencoded',
-    quality: 0.2,
+    quality,
     scale: 1,
   };
+}
+
+/** Artwork of (about) `size` bytes from the default fake encoder (fullSize 1,400,000: size = fullSize * (0.08 + 0.92q)). */
+export async function artworkOfSize(services: Services, size: number, fullSize = 1_400_000): Promise<Artwork> {
+  const q = (size / fullSize - 0.08) / 0.92;
+  const art = await artworkAtQuality(services, q);
+  // fakeEncodedSize rounds; the caller asserts the exact size it needs.
+  return art;
 }
 
 /** Drive the flow (without UI) to an approved order sitting on the Quote step. */
@@ -63,7 +76,8 @@ export async function stateAtQuote(
   services: FakeServices,
   app: AppConfig,
   vault: KeyVault = createKeyVault(),
-  tier: 'standard' | 'block' = 'standard',
+  tier: Tier = 'standard',
+  artworkOverride?: Artwork,
 ): Promise<{ state: FlowState; vault: KeyVault }> {
   let s = initialState();
   const config = await services.mintApi.getConfig();
@@ -72,7 +86,7 @@ export async function stateAtQuote(
   const wallet = await services.wallets.connect('unisat', app.network);
   s = flowReducer(s, { type: 'WALLET_CONNECTED', wallet });
   s = flowReducer(s, { type: 'TIER_SELECTED', tier });
-  const artwork = await standardArtwork(services);
+  const artwork = artworkOverride ?? (await standardArtwork(services));
   s = flowReducer(s, { type: 'ARTWORK_READY', artwork });
   const order = await openOrder(
     { services, vault, sleep: async () => undefined },

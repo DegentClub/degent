@@ -2,14 +2,14 @@
  * The mint wizard as a pure state machine. Every step has an entry guard (`canEnter`) so the UI
  * cannot skip review, commit-address verification, or the recovery save.
  */
-import type { CollectionConfig, Order, Tier } from '@bsh/degent-mint-sdk';
+import type { Order, ServiceConfig, Tier } from '@bsh/degent-mint-sdk';
 import type { FeeSnapshot, QueueSnapshot, WalletSession } from '../services/types';
 import type { RecoveryBundle } from '../lib/recovery';
 import { isLegacy, type FundingPsbt } from '../lib/funding';
 import { initialPay, initialState, STEPS, type Artwork, type FlowState, type PayPhase, type Step } from './state';
 
 export type FlowAction =
-  | { type: 'CONFIG_LOADED'; config: CollectionConfig }
+  | { type: 'CONFIG_LOADED'; config: ServiceConfig }
   | { type: 'SNAPSHOT_LOADED'; fees: FeeSnapshot | null; queue: QueueSnapshot | null }
   | { type: 'GO'; step: Step }
   | { type: 'BACK' }

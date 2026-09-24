@@ -133,7 +133,7 @@ describe('flow reducer', () => {
       { type: 'ORDER_UPDATED', order: order() },
       { type: 'COMMIT_CHECKED', localAddress: 'bc1pcommit', match: true },
     );
-    const t = flowReducer(s, { type: 'TIER_SELECTED', tier: 'block' });
+    const t = flowReducer(s, { type: 'TIER_SELECTED', tier: 'large' });
     expect(t.order).toBeNull();
     expect(t.commitCheck).toBe('unchecked');
     const a = flowReducer(s, { type: 'ARTWORK_READY', artwork: { ...artwork, size: 260_000 } });

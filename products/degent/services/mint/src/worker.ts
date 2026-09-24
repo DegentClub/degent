@@ -10,9 +10,16 @@
  *   rescue_available --(commit spent on chain)--> revealed (rescued unless it was our parent reveal)
  *
  * Lane rules:
- *   block:    one reveal in flight (revealing or revealed-unconfirmed) => one per block.
+ *   block:    a per-block WEIGHT BUDGET (ADR-0005 §4): reveals in flight (revealing or
+ *             revealed-unconfirmed) may add up to 3,990,000 WU; several Large Degents share one
+ *             block when they fit, a Full Block Degent is always alone. Block reveals chain on each
+ *             other through the block-lane relay.
  *   standard: up to `standardConcurrency` in flight, chained on unconfirmed parents, but never on a
  *             parent created by an unconfirmed BLOCK reveal (standard relays do not have it).
+ *
+ * The parent UTXO's value must equal `settings.parentValueSats`: browsers signed output 0 with that
+ * value up front (0x81), so a different parent would make every stored reveal unusable. The worker
+ * refuses to dispatch on such a parent and logs it (operator action: see RUNBOOK §2).
  */
 import { hexToBytes, bytesToHex } from '@noble/hashes/utils.js';
 import {
@@ -21,8 +28,8 @@ import {
   finalizeReveal,
   inscriptionIdFromReveal,
 } from '@bsh/inscription';
-import type { Lane, OrderStatus } from '@bsh/degent-mint-sdk';
-import { sha256Hex } from '@bsh/degent-mint-sdk';
+import type { BlockLaneItem, OrderStatus } from '@bsh/degent-mint-sdk';
+import { fitsInFlight, sha256Hex } from '@bsh/degent-mint-sdk';
 import type { OrderService } from './application/order-service.js';
 import type { Logger } from './application/logger.js';
 import { silentLogger } from './application/logger.js';
@@ -270,22 +277,39 @@ export class MintWorker {
 
   private async dispatch(): Promise<void> {
     const occ = await this.d.orders.laneOccupancy();
-    const inFlight: Record<Lane, number> = { standard: occ.standard.inFlight.length, block: occ.block.inFlight.length };
-    const capacity: Record<Lane, number> = { standard: this.s.standardConcurrency, block: 1 };
+    let standardInFlight = occ.standard.inFlight.length;
+    const blockInFlight: BlockLaneItem[] = occ.block.inFlight.map((o) => this.d.orders.blockItem(o));
     const candidates = [...occ.standard.waiting, ...occ.block.waiting]
       .filter((o) => o.status === 'queued')
       .sort((a, b) => `${a.queuedAt}|${a.id}`.localeCompare(`${b.queuedAt}|${b.id}`));
     for (const o of candidates) {
-      if (inFlight[o.lane] >= capacity[o.lane]) continue;
+      if (o.lane === 'standard') {
+        if (standardInFlight >= this.s.standardConcurrency) continue;
+      } else if (!fitsInFlight(blockInFlight, this.d.orders.blockItem(o))) {
+        // Does not fit the block in flight (budget, or a Full Block Degent on either side): it waits
+        // for the next block. Orders behind it are not considered either (no overtaking, ADR-0005 §4).
+        break;
+      }
       if (await this.d.parents.leasedBy()) return; // a reveal is mid-flight on the parent
       const parent = await this.d.parents.current();
       if (!parent) {
         this.log.error('no parent UTXO configured; cannot reveal', {});
         return;
       }
+      if (parent.value !== BigInt(this.s.parentValueSats)) {
+        this.log.error('parent UTXO value differs from PARENT_VALUE_SATS; reveals paused (see RUNBOOK)', {
+          parent: `${parent.txid}:${parent.vout}`,
+          value: parent.value.toString(),
+          expected: this.s.parentValueSats,
+        });
+        return;
+      }
       if (o.lane === 'standard' && !parent.confirmed && parent.createdByLane === 'block') continue;
       try {
-        if (await this.reveal(o)) inFlight[o.lane]++;
+        if (await this.reveal(o)) {
+          if (o.lane === 'standard') standardInFlight++;
+          else blockInFlight.push(this.d.orders.blockItem(o));
+        }
       } catch (e) {
         const error = e instanceof Error ? e.message : String(e);
         this.report.errors.push({ orderId: o.id, step: 'dispatch', error });

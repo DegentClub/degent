@@ -68,25 +68,44 @@ describe('Track screen', () => {
     expect(screen.getByRole('button', { name: 'Mint another Degent' })).toBeInTheDocument();
   });
 
-  it('offers one-click rescue and falls back to the local bundle when the service is gone', async () => {
+  it('offers one-click rescue, re-signed locally with K_e, even when the service is gone', async () => {
     const t = await paidAndTracking({ mint: { scenario: 'rescue', rescueEndpointDown: true } });
     renderApp(t.services, { initial: t.state, app: t.app, vault: t.vault, store: t.store });
     expect(await screen.findByRole('heading', { name: 'Rescue your Degent' }, { timeout: 3000 })).toBeInTheDocument();
-    expect(screen.getByText(/SIGHASH_SINGLE \| ANYONECANPAY/)).toBeInTheDocument();
+    expect(screen.getByText(/SIGHASH_ALL \| ANYONECANPAY/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /Rescue now/ }));
     expect(await screen.findByText('Rescue broadcast')).toBeInTheDocument();
-    expect(screen.getByText(/built in your browser from the recovery bundle/)).toBeInTheDocument();
-    expect(t.services.log).toContain('inscription.buildRescueReveal');
+    expect(screen.getByText(/from the recovery bundle alone/)).toBeInTheDocument();
+    expect(t.services.log).toContain('inscription.buildResignedRescue');
     expect(t.services.chainState.broadcasts.length).toBe(1);
   });
 
-  it('rescue via the service uses the in-memory order token', async () => {
+  it('rescue with the service reachable: inputs fetched with the in-memory token, then signed locally', async () => {
     const t = await paidAndTracking({ mint: { scenario: 'rescue' } });
     renderApp(t.services, { initial: t.state, app: t.app, vault: t.vault, store: t.store });
     await userEvent.click(await screen.findByRole('button', { name: /Rescue now/ }, { timeout: 3000 }));
-    expect(await screen.findByText(/built by the mint service/)).toBeInTheDocument();
+    expect(await screen.findByText(/the mint supplied the order facts/)).toBeInTheDocument();
     expect(t.services.log).toContain('api.getRescue');
-    expect(t.services.log).not.toContain('inscription.buildRescueReveal');
+    expect(t.services.log).toContain('inscription.buildResignedRescue');
+    expect(t.services.log.indexOf('api.getRescue')).toBeLessThan(t.services.log.indexOf('inscription.buildResignedRescue'));
+  });
+
+  it('without a bundle on this device, asks for the saved one and only then enables Rescue', async () => {
+    const t = await paidAndTracking({ mint: { scenario: 'rescue' } });
+    const state = { ...t.state, recovery: null };
+    renderApp(t.services, { initial: state, app: t.app, store: memoryStore() });
+    const rescueBtn = await screen.findByRole('button', { name: /Rescue now/ }, { timeout: 3000 });
+    expect(rescueBtn).toBeDisabled();
+    const box = screen.getByLabelText(/paste the one you saved/);
+    await userEvent.type(box, '{{}"kind": "nope"}');
+    await userEvent.click(screen.getByRole('button', { name: 'Use this bundle' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/not a degent.club recovery bundle/);
+    await userEvent.clear(box);
+    await userEvent.click(box);
+    await userEvent.paste(JSON.stringify(t.bundle));
+    await userEvent.click(screen.getByRole('button', { name: 'Use this bundle' }));
+    await userEvent.click(await screen.findByRole('button', { name: /Rescue now/ }));
+    expect(await screen.findByText('Rescue broadcast')).toBeInTheDocument();
   });
 });
 
@@ -109,7 +128,7 @@ describe('resume from localStorage', () => {
     renderApp(t.services, { app: t.app, store: t.store });
     await userEvent.click(await screen.findByRole('button', { name: 'Resume tracking' }));
     await userEvent.click(await screen.findByRole('button', { name: /Rescue now/ }, { timeout: 3000 }));
-    expect(await screen.findByText(/built by the mint service/)).toBeInTheDocument();
+    expect(await screen.findByText(/the mint supplied the order facts/)).toBeInTheDocument();
   });
 
   it('shows nothing to resume when storage is empty', async () => {

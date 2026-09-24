@@ -2,15 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { createKeyVault, type KeyVault } from '../src/flow/keyVault';
 import {
   FundingTxidMismatchError,
+  MissingBundleError,
   MissingKeyError,
   MissingTokenError,
   openOrder,
   preparePayment,
   rescue,
+  RescueInputsMismatchError,
   signAndBroadcast,
   verifyCommit,
 } from '../src/flow/effects';
-import { loadRecovery } from '../src/lib/recovery';
+import { base64ToBytes, loadRecovery } from '../src/lib/recovery';
+import { hex } from '@scure/base';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { fakes, memoryStore, stateAtQuote, testApp } from './helpers';
 
 /** Vault that records discards into the shared call log. */
@@ -57,12 +61,24 @@ describe('pay sequence', () => {
     expect(at('wallet.signPsbt')).toBeGreaterThan(at('vault.discard'));
     expect(at('chain.broadcast')).toBeGreaterThan(at('wallet.signPsbt'));
 
-    // K_e is gone; recovery is on disk and matches what the service stored.
+    // K_e is gone from memory; recovery is on disk, holds K_e (ADR-0005) and matches what the service stored.
     expect(vault.get(order.id)).toBeNull();
     const saved = loadRecovery(store)!;
+    expect(saved.version).toBe(2);
     expect(saved.orderId).toBe(order.id);
     expect(saved.commitTxid).toBe(prepared.funding.txid);
     expect(saved.orderToken).toBe(vault.token(order.id));
+    expect(saved.revealPrivkey).toMatch(/^[0-9a-f]{64}$/);
+    expect(hex.encode(schnorr.getPublicKey(hex.decode(saved.revealPrivkey)))).toBe(order.revealPubkey);
+    expect(saved.revealPubkey).toBe(order.revealPubkey);
+    expect(base64ToBytes(saved.contentBase64)).toEqual(state.artwork!.bytes);
+    expect(saved).toMatchObject({
+      collectionAddress: state.config!.collectionAddress,
+      parentValueSats: state.config!.parentValueSats,
+      postageSats: order.quote!.postageSats,
+      parentInscriptionId: state.config!.parentInscriptionId,
+    });
+
     expect(services.apiOrders.get(order.id)!.commitOutpoint).toEqual({ txid: prepared.funding.txid, vout: 0 });
     expect(prepared.order.status).toBe('awaiting_payment');
     expect(txid).toBe(prepared.funding.txid);
@@ -114,6 +130,35 @@ describe('pay sequence', () => {
       preparePayment({ services, vault, app, store }, { order: state.order!, artwork: state.artwork!, wallet: state.wallet!, config: state.config! }),
     ).rejects.toBeInstanceOf(MissingKeyError);
     expect(log.filter((l) => l.startsWith('api.') || l.startsWith('chain.'))).toEqual([]);
+  });
+});
+
+describe('0x81 reveal shape (ADR-0005 §1)', () => {
+  it('signs [parent return = collection address + parentValueSats, child] up front', async () => {
+    const { services, app, vault, state, store } = await setup();
+    let submitted: { halfSignedRevealPsbt: string } | null = null;
+    const real = services.mintApi.submitReveal;
+    services.mintApi.submitReveal = async (id, token, req) => {
+      submitted = req;
+      return real(id, token, req);
+    };
+    await preparePayment({ services, vault, app, store }, { order: state.order!, artwork: state.artwork!, wallet: state.wallet!, config: state.config! });
+    const payload = JSON.parse(atob(submitted!.halfSignedRevealPsbt));
+    expect(payload.sighash).toBe('0x81');
+    expect(payload.outputs).toEqual([
+      { address: state.config!.collectionAddress, value: String(state.config!.parentValueSats) },
+      { address: state.wallet!.ordinals.address, value: String(state.order!.quote!.postageSats) },
+    ]);
+  });
+
+  it('refuses to build a reveal when the service config lacks the parent facts', async () => {
+    const { log, services, app, vault, state, store } = await setup();
+    const config = { ...state.config!, parentValueSats: 0 };
+    await expect(
+      preparePayment({ services, vault, app, store }, { order: state.order!, artwork: state.artwork!, wallet: state.wallet!, config }),
+    ).rejects.toThrow(/parent value/);
+    expect(log).not.toContain('api.submitReveal');
+    expect(vault.get(state.order!.id)).not.toBeNull();
   });
 });
 
@@ -179,29 +224,68 @@ describe('commit verification', () => {
   });
 });
 
-describe('rescue', () => {
-  it('uses the service rescue tx with the order token when available', async () => {
+describe('rescue (ADR-0005 §2: re-signed locally with K_e from the bundle)', () => {
+  async function toRescueAvailable(opts: Parameters<typeof setup>[0] = {}) {
+    const t = await setup({ ...opts, mint: { scenario: 'rescue', ...(opts.mint ?? {}) } });
+    const p = await preparePayment({ services: t.services, vault: t.vault, app: t.app, store: t.store }, { order: t.state.order!, artwork: t.state.artwork!, wallet: t.state.wallet!, config: t.state.config! });
+    // The fake service walks paid -> queued -> rescue_available on polls.
+    let o = await t.services.mintApi.getOrder(t.state.order!.id);
+    for (let i = 0; i < 5 && o.status !== 'rescue_available'; i++) o = await t.services.mintApi.getOrder(o.id);
+    expect(o.status).toBe('rescue_available');
+    t.log.length = 0;
+    return { ...t, bundle: p.bundle };
+  }
+
+  it('fetches the inputs from the service, checks them against the bundle, re-signs with K_e and broadcasts', async () => {
+    const { log, services, state, bundle } = await toRescueAvailable();
+    const r = await rescue({ services }, { orderId: state.order!.id, orderToken: null, bundle, wallet: null, network: 'mainnet' });
+    expect(r.source).toBe('service');
+    expect(log.indexOf('api.getRescue')).toBeLessThan(log.indexOf('inscription.buildResignedRescue'));
+    expect(log.indexOf('inscription.buildResignedRescue')).toBeLessThan(log.indexOf('chain.broadcast'));
+    expect(r.tx.fee).toBe(BigInt(bundle.commitValueSats - bundle.postageSats));
+    expect(r.txid).toBe(r.tx.txid);
+  });
+
+  it('works from the bundle alone when the service is gone', async () => {
+    const { log, services, state, bundle } = await toRescueAvailable({ mint: { rescueEndpointDown: true } });
+    const r = await rescue({ services }, { orderId: state.order!.id, orderToken: null, bundle, wallet: null, network: 'mainnet' });
+    expect(r.source).toBe('local');
+    expect(log).toContain('inscription.buildResignedRescue');
+    expect(log).toContain('chain.broadcast');
+  });
+
+  it('uses the wallet relay when it offers pushTx', async () => {
+    const { log, services, state, bundle } = await toRescueAvailable({ wallet: { withPushTx: true } });
+    await rescue({ services }, { orderId: state.order!.id, orderToken: null, bundle, wallet: state.wallet, network: 'mainnet' });
+    expect(log).toContain('wallet.pushTx');
+    expect(log).not.toContain('chain.broadcast');
+  });
+
+  it('refuses to sign when the service inputs disagree with the bundle', async () => {
+    const { log, services, state, bundle } = await toRescueAvailable();
+    const tampered = { ...bundle, recipientAddress: 'bc1pattacker' };
+    await expect(rescue({ services }, { orderId: state.order!.id, orderToken: null, bundle: tampered, wallet: null, network: 'mainnet' })).rejects.toBeInstanceOf(RescueInputsMismatchError);
+    expect(log).not.toContain('inscription.buildResignedRescue');
+    expect(log).not.toContain('chain.broadcast');
+  });
+
+  it('refuses when the bundle content bytes do not hash to the order content', async () => {
+    const { services, state, bundle } = await toRescueAvailable();
+    const bad = { ...bundle, contentBase64: 'AAAA' };
+    await expect(rescue({ services }, { orderId: state.order!.id, orderToken: null, bundle: bad, wallet: null, network: 'mainnet' })).rejects.toThrow(/content bytes/);
+  });
+
+  it('is not offered before rescue_available (409 from the service is a real answer, not "service gone")', async () => {
     const { log, services, app, vault, state, store } = await setup();
     const p = await preparePayment({ services, vault, app, store }, { order: state.order!, artwork: state.artwork!, wallet: state.wallet!, config: state.config! });
-    const r = await rescue({ services }, { orderId: state.order!.id, orderToken: null, bundle: p.bundle, wallet: null, network: 'mainnet' });
-    expect(r.source).toBe('service');
-    expect(log).toContain('api.getRescue');
-    expect(log).toContain('chain.broadcast');
-    expect(log).not.toContain('inscription.buildRescueReveal');
+    await expect(rescue({ services }, { orderId: state.order!.id, orderToken: null, bundle: p.bundle, wallet: null, network: 'mainnet' })).rejects.toThrow(/409/);
+    expect(log).not.toContain('inscription.buildResignedRescue');
   });
 
-  it('builds the rescue locally from the bundle when the service is gone', async () => {
-    const { log, services, app, vault, state, store } = await setup({ mint: { rescueEndpointDown: true } });
-    const p = await preparePayment({ services, vault, app, store }, { order: state.order!, artwork: state.artwork!, wallet: state.wallet!, config: state.config! });
-    const r = await rescue({ services }, { orderId: state.order!.id, orderToken: null, bundle: p.bundle, wallet: null, network: 'mainnet' });
-    expect(r.source).toBe('local');
-    expect(log.indexOf('inscription.buildRescueReveal')).toBeLessThan(log.lastIndexOf('chain.broadcast'));
-  });
-
-  it('without a bundle or token, explains that the token is missing', async () => {
+  it('without a bundle there is no key, so there is no rescue', async () => {
     const services = fakes();
     await expect(
-      rescue({ services }, { orderId: 'x', orderToken: null, bundle: null, wallet: null, network: 'mainnet' }),
-    ).rejects.toBeInstanceOf(MissingTokenError);
+      rescue({ services }, { orderId: 'x', orderToken: 'tok', bundle: null, wallet: null, network: 'mainnet' }),
+    ).rejects.toBeInstanceOf(MissingBundleError);
   });
 });

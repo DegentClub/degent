@@ -1,7 +1,13 @@
 # degent.club - agent notes
 
-Read the root `CLAUDE.md`, then [ADR-0002](../../docs/adr/0002-degent-mint-architecture.md). This product moves
+Read the root `CLAUDE.md`, then [ADR-0002](../../docs/adr/0002-degent-mint-architecture.md) and
+[ADR-0005](../../docs/adr/0005-strict-reveal-and-tiers.md) (which supersedes ADR-0002 §1, §2, §6). This product moves
 real bitcoin; the rules below are not style preferences.
+
+Vocabulary (ADR-0005): **tiers** by content bytes — `standard` Standard Degent (200-400 KB), `large` Large Degent
+(400 KB-3.5 MB), `fullblock` Full Block Degent (3.5-3.9 MB); **lanes** by reveal weight — `standard` (<= 400,000 WU)
+or `block` (packed into a 3,990,000 WU per-block budget; a Full Block Degent always alone). Never derive a lane from
+a tier.
 
 ## Map
 
@@ -9,7 +15,8 @@ real bitcoin; the rules below are not style preferences.
 |---|---|---|
 | `apps/web` | `@bsh/degent-web` | app (React + Vite) |
 | `services/mint` | `@bsh/degent-mint` | service (Hono, ports and adapters) |
-| `packages/mint-sdk` | `@bsh/degent-mint-sdk` | library (rules, types, API client) |
+| `packages/mint-sdk` | `@bsh/degent-mint-sdk` | library (rules, tiers, lane/queue maths, types, API client) |
+| `packages/market` | `@bsh/degent-market` | library (seller 0x83 listings, padded buyer purchases, ordinal FIFO simulator) |
 
 Query `catalog/catalog.json` (`.products.degent`, `.components[] | select(.product=="degent")`) for the current
 dependency and contract graph instead of reading package.json files.
@@ -17,9 +24,12 @@ dependency and contract graph instead of reading package.json files.
 ## Hard rules
 
 1. **Non-custodial.** The service never holds a key that can move user funds. The ephemeral reveal key `K_e` is
-   generated and discarded in the browser; the server only stores half-signed reveals.
+   generated in the browser and kept only in the user's recovery bundle (it controls nothing but that user's
+   commit output); the server only stores half-signed 0x81 reveals and never sees `K_e`. The rescue is re-signed
+   in the browser; `GET /rescue` returns inputs, never a transaction.
 2. **Only the policy signer signs the parent input**, and only transactions matching ADR-0002 section 3.
-   Never widen its checks to make a test pass.
+   Never widen its checks to make a test pass. Reveals are SIGHASH_ALL|ANYONECANPAY with output 0 =
+   (collection address, `PARENT_VALUE_SATS`) signed by the browser; never accept 0x83.
 3. **One implementation of the maths.** Weight, fee and commit address come from `@bsh/inscription`; rules come
    from `@bsh/degent-mint-sdk`. Do not re-derive them in the app or the service.
 4. **Contract first.** API or event changes start in `contracts/openapi/degent-mint.yaml` /
@@ -36,5 +46,6 @@ dependency and contract graph instead of reading package.json files.
 ```bash
 pnpm --filter "./products/degent/**" typecheck
 pnpm --filter "./products/degent/**" test
+pnpm --filter @bsh/degent-web build && pnpm --filter @bsh/degent-web e2e
 pnpm validate && pnpm lint:boundaries && pnpm catalog --check
 ```

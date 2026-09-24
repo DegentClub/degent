@@ -1,0 +1,10 @@
+name: degent-market
+package: "@bsh/degent-market"
+kind: library
+product: degent
+owner: team-degent
+summary: Non-custodial Degent marketplace transaction construction - seller 0x83 listings, buyer purchases with padding inputs so the inscription sat lands with the buyer.
+lifecycle: beta
+depends_on: []
+docs: ./README.md
+commands: { test: test, typecheck: typecheck }

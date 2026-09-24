@@ -55,9 +55,6 @@ export function createRealMintApi(baseUrl: string, fetchImpl?: FetchLike): MintA
     uploadContent: async (id, token, bytes) => client.uploadContent(id, need(token), bytes),
     submitReveal: async (id, token, req) => client.submitReveal(id, need(token), req),
     getOrder: (id) => client.getOrder(id),
-    async getRescue(id, token) {
-      const r = await client.getRescue(id, need(token));
-      return { hex: r.hex, txid: r.txid };
-    },
+    getRescue: (id, token) => client.getRescue(id, need(token)),
   };
 }

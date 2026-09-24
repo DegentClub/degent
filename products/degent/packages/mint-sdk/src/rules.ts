@@ -1,19 +1,49 @@
 /**
- * degent.club mint rules shared by the browser and the service (ADR-0002 §1, §5).
+ * degent.club mint rules shared by the browser and the service (ADR-0002 §5, ADR-0005 §3-§4).
  * Pure functions only: no I/O, no network, safe to run in either environment.
+ *
+ * Two independent axes (ADR-0005 §3):
+ *   - TIER is a product decision on CONTENT BYTES, chosen by the owner: Standard / Large / Full Block.
+ *   - LANE is transport, decided by the reveal WEIGHT: <= 400,000 WU relays through the normal
+ *     mempool ("standard"), anything heavier needs the non-standard block lane. So a Standard
+ *     Degent of ~397-400 KB travels the block lane and the quote says so.
  */
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
-import type { CollectionConfig, Quote, ReviewCheck, Tier, TierRule } from './types.js';
+import type { CollectionConfig, Lane, Quote, ReviewCheck, Tier, TierRule } from './types.js';
 
 export const STANDARD_MIN_BYTES = 200_000;
-export const STANDARD_MAX_BYTES = 390_000;
-export const BLOCK_MIN_BYTES = 390_001;
-export const BLOCK_MAX_BYTES = 3_900_000;
+export const STANDARD_MAX_BYTES = 400_000;
+export const LARGE_MIN_BYTES = 400_001;
+export const LARGE_MAX_BYTES = 3_499_999;
+export const FULLBLOCK_MIN_BYTES = 3_500_000;
+export const FULLBLOCK_MAX_BYTES = 3_900_000;
 /** Largest request body the service accepts for PUT /content (4 MiB). */
 export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
-/** Block Degents are one per block; ETA is position x ~10 minutes, never a promise. */
+/** Block-lane ETA is block slot x ~10 minutes, never a promise. */
 export const BLOCK_INTERVAL_MINUTES = 10;
+/**
+ * Lane thresholds. Same numbers as `@bsh/inscription.LIMITS` (MAX_STANDARD_TX_WEIGHT and
+ * BLOCK_LANE_MAX_TX_WEIGHT); the service asserts the two agree. Kept here because the SDK must not
+ * depend on the transaction library, yet the browser and the service must agree on lane names.
+ */
+export const STANDARD_LANE_MAX_WEIGHT = 400_000;
+/** Per-block weight budget of the block lane (ADR-0005 §4): 4,000,000 WU minus header + coinbase headroom. */
+export const BLOCK_LANE_WEIGHT_BUDGET = 3_990_000;
+
+/** Transport lane for a reveal of `weight` WU; null when it fits no lane. */
+export function laneForWeight(weight: number): Lane | null {
+  if (!Number.isFinite(weight) || weight <= 0) return null;
+  if (weight <= STANDARD_LANE_MAX_WEIGHT) return 'standard';
+  if (weight <= BLOCK_LANE_WEIGHT_BUDGET) return 'block';
+  return null;
+}
+
+export const TIER_LABELS: Record<Tier, string> = Object.freeze({
+  standard: 'Standard Degent',
+  large: 'Large Degent',
+  fullblock: 'Full Block Degent',
+});
 
 export const DEFAULT_CONFIG: CollectionConfig = Object.freeze({
   network: 'mainnet',
@@ -26,23 +56,37 @@ export const DEFAULT_CONFIG: CollectionConfig = Object.freeze({
       minBytes: STANDARD_MIN_BYTES,
       maxBytes: STANDARD_MAX_BYTES,
       lane: 'standard',
-      label: 'Standard Degent',
-      description: 'Up to ~390 KB. Standard reveal (<= 400,000 WU), relayed by the normal mempool, many per block.',
+      sharesBlock: true,
+      label: TIER_LABELS.standard,
+      description:
+        '200-400 KB. Usually a standard reveal (<= 400,000 WU) through the normal mempool, many per block. ' +
+        'The last few KB of the range weigh more than 400,000 WU and travel the block lane instead.',
     },
     {
-      tier: 'block',
-      minBytes: BLOCK_MIN_BYTES,
-      maxBytes: BLOCK_MAX_BYTES,
+      tier: 'large',
+      minBytes: LARGE_MIN_BYTES,
+      maxBytes: LARGE_MAX_BYTES,
       lane: 'block',
-      label: 'Block Degent',
+      sharesBlock: true,
+      label: TIER_LABELS.large,
       description:
-        'Up to ~3.9 MB. Non-standard reveal relayed via Libre Relay / Slipstream. One per block: expect a queue.',
+        '400 KB-3.5 MB. Non-standard reveal via Libre Relay / Slipstream. Shares a block with other Large Degents ' +
+        'when their weights fit the 3,990,000 WU budget.',
+    },
+    {
+      tier: 'fullblock',
+      minBytes: FULLBLOCK_MIN_BYTES,
+      maxBytes: FULLBLOCK_MAX_BYTES,
+      lane: 'block',
+      sharesBlock: false,
+      label: TIER_LABELS.fullblock,
+      description: '3.5-3.9 MB. Fills a Bitcoin block on its own: always revealed alone, one per block slot.',
     },
   ] satisfies TierRule[],
   maxDimensionPx: 4096,
   minDimensionPx: 256,
   postageSats: 546,
-  serviceFeeSats: { standard: 0, block: 0 },
+  serviceFeeSats: { standard: 0, large: 0, fullblock: 0 },
   minFeeRate: 1,
   quoteTtlSeconds: 900,
   rescueAfterSeconds: 6 * 60 * 60,
@@ -194,7 +238,11 @@ export function estimateTotal(
   };
 }
 
-/** Block lane ETA: position x ~10 minutes. */
+/** Block lane ETA: block slot x ~10 minutes. */
 export function etaMinutesForPosition(position: number | null): number | null {
   return position === null ? null : position * BLOCK_INTERVAL_MINUTES;
+}
+
+export function isTier(v: unknown): v is Tier {
+  return v === 'standard' || v === 'large' || v === 'fullblock';
 }

@@ -9,4 +9,5 @@ start from `deps/scribbit/docs/adr/template.md` and take the next free number.
 
 | ADR | Title | Status |
 |---|---|---|
-| [0002](0002-degent-mint-architecture.md) | degent.club automated mint: non-custodial, parent-linked, block-sized | Accepted |
+| [0002](0002-degent-mint-architecture.md) | degent.club automated mint: non-custodial, parent-linked, block-sized | Accepted (§1, §2, §6 amended by 0005) |
+| [0005](0005-strict-reveal-and-tiers.md) | Strict reveals (0x81), user-held rescue key, three tiers by content bytes, block-lane weight budget | Accepted |

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useId, useRef, useState, type DragEvent } from 'react';
 import { readImageInfo, sniffContentType, type Tier } from '@bsh/degent-mint-sdk';
 import { useMint } from '../flow/context';
+import { laneForArtwork } from '../flow/effects';
 import type { Artwork } from '../flow/state';
 import { ScreenHeading } from '../components/ScreenHeading';
 import { Alert, Badge, Button, Fact, Mono, Panel, errorText, useObjectUrl } from '../components/ui';
 import { ART_BRIEF, tierRule } from '../lib/rules';
 import { capScale, classifySize, fitToRange, scaleLadder, type FitResult } from '../lib/compression';
-import { formatBytesExact, formatSize } from '../lib/format';
+import { formatBytesExact, formatSize, groupDigits } from '../lib/format';
 import type { EncodeType, SourceImage } from '../services/types';
 
 interface Loaded {
@@ -25,7 +26,7 @@ async function blobBytes(b: Blob): Promise<Uint8Array> {
 }
 
 export function Create() {
-  const { state, dispatch, services } = useMint();
+  const { state, dispatch, services, app } = useMint();
   const config = state.config!;
   const rule = tierRule(config, state.tier);
   const range = { min: rule.minBytes, max: rule.maxBytes };
@@ -171,6 +172,12 @@ export function Create() {
   const art = state.artwork;
   const previewUrl = useObjectUrl(art?.bytes ?? null, art?.contentType ?? 'application/octet-stream');
   const sizeFit = art ? classifySize(art.size, range) : null;
+  // ADR-0005 §3: the lane is decided by the exact reveal weight, not by the tier. Say so here, before the quote.
+  const laneInfo =
+    art && state.wallet && sizeFit === 'within'
+      ? laneForArtwork(services, { artwork: art, recipientAddress: state.wallet.ordinals.address, config, network: app.network })
+      : null;
+  const laneSurprise = laneInfo !== null && laneInfo.lane !== null && laneInfo.lane !== rule.lane;
   const briefDone = ART_BRIEF.every((b) => state.briefAck[b.id]);
   const canContinue = !!art && sizeFit === 'within' && briefDone && busy === null;
 
@@ -196,23 +203,34 @@ export function Create() {
         lede="Bring your art, pick a tier and shape the exact bytes. Everything happens in this browser; nothing is uploaded yet."
       />
 
-      <Panel title="Choose a tier">
+      <Panel title="Choose a tier" kicker="Tiers are by content bytes; the lane is by weight">
         <div role="radiogroup" aria-label="Tier" className="tier-pick">
           {config.tiers.map((t) => (
-            <label key={t.tier} className={`tier-pick__opt ${state.tier === t.tier ? 'is-on' : ''}`}>
+            <label key={t.tier} className={`tier-pick__opt ${state.tier === t.tier ? 'is-on' : ''}`} data-testid={`tier-${t.tier}`}>
               <input type="radio" name="tier" value={t.tier} checked={state.tier === t.tier} onChange={() => setTier(t.tier)} />
               <span className="tier-pick__name">{t.label}</span>
               <span className="mono small">
                 {formatSize(t.minBytes)} – {formatSize(t.maxBytes)}
               </span>
               <span className="small muted">{t.description}</span>
+              <span className="small">
+                <Badge tone={t.lane === 'block' ? 'brass' : 'neutral'}>{t.lane === 'block' ? 'block lane' : 'standard lane'}</Badge>{' '}
+                <span className="muted">{t.sharesBlock ? (t.lane === 'block' ? 'shares a block' : 'many per block') : 'a block to itself'}</span>
+              </span>
             </label>
           ))}
         </div>
-        {state.tier === 'block' ? (
-          <Alert tone="warn" title="Block Degents are serious business">
-            One per block, so you join a queue. Fees scale with size: a 3.9 MB Degent occupies ~975,000 vB — at 2 sat/vB
-            that is about 0.02 BTC in network fees. You will see the exact figure before paying.
+        {state.tier === 'large' ? (
+          <Alert tone="warn" title="Large Degents ride the block lane">
+            Non-standard relay, so you join the block-lane queue. Your reveal shares a block with other Large Degents when the
+            weights fit the 3,990,000 WU budget, otherwise it waits for the next slot. Fees scale with size; you will see the
+            exact figure before paying.
+          </Alert>
+        ) : null}
+        {state.tier === 'fullblock' ? (
+          <Alert tone="warn" title="Full Block Degents are serious business">
+            Your reveal takes a whole block by itself — never shared — so you wait for a block slot of your own. A 3.9 MB Degent
+            occupies ~975,000 vB: at 2 sat/vB that is about 0.02 BTC in network fees. You will see the exact figure before paying.
           </Alert>
         ) : null}
       </Panel>
@@ -398,7 +416,23 @@ export function Create() {
                     ? 'Original file, byte-for-byte'
                     : `Re-encoded at ${Math.round((art.quality ?? 0) * 100)}% quality, ${Math.round((art.scale ?? 1) * 100)}% of the original dimensions`}
                 </Fact>
+                {laneInfo ? (
+                  <Fact label="Reveal weight → lane">
+                    <span data-testid="artwork-lane">
+                      <Mono>{groupDigits(laneInfo.weight)} WU</Mono>{' '}
+                      {laneInfo.lane ? <Badge tone={laneInfo.lane === 'block' ? 'brass' : 'neutral'}>{laneInfo.lane} lane</Badge> : <Badge tone="bad">too heavy</Badge>}
+                    </span>
+                  </Fact>
+                ) : null}
               </dl>
+              {laneSurprise && laneInfo?.lane === 'block' ? (
+                <Alert tone="warn" title={`This ${rule.label} travels the block lane`}>
+                  At {formatBytesExact(art.size)} the reveal weighs {groupDigits(laneInfo.weight)} WU, more than the 400,000 WU a
+                  standard transaction may have. It is still a {rule.label} (same tier, same price rules) but it relays through
+                  Libre Relay / Slipstream, shares a block by weight and queues for a block slot. Trim a few kB to stay on the
+                  standard lane, or continue: the quote will show the lane, position and ETA.
+                </Alert>
+              ) : null}
             </div>
           </div>
         </Panel>

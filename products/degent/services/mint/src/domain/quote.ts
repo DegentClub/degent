@@ -1,19 +1,27 @@
 /**
  * Quote maths. Everything goes through @bsh/inscription so the numbers are the same ones the
  * browser computes and the same ones the signed transaction will have (weight is exact).
+ *
+ * The TIER is the caller's (validated) choice by content bytes; the LANE is decided here from the
+ * exact reveal weight (ADR-0005 §3). A Standard Degent that weighs > 400,000 WU gets `lane: 'block'`.
  */
 import {
   addressToScript,
   commitAddress,
   estimateRevealWeight,
   laneFor,
+  LIMITS,
   quoteReveal,
   type InscriptionContent,
   type Network,
 } from '@bsh/inscription';
 import type { CollectionConfig, Lane, Quote, Tier } from '@bsh/degent-mint-sdk';
-import { etaMinutesForPosition, tierRule } from '@bsh/degent-mint-sdk';
+import { BLOCK_LANE_WEIGHT_BUDGET, etaMinutesForPosition, laneForWeight, STANDARD_LANE_MAX_WEIGHT, tierRule } from '@bsh/degent-mint-sdk';
 import { invalid } from './errors.js';
+
+// One implementation of the maths: the SDK's lane thresholds must be the library's limits.
+if (STANDARD_LANE_MAX_WEIGHT !== LIMITS.MAX_STANDARD_TX_WEIGHT || BLOCK_LANE_WEIGHT_BUDGET !== LIMITS.BLOCK_LANE_MAX_TX_WEIGHT)
+  throw new Error('@bsh/degent-mint-sdk lane thresholds disagree with @bsh/inscription.LIMITS');
 
 export interface QuoteInput {
   network: Network;
@@ -28,7 +36,7 @@ export interface QuoteInput {
   revealPubkey: Uint8Array;
   feeRate: number;
   expiresAt: Date;
-  /** Block lane: orders ahead of this one + 1. */
+  /** Block lane: the 1-based block slot this order would land in (ADR-0005 §4). Ignored for the standard lane. */
   queuePosition: number | null;
 }
 
@@ -56,13 +64,9 @@ export function computeQuote(q: QuoteInput): Quote {
     parentReturnScript: collectionScript,
     parentInputScript: collectionScript,
   });
-  const physical = laneFor(revealWeight);
-  if (physical === null) throw invalid(`reveal weight ${revealWeight} WU exceeds every lane`, { revealWeight });
-  const lane: Lane = rule.lane;
-  if (lane === 'standard' && physical !== 'standard')
-    throw invalid(`reveal weight ${revealWeight} WU exceeds the standard lane (400,000 WU); use the block tier`, {
-      revealWeight,
-    });
+  const lane: Lane | null = laneFor(revealWeight);
+  if (lane === null) throw invalid(`reveal weight ${revealWeight} WU exceeds every lane`, { revealWeight });
+  if (laneForWeight(revealWeight) !== lane) throw new Error('lane maths disagree between the SDK and @bsh/inscription');
   const postage = BigInt(q.config.postageSats);
   const { revealVsize, revealFee, commitValue } = quoteReveal({ revealWeight, feeRate: q.feeRate, postage });
   const serviceFeeSats = q.config.serviceFeeSats[q.tier];

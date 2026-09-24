@@ -36,8 +36,9 @@ describe('read endpoints', () => {
     const h = makeHarness();
     const r = await api(h, 'GET', '/v1/config');
     expect(r.status).toBe(200);
-    expect(r.body.tiers).toHaveLength(2);
+    expect(r.body.tiers.map((t: { tier: string }) => t.tier)).toEqual(['standard', 'large', 'fullblock']);
     expect(r.body.collectionAddress).toBe(h.signer.collectionAddress());
+    expect(r.body.parentValueSats).toBe(Number(h.parentValue));
     expect(r.body.maxUploadBytes).toBe(4 * 1024 * 1024);
     expect(JSON.stringify(r.body)).not.toMatch(/key|secret|token/i);
   });
@@ -82,9 +83,10 @@ describe('POST /v1/orders', () => {
 
   it.each([
     ['sha256 not hex', { contentSha256: 'xyz' }, 'contentSha256'],
-    ['tier/size mismatch', { tier: 'block' }, 'collection rules'],
+    ['tier/size mismatch', { tier: 'large' }, 'collection rules'],
+    ['unknown tier', { tier: 'block' }, 'tier must be'],
     ['size below the standard tier', { contentLength: 1000 }, 'collection rules'],
-    ['size above the block tier', { tier: 'block', contentLength: 3_900_001 }, 'collection rules'],
+    ['size above the Full Block tier', { tier: 'fullblock', contentLength: 3_900_001 }, 'collection rules'],
     ['disallowed type', { contentType: 'image/svg+xml' }, 'collection rules'],
     ['fee below the minimum', { feeRate: 0.5 }, 'feeRate must be >='],
     ['absurd fee', { feeRate: 5000 }, 'feeRate must be <='],
@@ -318,10 +320,24 @@ describe('cross-cutting', () => {
 
   it('block lane refuses new orders when the queue would outlast the rescue timeout', async () => {
     const h = makeHarness({ settings: { collection: { ...makeHarness().settings.collection, rescueAfterSeconds: 700 } } });
-    const big = png(1000, 1000, 400_000);
-    const body = validBody({ tier: 'block', contentLength: big.length, contentSha256: sha256Hex(big) });
+    const big = png(1000, 1000, 500_000);
+    const body = validBody({ tier: 'large', contentLength: big.length, contentSha256: sha256Hex(big) });
     const r = await api(h, 'POST', '/v1/orders', { json: body });
     expect(r.status).toBe(503);
     expect(r.body.error.code).toBe('queue_full');
+    // Standard-lane orders are unaffected.
+    expect((await api(h, 'POST', '/v1/orders', { json: validBody() })).status).toBe(201);
+  });
+
+  it('a Standard Degent of 400,000 bytes weighs more than 400,000 WU and is quoted on the block lane', async () => {
+    const h = makeHarness();
+    const art = png(1000, 1000, 400_000);
+    const r = await api(h, 'POST', '/v1/orders', { json: validBody({ tier: 'standard', contentLength: art.length, contentSha256: sha256Hex(art) }) });
+    expect(r.status).toBe(201);
+    expect(r.body.order.tier).toBe('standard');
+    expect(r.body.order.quote.lane).toBe('block');
+    expect(r.body.order.quote.revealWeight).toBeGreaterThan(400_000);
+    expect(r.body.order.quote.queuePosition).toBe(1);
+    expect(r.body.order.quote.etaMinutes).toBe(10);
   });
 });

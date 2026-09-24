@@ -24,14 +24,14 @@ export const STATUS_COPY: Record<OrderStatus, { label: string; blurb: string }> 
   rejected: { label: 'Rejected', blurb: 'The art did not meet the brief. You have paid nothing.' },
   awaiting_payment: { label: 'Awaiting payment', blurb: 'Half-signed reveal stored. Waiting for your funding transaction.' },
   paid: { label: 'Payment seen', blurb: 'Your funding (commit) transaction is on the network.' },
-  queued: { label: 'Queued', blurb: 'Waiting for its lane. Block Degents take a whole block each.' },
+  queued: { label: 'Queued', blurb: 'Waiting for its lane. Block-lane reveals are packed into blocks by weight; a Full Block Degent takes a block alone.' },
   revealing: { label: 'Revealing', blurb: 'The parent is being attached and co-signed.' },
   revealed: { label: 'Revealed', blurb: 'The reveal transaction is in the mempool.' },
   confirmed: { label: 'Confirmed', blurb: 'Mined into a block.' },
   verified: { label: 'Verified', blurb: 'On-chain bytes hash-match what you previewed.' },
   delivered: { label: 'Delivered', blurb: 'The Degent sits in your ordinals address. Welcome to the club.' },
   expired: { label: 'Expired', blurb: 'The quote lapsed before payment. Nothing was spent.' },
-  rescue_available: { label: 'Rescue available', blurb: 'The service has not revealed in time. You can reveal it yourself.' },
+  rescue_available: { label: 'Rescue available', blurb: 'The service has not revealed in time. You can reveal it yourself with the key in your recovery bundle.' },
   failed: { label: 'Failed', blurb: 'Something went wrong. See the detail below.' },
 };
 

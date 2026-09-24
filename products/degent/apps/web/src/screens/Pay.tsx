@@ -11,7 +11,7 @@ const PHASE_TEXT: Partial<Record<PayPhase, string>> = {
   'fetching-utxos': 'Looking up your payment coins…',
   building: 'Building the funding transaction and pre-signing the reveal…',
   'submitting-reveal': 'Handing the half-signed reveal to the mint…',
-  'recovery-saved': 'Recovery bundle saved. Your one-time key has been discarded.',
+  'recovery-saved': 'Recovery bundle saved, with your one-time key inside. The key has been wiped from this tab’s memory.',
   'awaiting-wallet': 'Waiting for your wallet — approve the funding transaction there.',
   broadcasting: 'Broadcasting…',
 };
@@ -71,8 +71,10 @@ export function Pay() {
         <ol className="howto">
           <li>
             <strong>Prepare.</strong> A one-time key — generated in this tab, never sent anywhere — pre-signs the reveal that
-            delivers your Degent to <Mono>{shortHash(wallet!.ordinals.address, 8)}</Mono>. The half-signed reveal goes to the
-            mint and a recovery copy is saved on this device. Then the key is wiped from memory.
+            delivers your Degent to <Mono>{shortHash(wallet!.ordinals.address, 8)}</Mono> and returns the club’s parent to{' '}
+            <Mono>{shortHash(config!.collectionAddress, 8)}</Mono> (every output is signed, so nobody can add or change one).
+            The half-signed reveal goes to the mint; the key goes into <em>your</em> recovery bundle, saved on this device,
+            and is wiped from memory.
           </li>
           <li>
             <strong>Sign.</strong> Your wallet signs one funding transaction. We check it is exactly the one the reveal was
@@ -135,11 +137,17 @@ export function Pay() {
             {pay.recoverySavedLocally
               ? 'Saved on this device. '
               : 'This browser would not let us save it locally — copying it is essential. '}
-            With it you (or anyone you trust) can reveal your Degent without the mint, if it ever fails to deliver.
+            It contains your one-time reveal key (<Mono>revealPrivkey</Mono>), your exact bytes and the order facts. With it you
+            can reveal your Degent yourself, without the mint, if it ever fails to deliver.
           </p>
-          <Alert tone="warn" title="Keep it private">
+          <Alert tone="warn" title="Keep it private — it holds a key">
             {RECOVERY_WARNING}
           </Alert>
+          <p className="small muted">
+            What that key can do: spend the commit output you are about to fund, and only into{' '}
+            <Mono>{shortHash(wallet!.ordinals.address, 8)}</Mono> through the inscription script. What it cannot do: touch any
+            other coin in your wallet. Nobody but you holds it; the mint never sees it.
+          </p>
           <CopyBlock label="Recovery bundle (JSON)" text={recoveryJson(state.recovery)} rows={10} />
           <label className="check">
             <input type="checkbox" checked={kept} onChange={(e) => setKept(e.currentTarget.checked)} />

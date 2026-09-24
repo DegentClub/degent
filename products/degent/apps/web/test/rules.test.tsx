@@ -33,7 +33,7 @@ describe('local rules (mint-sdk validateContentMeta + byte checks)', () => {
     expect(bad.find((c) => c.id === 'size')!.passed).toBe(false);
     expect(bad.find((c) => c.id === 'length')!.passed).toBe(false);
 
-    const wrongTier = runLocalRules(art, 'block', cfg);
+    const wrongTier = runLocalRules(art, 'large', cfg);
     expect(wrongTier.find((c) => c.id === 'tier')!.passed).toBe(false);
   });
 

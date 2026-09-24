@@ -10,7 +10,7 @@ import type {
   HealthResponse,
   Order,
   QueueResponse,
-  RescueResponse,
+  RescueInputs,
   ServiceConfig,
   SubmitRevealRequest,
 } from './types.js';
@@ -48,7 +48,8 @@ export interface MintClient {
   uploadContent(orderId: string, orderToken: string, bytes: Uint8Array): Promise<Order>;
   submitReveal(orderId: string, orderToken: string, req: SubmitRevealRequest): Promise<Order>;
   getOrder(orderId: string): Promise<Order>;
-  getRescue(orderId: string, orderToken: string): Promise<RescueResponse>;
+  /** GET /v1/orders/{id}/rescue: inputs for a local re-signed rescue (ADR-0005 §2), 409 until rescue_available. */
+  getRescue(orderId: string, orderToken: string): Promise<RescueInputs>;
 }
 
 function isErrorBody(v: unknown): v is ApiErrorBody {

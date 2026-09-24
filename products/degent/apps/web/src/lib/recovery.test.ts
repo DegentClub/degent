@@ -1,9 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { clearRecovery, isRecoveryBundle, loadRecovery, recoveryJson, RECOVERY_KEY, saveRecovery, type RecoveryBundle } from './recovery';
+import {
+  base64ToBytes,
+  bytesToBase64,
+  clearRecovery,
+  isRecoveryBundle,
+  loadRecovery,
+  parseRecovery,
+  recoveryJson,
+  RECOVERY_KEY,
+  saveRecovery,
+  type RecoveryBundle,
+} from './recovery';
 
 const bundle: RecoveryBundle = {
   kind: 'degent.club/recovery',
-  version: 1,
+  version: 2,
   orderId: 'ord_1',
   network: 'mainnet',
   mintApiUrl: 'https://mint.test',
@@ -12,9 +23,15 @@ const bundle: RecoveryBundle = {
   commitVout: 0,
   commitValueSats: 250_546,
   recipientAddress: 'bc1pme',
+  postageSats: 546,
   contentType: 'image/webp',
   contentSha256: 'bb'.repeat(32),
-  halfSignedRevealPsbt: 'cHNidP8=',
+  contentBase64: 'UklGRg==',
+  parentInscriptionId: `${'cc'.repeat(32)}i0`,
+  collectionAddress: 'bc1pclub',
+  parentValueSats: 10_000,
+  revealPrivkey: 'dd'.repeat(32),
+  revealPubkey: 'ee'.repeat(32),
   orderToken: 'secret-token',
   note: 'n',
   warning: 'w',
@@ -34,12 +51,21 @@ describe('recovery bundle storage', () => {
     expect(loadRecovery(s)).toBeNull();
   });
 
-  it('ignores garbage and bundles without a token or reveal', () => {
+  it('ignores garbage, v1 bundles and bundles without a token, key or content', () => {
     const s = store();
     s.setItem(RECOVERY_KEY, '{not json');
     expect(loadRecovery(s)).toBeNull();
     expect(isRecoveryBundle({ ...bundle, orderToken: undefined })).toBe(false);
-    expect(isRecoveryBundle({ ...bundle, halfSignedRevealPsbt: 1 })).toBe(false);
+    expect(isRecoveryBundle({ ...bundle, version: 1 })).toBe(false);
+    expect(isRecoveryBundle({ ...bundle, revealPrivkey: 'not-hex' })).toBe(false);
+    expect(isRecoveryBundle({ ...bundle, contentBase64: 1 })).toBe(false);
+    expect(parseRecovery(JSON.stringify(bundle))).toEqual(bundle);
+    expect(parseRecovery('[]')).toBeNull();
+  });
+
+  it('base64 helpers round-trip large byte arrays', () => {
+    const bytes = new Uint8Array(200_001).map((_, i) => (i * 31) & 0xff);
+    expect(base64ToBytes(bytesToBase64(bytes))).toEqual(bytes);
   });
 
   it('survives a storage that throws', () => {
@@ -57,10 +83,10 @@ describe('recovery bundle storage', () => {
     expect(saveRecovery(bundle, null)).toBe(false);
   });
 
-  it('pretty JSON includes the order token and the half-signed reveal (and nothing secret-looking beyond that)', () => {
+  it('pretty JSON includes the order token and the reveal key K_e (ADR-0005: the user keeps it)', () => {
     const json = recoveryJson(bundle);
     expect(JSON.parse(json)).toEqual(bundle);
     expect(json).toContain('"orderToken": "secret-token"');
-    expect(json).not.toMatch(/priv|secretKey/i);
+    expect(json).toContain(`"revealPrivkey": "${'dd'.repeat(32)}"`);
   });
 });

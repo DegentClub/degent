@@ -7,9 +7,9 @@ import { hex } from '@scure/base';
 import { Transaction } from '@scure/btc-signer';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { addressToScript, inscriptionIdFromReveal } from '@bsh/inscription';
-import type { Order, RescueResponse } from '@bsh/degent-mint-sdk';
+import type { Order } from '@bsh/degent-mint-sdk';
 import { sha256Hex } from '@bsh/degent-mint-sdk';
-import { api, browserCreate, browserMintToPayment, browserReveal, browserUpload, fundCommit, makeHarness, NET, standardArt } from './fakes/harness.js';
+import { api, browserCreate, browserMintToPayment, browserRescue, browserReveal, browserUpload, fundCommit, makeHarness, NET, regtestAddress, standardArt } from './fakes/harness.js';
 import { png } from './fakes/images.js';
 
 function parseRaw(rawHex: string) {
@@ -25,15 +25,18 @@ async function getOrder(h: ReturnType<typeof makeHarness>, id: string): Promise<
 
 describe('e2e: parent-linked mint', () => {
   it.each([
-    ['standard', 200_000],
-    ['block', 400_000],
-  ] as const)('%s Degent: order -> upload -> half-signed reveal -> fund -> reveal with parent -> delivered', async (tier, size) => {
+    ['standard', 200_000, 'standard'],
+    ['standard', 400_000, 'block'], // ADR-0005 §3: the top of the Standard range weighs > 400,000 WU
+    ['large', 1_000_000, 'block'],
+    ['fullblock', 3_500_000, 'block'],
+  ] as const)('%s Degent (%d bytes, %s lane): order -> upload -> 0x81 half-signed reveal -> fund -> reveal with parent -> delivered', async (tier, size, expectedLane) => {
     const h = makeHarness();
     const art = png(1500, 1500, size);
     const b = await browserMintToPayment(h, { bytes: art, tier });
     expect(b.order.status).toBe('awaiting_payment');
     expect(b.order.quote!.binding).toBe(true);
-    expect(b.order.quote!.lane).toBe(tier);
+    expect(b.order.tier).toBe(tier);
+    expect(b.order.quote!.lane).toBe(expectedLane);
 
     // Unfunded: nothing happens.
     await h.worker.tick();
@@ -45,7 +48,7 @@ describe('e2e: parent-linked mint', () => {
     expect(rep.transitions.map((t) => t.to)).toEqual(['paid', 'queued', 'revealing', 'revealed']);
 
     // Broadcaster captured exactly one tx on the right lane; it parses, and weight == quote.
-    const lane = h.broadcasters[tier];
+    const lane = h.broadcasters[expectedLane];
     expect(lane.sent).toHaveLength(1);
     const { tx, weight } = parseRaw(lane.sent[0]!);
     expect(weight).toBe(b.order.quote!.revealWeight);
@@ -59,6 +62,11 @@ describe('e2e: parent-linked mint', () => {
     expect(bytesToHex(tx.getOutput(1).script!)).toBe(bytesToHex(addressToScript(b.recipientAddress, NET)));
     // fee = commit value - postage, exactly as quoted
     expect(BigInt(b.order.quote!.commitValueSats) - 546n).toBe(BigInt(b.order.quote!.revealFeeSats));
+
+    // The commit input carries the browser's 0x81 signature (65 bytes: 64 + hash type).
+    const witness = tx.getInput(1).finalScriptWitness!;
+    expect(witness[0]!.length).toBe(65);
+    expect(witness[0]![64]).toBe(0x81);
 
     let o = await getOrder(h, b.orderId);
     expect(o.status).toBe('revealed');
@@ -104,8 +112,8 @@ describe('e2e: parent-linked mint', () => {
   });
 });
 
-describe('e2e: rescue path', () => {
-  it('lane down for 6 h -> rescue_available -> GET /rescue -> user broadcasts -> delivered without parent', async () => {
+describe('e2e: rescue path (ADR-0005 §2: re-signed with K_e from the recovery bundle)', () => {
+  it('lane down for 6 h -> rescue_available -> GET /rescue inputs -> browser re-signs [commit] -> [child] -> delivered without parent', async () => {
     const h = makeHarness();
     const b = await browserMintToPayment(h);
     fundCommit(h, b, { confirmed: true });
@@ -126,18 +134,33 @@ describe('e2e: rescue path', () => {
     expect(await h.parents.leasedBy()).toBeNull(); // parent lease released, parent unchanged
     expect((await h.parents.current())!.txid).toBe(h.parentTxid);
 
-    const res = await api(h, 'GET', `/v1/orders/${b.orderId}/rescue`, { token: b.token });
-    expect(res.status).toBe(200);
-    const rescue = res.body as RescueResponse;
+    // The service returns INPUTS, never a transaction: it holds nothing broadcastable without the parent.
+    const { inputs, rescue } = await browserRescue(h, b);
+    expect(inputs).toMatchObject({
+      orderId: b.orderId,
+      commitTxid: b.commitTxid,
+      commitVout: 0,
+      commitValueSats: b.order.quote!.commitValueSats,
+      contentSha256: sha256Hex(b.bytes),
+      recipientAddress: b.recipientAddress,
+      revealPubkey: b.revealPubkey,
+      postageSats: 546,
+      parentInscriptionId: h.settings.collection.parentInscriptionId,
+      suggestedFeeRate: 2,
+    });
+    expect(JSON.stringify(inputs)).not.toMatch(/hex|psbt/i);
+    expect(inputs.rescueFeeSats).toBe(b.order.quote!.commitValueSats - 546);
     const { tx, weight } = parseRaw(rescue.hex);
-    expect(weight).toBe(rescue.weight);
+    expect(weight).toBe(inputs.rescueWeight);
+    expect(rescue.weight).toBe(inputs.rescueWeight);
+    expect(inputs.rescueFeeRate).toBeCloseTo(inputs.rescueFeeSats / Math.ceil(weight / 4), 2);
     expect(tx.inputsLength).toBe(1);
     expect(tx.outputsLength).toBe(1);
     expect(hex.encode(tx.getInput(0).txid!)).toBe(b.commitTxid);
     expect(bytesToHex(tx.getOutput(0).script!)).toBe(bytesToHex(addressToScript(b.recipientAddress, NET)));
+    expect(tx.getInput(0).finalScriptWitness![0]!.length).toBe(64); // SIGHASH_DEFAULT
 
-    // The user (or anyone) broadcasts it.
-    h.chain.acceptRaw(rescue.hex);
+    // browserRescue already broadcast it ("the user, or anyone").
     await h.worker.tick();
     let after = await getOrder(h, b.orderId);
     expect(after).toMatchObject({ status: 'revealed', rescued: true, revealTxid: rescue.txid, inscriptionId: `${rescue.txid}i0` });
@@ -162,6 +185,7 @@ describe('e2e: rescue path', () => {
     expect(await h.parents.leasedBy()).toBeNull();
     const r = await api(h, 'GET', `/v1/orders/${b.orderId}/rescue`, { token: b.token });
     expect(r.status).toBe(200);
+    expect(r.body.revealPubkey).toBe(b.revealPubkey);
   });
 });
 
@@ -192,10 +216,20 @@ describe('e2e: tampering is rejected', () => {
     expect(String(bad.body)).toContain('disagree');
     b.bytes = good;
     // Recipient swap: sign for another address.
-    const other = { ...b, recipientAddress: (await import('./fakes/harness.js')).regtestAddress(77) };
+    const other = { ...b, recipientAddress: regtestAddress(77) };
     const r2 = await browserReveal(h, other);
     expect(r2.status).toBe(422);
     expect(r2.body.error.code).toBe('reveal_invalid');
+    // ADR-0005: the parent return must be pre-committed exactly; any other output 0 is refused.
+    const wrongReturn = await browserReveal(h, b, undefined, { parentReturnAddress: regtestAddress(78) });
+    expect(wrongReturn.status).toBe(422);
+    expect(wrongReturn.body.error.message).toMatch(/parent return/i);
+    const wrongValue = await browserReveal(h, b, undefined, { parentValue: h.parentValue + 1n });
+    expect(wrongValue.status).toBe(422);
+    // A legacy 0x83 reveal is not accepted any more (one release later than the library: this service never took 0x83 on mainnet).
+    const legacy = await browserReveal(h, b, undefined, { sighash: 'single_anyonecanpay' });
+    expect(legacy.status).toBe(422);
+    expect(legacy.body.error.message).toMatch(/expected 2 output|sighash|hash type/i);
     // Honest reveal still works afterwards.
     const ok = await browserReveal(h, b);
     expect(ok.status).toBe(200);

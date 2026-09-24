@@ -8,7 +8,8 @@ export function Welcome() {
   const { state, dispatch } = useMint();
   const { config, fees, queue } = state;
   const std = config ? tierRule(config, 'standard') : null;
-  const blk = config ? tierRule(config, 'block') : null;
+  const lrg = config ? tierRule(config, 'large') : null;
+  const blk = config ? tierRule(config, 'fullblock') : null;
   const blockRate = fees?.blockRecommended ?? fees?.economy ?? 2;
   // Illustration only (witness bytes weigh 1 WU → ~bytes/4 vB). The binding quote comes from @bsh/inscription.
   const blockFeeExample = blk ? Math.ceil((blk.maxBytes / 4) * blockRate) : null;
@@ -39,27 +40,39 @@ export function Welcome() {
         <article className="tier">
           <p className="kicker">Tier I</p>
           <h2 className="tier__name">Standard Degent</h2>
-          <p className="tier__size mono">{std ? `${formatSize(std.minBytes)} – ${formatSize(std.maxBytes)}` : '200 – 390 kB'}</p>
+          <p className="tier__size mono">{std ? `${formatSize(std.minBytes)} – ${formatSize(std.maxBytes)}` : '200.0 kB – 400.0 kB'}</p>
           <ul className="ticks">
-            <li>Relays through the normal mempool</li>
-            <li>Many per block — usually in the next few blocks</li>
+            <li>Usually relays through the normal mempool, many per block</li>
+            <li>The top few kB of the range weigh over 400,000 WU and take the block lane — the quote says so</li>
             <li>Lowest cost; the everyday gentleman</li>
           </ul>
         </article>
-        <article className="tier tier--block">
-          <p className="kicker">Tier II · the 4 MB Degent</p>
-          <h2 className="tier__name">Block Degent</h2>
-          <p className="tier__size mono">{blk ? `up to ${formatSize(blk.maxBytes)}` : 'up to ~3.9 MB'}</p>
+        <article className="tier tier--large">
+          <p className="kicker">Tier II</p>
+          <h2 className="tier__name">Large Degent</h2>
+          <p className="tier__size mono">{lrg ? `${formatSize(lrg.minBytes)} – ${formatSize(lrg.maxBytes)}` : '400.0 kB – 3.50 MB'}</p>
           <ul className="ticks">
-            <li>Fills (almost) an entire Bitcoin block</li>
+            <li>Non-standard relay via Libre Relay / Slipstream</li>
             <li>
-              <strong>One per block</strong> — you join a queue; ETA is position × ~10 min, not a promise
+              <strong>Shares a block</strong> with other Large Degents when their weights fit the 3,990,000 WU budget
+            </li>
+            <li>Queue position is a block slot; ETA is slot × ~10 min, not a promise</li>
+          </ul>
+        </article>
+        <article className="tier tier--block">
+          <p className="kicker">Tier III · the 4 MB Degent</p>
+          <h2 className="tier__name">Full Block Degent</h2>
+          <p className="tier__size mono">{blk ? `${formatSize(blk.minBytes)} – ${formatSize(blk.maxBytes)}` : '3.50 MB – 3.90 MB'}</p>
+          <ul className="ticks">
+            <li>Fills a Bitcoin block on its own</li>
+            <li>
+              <strong>Always alone</strong> — one per block slot, never shared
             </li>
             <li>Non-standard relay via Libre Relay / Slipstream</li>
           </ul>
           {blockFeeExample !== null ? (
             <p className="tier__cost">
-              A full-size Block Degent at {formatFeeRate(blockRate)} is roughly <Money sats={blockFeeExample} /> in network
+              A full-size Full Block Degent at {formatFeeRate(blockRate)} is roughly <Money sats={blockFeeExample} /> in network
               fees alone.
             </p>
           ) : null}
@@ -115,14 +128,14 @@ export function Welcome() {
             <strong>Quote</strong>: an exact fee breakdown, and the commit address recomputed in your browser.
           </li>
           <li>
-            <strong>Pay</strong> in one wallet signature. The reveal is pre-signed by a one-time key that never leaves this
-            tab.
+            <strong>Pay</strong> in one wallet signature. The reveal is pre-signed by a one-time key that never leaves your
+            hands: it goes into your recovery bundle, not to us.
           </li>
           <li>
             <strong>Track</strong> it to the block, then compare the on-chain bytes to your preview.
           </li>
           <li>
-            <strong>Rescue</strong> it yourself if the service ever fails to deliver.
+            <strong>Rescue</strong> it yourself, with that key, if the service ever fails to deliver.
           </li>
         </ol>
       </Panel>

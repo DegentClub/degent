@@ -37,7 +37,8 @@ describe('demo mode: the whole flow, end to end, through the UI', () => {
     // 1 · Welcome
     expect(screen.getByText('DEMO')).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 2, name: 'Standard Degent' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { level: 2, name: 'Block Degent' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'Large Degent' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'Full Block Degent' })).toBeInTheDocument();
     expect(await screen.findByText('3 waiting')).toBeInTheDocument();
     const start = screen.getByRole('button', { name: 'Start minting' });
     await waitFor(() => expect(start).toBeEnabled());
@@ -77,8 +78,11 @@ describe('demo mode: the whole flow, end to end, through the UI', () => {
     const bundleText = (await screen.findByLabelText('Recovery bundle (JSON)')) as HTMLTextAreaElement;
     const bundle = JSON.parse(bundleText.value);
     expect(bundle.kind).toBe('degent.club/recovery');
+    expect(bundle.version).toBe(2);
     expect(bundle.orderToken).toMatch(/^[0-9a-f]{64}$/);
-    expect(screen.getByText('Keep it private')).toBeInTheDocument();
+    expect(bundle.revealPrivkey).toMatch(/^[0-9a-f]{64}$/);
+    expect(screen.getByText('Keep it private — it holds a key')).toBeInTheDocument();
+    expect(screen.getByText(/What that key can do/)).toBeInTheDocument();
     expect(loadRecovery(store)?.orderId).toBe(bundle.orderId);
     expect(log).not.toContain('wallet.signPsbt');
     const sign = screen.getByRole('button', { name: 'Sign & broadcast with UniSat' });

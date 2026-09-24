@@ -5,13 +5,21 @@ info:
   summary: Non-custodial, parent-linked inscription minting for the Decentralized Gentlemen Club.
   description: |
     Implemented by `@bsh/degent-mint` (products/degent/services/mint); typed client and domain types in
-    `@bsh/degent-mint-sdk`. Design: docs/adr/0002-degent-mint-architecture.md.
+    `@bsh/degent-mint-sdk`. Design: docs/adr/0002-degent-mint-architecture.md, amended by
+    docs/adr/0005-strict-reveal-and-tiers.md (SIGHASH_ALL|ANYONECANPAY reveals, re-signed rescue, three tiers by
+    content bytes, block-lane weight budget).
 
     Flow: `POST /v1/orders` (indicative quote + one-time `orderToken`) -> `PUT /v1/orders/{id}/content`
-    (raw bytes; review; binding quote + commit address) -> `POST /v1/orders/{id}/reveal` (half-signed reveal,
-    verified and stored encrypted) -> user funds the commit -> the service reveals with the parent ->
-    `GET /v1/orders/{id}` to track. If the service cannot reveal within `rescueAfterSeconds`,
-    `GET /v1/orders/{id}/rescue` returns a parent-less reveal the user can broadcast.
+    (raw bytes; review; binding quote + commit address) -> `POST /v1/orders/{id}/reveal` (half-signed reveal
+    `[commit] -> [parent return, child]` signed 0x81, verified and stored encrypted) -> user funds the commit ->
+    the service inserts the parent input, co-signs it and reveals -> `GET /v1/orders/{id}` to track. If the
+    service cannot reveal within `rescueAfterSeconds`, `GET /v1/orders/{id}/rescue` returns the INPUTS for a
+    parent-less rescue that the browser re-signs with the ephemeral key kept in the user's recovery bundle.
+
+    Tiers (`Tier`) are decided by CONTENT BYTES: `standard` (Standard Degent, 200,000-400,000 B), `large`
+    (Large Degent, 400,001-3,499,999 B), `fullblock` (Full Block Degent, 3,500,000-3,900,000 B). Lanes
+    (`Lane`) are transport, decided by the reveal WEIGHT: <= 400,000 WU is `standard`, else `block`. The
+    block lane packs reveals into a 3,990,000 WU per-block budget; a Full Block Degent never shares.
 
     Conventions: amounts are integer sats as JSON numbers; timestamps are ISO 8601 UTC; hashes/keys are
     lowercase hex. Every error is `{ "error": { "code", "message", "details"? } }`. Browser calls are
@@ -66,7 +74,7 @@ paths:
     get:
       tags: [service]
       operationId: getQueue
-      summary: Lane occupancy. Block Degents are one per block; ETA is position x ~10 min, not a promise.
+      summary: Lane occupancy. The block lane is a per-block weight budget; ETA is block slot x ~10 min, not a promise.
       responses:
         '200':
           description: Queue snapshot
@@ -81,9 +89,11 @@ paths:
       description: |
         Validates the declared metadata against the collection rules (type, tier size bounds), the
         recipient address (taproot, on the service network), the ephemeral reveal public key (valid x-only
-        point) and the fee rate (>= minFeeRate, <= the lane's policy maximum). Returns a random 256-bit
-        `orderToken` exactly once; the service stores only its SHA-256. Block-tier orders are refused with
-        503 `queue_full` when the block queue would outlast the rescue timeout.
+        point) and the fee rate (>= minFeeRate, <= the lane's policy maximum). The quote's `lane` is decided
+        by the exact reveal weight, so a `standard`-tier order near 400,000 bytes can come back with
+        `lane: block`. Returns a random 256-bit `orderToken` exactly once; the service stores only its SHA-256.
+        Block-lane orders are refused with 503 `queue_full` when the block slot they would get lies beyond
+        the rescue timeout.
       requestBody:
         required: true
         content:
@@ -161,12 +171,14 @@ paths:
     post:
       tags: [orders]
       operationId: submitReveal
-      summary: Submit the half-signed reveal (SIGHASH_SINGLE|ANYONECANPAY) before funding the commit.
+      summary: Submit the half-signed reveal (SIGHASH_ALL|ANYONECANPAY, 0x81) before funding the commit.
       description: |
-        Requires status `approved` and an unexpired quote. Verified with `@bsh/inscription.verifyHalfSignedReveal`
-        against the stored content, recipient, postage, commit outpoint and commit value, and proven
-        rescuable. Stored encrypted (AES-256-GCM) outside the order row; never returned or emitted.
-        Order becomes `awaiting_payment`.
+        Requires status `approved` and an unexpired quote. The PSBT is `[commit] -> [parent return, child]`
+        with output 0 = (`collectionAddress`, `parentValueSats`) from `GET /v1/config` and output 1 = the
+        order's recipient with `postageSats`. Verified with `@bsh/inscription.verifyHalfSignedReveal` against
+        the stored content, recipient, postage, commit outpoint, commit value, parent return address and
+        value, and hash type 0x81 (0x83 is refused). Stored encrypted (AES-256-GCM) outside the order row;
+        never returned or emitted. Order becomes `awaiting_payment`.
       security:
         - orderToken: []
       requestBody:
@@ -195,15 +207,20 @@ paths:
     get:
       tags: [orders]
       operationId: getRescue
-      summary: Parent-less self-rescue reveal ([commit] -> [child]) once the order is `rescue_available`.
+      summary: Inputs for the parent-less self-rescue ([commit] -> [child]) once the order is `rescue_available`.
+      description: |
+        ADR-0005 §2. The service holds nothing broadcastable without the parent (0x81 signs the parent
+        return output), so it returns the order facts the browser needs to re-sign `[commit] -> [child]`
+        itself with `@bsh/inscription.buildResignedRescue` and the ephemeral key K_e from the user's
+        recovery bundle. Never contains a transaction, a PSBT or a key.
       security:
         - orderToken: []
       responses:
         '200':
-          description: Raw rescue transaction, ready to broadcast
+          description: Rescue inputs
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/RescueResponse' }
+              schema: { $ref: '#/components/schemas/RescueInputs' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
@@ -246,8 +263,14 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
   schemas:
     Network: { type: string, enum: [mainnet, testnet, signet, regtest] }
-    Tier: { type: string, enum: [standard, block] }
-    Lane: { type: string, enum: [standard, block] }
+    Tier:
+      type: string
+      enum: [standard, large, fullblock]
+      description: Product tier by CONTENT BYTES (ADR-0005 §3). Not the transport lane.
+    Lane:
+      type: string
+      enum: [standard, block]
+      description: Transport lane by reveal WEIGHT (<= 400,000 WU standard, else block).
     Sats: { type: integer, minimum: 0, description: Integer satoshis }
     Timestamp: { type: string, format: date-time }
     Hex32: { type: string, pattern: '^[0-9a-f]{64}$' }
@@ -263,13 +286,14 @@ components:
     TierRule:
       type: object
       additionalProperties: false
-      required: [tier, minBytes, maxBytes, lane, label, description]
+      required: [tier, minBytes, maxBytes, lane, sharesBlock, label, description]
       properties:
         tier: { $ref: '#/components/schemas/Tier' }
         minBytes: { type: integer }
         maxBytes: { type: integer }
-        lane: { $ref: '#/components/schemas/Lane' }
-        label: { type: string }
+        lane: { allOf: [{ $ref: '#/components/schemas/Lane' }], description: The lane this tier USUALLY travels; the quote's lane is binding. }
+        sharesBlock: { type: boolean, description: False for the Full Block Degent, which always takes a block alone. }
+        label: { type: string, examples: [Standard Degent, Large Degent, Full Block Degent] }
         description: { type: string }
     CollectionConfig:
       type: object
@@ -290,10 +314,11 @@ components:
         serviceFeeSats:
           type: object
           additionalProperties: false
-          required: [standard, block]
+          required: [standard, large, fullblock]
           properties:
             standard: { $ref: '#/components/schemas/Sats' }
-            block: { $ref: '#/components/schemas/Sats' }
+            large: { $ref: '#/components/schemas/Sats' }
+            fullblock: { $ref: '#/components/schemas/Sats' }
         minFeeRate: { type: number, description: sat/vB }
         quoteTtlSeconds: { type: integer }
         rescueAfterSeconds: { type: integer }
@@ -301,9 +326,10 @@ components:
       allOf:
         - $ref: '#/components/schemas/CollectionConfig'
         - type: object
-          required: [collectionAddress, serviceFeeAddress, maxUploadBytes]
+          required: [collectionAddress, parentValueSats, serviceFeeAddress, maxUploadBytes]
           properties:
             collectionAddress: { type: string, description: Taproot address holding the parent (parent return output). }
+            parentValueSats: { allOf: [{ $ref: '#/components/schemas/Sats' }], description: Constant value of the parent UTXO; the browser signs output 0 = (collectionAddress, parentValueSats). }
             serviceFeeAddress: { type: [string, 'null'] }
             maxUploadBytes: { type: integer, examples: [4194304] }
     CreateOrderRequest:
@@ -335,7 +361,7 @@ components:
                  commitValueSats, totalSats, commitAddress, binding, expiresAt, queuePosition, etaMinutes]
       properties:
         tier: { $ref: '#/components/schemas/Tier' }
-        lane: { $ref: '#/components/schemas/Lane' }
+        lane: { allOf: [{ $ref: '#/components/schemas/Lane' }], description: Decided by revealWeight, not by tier. }
         feeRate: { type: number }
         revealWeight: { type: integer, description: Exact weight (WU) of the final parent-linked reveal. }
         revealVsize: { type: integer }
@@ -347,7 +373,7 @@ components:
         commitAddress: { type: [string, 'null'], description: Null on the indicative quote. }
         binding: { type: boolean }
         expiresAt: { $ref: '#/components/schemas/Timestamp' }
-        queuePosition: { type: [integer, 'null'] }
+        queuePosition: { type: [integer, 'null'], description: Block lane only - the 1-based block slot (several Large Degents can share a slot). }
         etaMinutes: { type: [integer, 'null'] }
     ReviewCheck:
       type: object
@@ -423,17 +449,31 @@ components:
       properties:
         commitTxid: { type: string, pattern: '^[0-9a-fA-F]{64}$', description: Txid of the (unsigned) funding tx. }
         commitVout: { type: integer, minimum: 0, maximum: 4294967295 }
-        halfSignedRevealPsbt: { type: string, contentEncoding: base64, description: '[commit] -> [child] PSBT, input signed with 0x83. Max request body 8 MiB.' }
+        halfSignedRevealPsbt: { type: string, contentEncoding: base64, description: '[commit] -> [parent return, child] PSBT, commit input signed with SIGHASH_ALL|ANYONECANPAY (0x81). Max request body 8 MiB.' }
         commitAddress: { type: string, description: Optional browser-computed commit address; must equal the quote's. }
-    RescueResponse:
+    RescueInputs:
       type: object
       additionalProperties: false
-      required: [orderId, txid, hex, weight]
+      required: [orderId, network, commitTxid, commitVout, commitValueSats, contentType, contentLength, contentSha256,
+                 parentInscriptionId, recipientAddress, revealPubkey, postageSats, rescueWeight, rescueFeeSats,
+                 rescueFeeRate, suggestedFeeRate]
       properties:
         orderId: { type: string }
-        txid: { $ref: '#/components/schemas/Txid' }
-        hex: { type: string, pattern: '^[0-9a-f]+$' }
-        weight: { type: integer }
+        network: { $ref: '#/components/schemas/Network' }
+        commitTxid: { $ref: '#/components/schemas/Txid' }
+        commitVout: { type: integer, minimum: 0 }
+        commitValueSats: { $ref: '#/components/schemas/Sats' }
+        contentType: { type: string }
+        contentLength: { type: integer }
+        contentSha256: { allOf: [{ $ref: '#/components/schemas/Hex32' }], description: The browser checks the bytes it holds against this before signing. }
+        parentInscriptionId: { type: [string, 'null'], pattern: '^[0-9a-f]{64}i[0-9]+$', description: Envelope parent tag the commit was built with. }
+        recipientAddress: { type: string }
+        revealPubkey: { allOf: [{ $ref: '#/components/schemas/Hex32' }], description: x-only key of K_e; the bundle must hold the matching private key. }
+        postageSats: { $ref: '#/components/schemas/Sats' }
+        rescueWeight: { type: integer, description: Exact weight (WU) of the re-signed rescue tx. }
+        rescueFeeSats: { allOf: [{ $ref: '#/components/schemas/Sats' }], description: commitValueSats - postageSats; the whole remainder is fee. }
+        rescueFeeRate: { type: number, description: rescueFeeSats / vsize, sat/vB. }
+        suggestedFeeRate: { type: number, description: Current standard-lane estimate, so the UI can say whether the rescue is competitive. }
     HealthResponse:
       type: object
       additionalProperties: false
@@ -480,7 +520,9 @@ components:
         lane: { $ref: '#/components/schemas/Lane' }
         waiting: { type: integer }
         inFlight: { type: integer }
-        capacity: { type: integer }
+        capacity: { type: integer, description: 'standard: reveals in flight allowed; block: blocks in flight (1).' }
+        weightBudget: { type: [integer, 'null'], description: Block lane - per-block weight budget (3990000 WU); null for standard. }
+        inFlightWeight: { type: integer, description: Block lane - weight (WU) of reveals currently in flight; 0 for standard. }
         etaMinutesForNext: { type: [integer, 'null'] }
     QueueResponse:
       type: object

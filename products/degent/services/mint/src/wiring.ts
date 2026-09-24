@@ -95,7 +95,7 @@ export function buildRuntime(cfg: MintConfig, log: Logger = jsonLogger()): Runti
 
   const events = new MemoryEventBus();
   const parents = new StoreParentUtxoProvider(store);
-  const orders = new OrderService({ settings, store, content, reveals, review, events, clock: systemClock, chain });
+  const orders = new OrderService({ settings, store, content, reveals, review, events, clock: systemClock, chain, fees });
   const app = createApp({
     orders,
     fees,
@@ -123,5 +123,7 @@ export async function initialiseParent(rt: Runtime, cfg: MintConfig, log: Logger
   if (!tx || !out) throw new Error('PARENT_OUTPOINT not found on chain');
   const expected = bytesToHex(addressToScript(rt.signer.collectionAddress(), cfg.settings.network));
   if (out.scriptHex.toLowerCase() !== expected) throw new Error('PARENT_OUTPOINT is not held by the collection key');
+  if (out.value !== BigInt(cfg.settings.parentValueSats))
+    throw new Error(`PARENT_OUTPOINT value ${out.value} sats != PARENT_VALUE_SATS ${cfg.settings.parentValueSats}; browsers sign the parent return with that value (ADR-0005)`);
   await rt.parents.initialise({ ...cfg.parentOutpoint, value: out.value, scriptHex: expected, confirmed: tx.confirmed, createdByLane: null });
 }

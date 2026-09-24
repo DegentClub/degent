@@ -127,7 +127,10 @@ components:
             - type: 'null'
           description: Null only for the creation event (`awaiting_content`).
         at: { type: string, format: date-time }
-        lane: { type: string, enum: [standard, block] }
+        lane:
+          type: string
+          enum: [standard, block]
+          description: Transport lane decided by the reveal WEIGHT (ADR-0005), not the tier; a 397-400 KB Standard Degent is `block`.
         detail: { type: string, description: Human-readable context (never secrets). }
         txid:
           type: string

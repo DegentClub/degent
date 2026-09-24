@@ -5,8 +5,10 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { hexToBytes } from '@noble/hashes/utils.js';
-import { buildRescueReveal, verifyHalfSignedReveal } from '@bsh/inscription';
+import { addressToScript, estimateResignedRescueWeight, verifyHalfSignedReveal, vsizeFromWeight } from '@bsh/inscription';
 import type {
+  BlockLaneItem,
+  BlockSlot,
   CreateOrderRequest,
   CreateOrderResponse,
   Lane,
@@ -15,11 +17,21 @@ import type {
   OrderStatus,
   QueueInfo,
   QueueResponse,
-  RescueResponse,
+  RescueInputs,
   SubmitRevealRequest,
   Tier,
 } from '@bsh/degent-mint-sdk';
-import { BLOCK_INTERVAL_MINUTES, isSha256Hex, sha256Hex, tierForSize, validateContentMeta } from '@bsh/degent-mint-sdk';
+import {
+  BLOCK_INTERVAL_MINUTES,
+  BLOCK_LANE_WEIGHT_BUDGET,
+  blockSlotOf,
+  isSha256Hex,
+  isTier,
+  packBlockSlots,
+  sha256Hex,
+  tierRule,
+  validateContentMeta,
+} from '@bsh/degent-mint-sdk';
 import { checkRecipientAddress } from '../domain/address.js';
 import { DomainError, conflict, invalid, notFound } from '../domain/errors.js';
 import { IN_FLIGHT, WAITING_FOR_LANE, toPublicOrder, type OrderRecord } from '../domain/order.js';
@@ -30,6 +42,7 @@ import type { ChainPort } from '../ports/chain.js';
 import type { Clock } from '../ports/clock.js';
 import type { ContentStore } from '../ports/content-store.js';
 import type { EventBus } from '../ports/event-bus.js';
+import type { FeePort } from '../ports/fees.js';
 import type { OrderStore } from '../ports/order-store.js';
 import type { RevealVault } from '../ports/reveal-vault.js';
 import type { MintSettings } from './settings.js';
@@ -43,6 +56,8 @@ export interface OrderServiceDeps {
   events: EventBus;
   clock: Clock;
   chain?: ChainPort;
+  /** Used only for the rescue's `suggestedFeeRate`; falls back to the collection minimum. */
+  fees?: FeePort;
   newId?: () => string;
   newToken?: () => string;
 }
@@ -133,13 +148,38 @@ export class OrderService {
     return out;
   }
 
+  /** Block-lane item for the packing maths (ADR-0005 §4). */
+  blockItem(r: Pick<OrderRecord, 'id' | 'tier' | 'quote'>): BlockLaneItem {
+    const rule = tierRule(r.tier, this.d.settings.collection);
+    return { id: r.id, weight: r.quote?.revealWeight ?? 0, sharesBlock: rule?.sharesBlock ?? false };
+  }
+
+  /**
+   * Block slots: slot 1 is what is in flight (revealing / unconfirmed), waiting orders are packed
+   * behind it by weight budget. An order's queue position is its slot index; ETA = slot x ~10 min.
+   */
+  blockSlots(occ: Awaited<ReturnType<OrderService['laneOccupancy']>>): BlockSlot[] {
+    return packBlockSlots(occ.block.waiting.map((o) => this.blockItem(o)), {
+      inFlight: occ.block.inFlight.map((o) => this.blockItem(o)),
+    });
+  }
+
+  /** Slot a NEW order of `weight`/`tier` would open or join, given the current queue. */
+  blockSlotForNew(occ: Awaited<ReturnType<OrderService['laneOccupancy']>>, tier: Tier, weight: number): number {
+    const probe: BlockLaneItem = { id: '\u0000new', weight, sharesBlock: tierRule(tier, this.d.settings.collection)?.sharesBlock ?? false };
+    const slots = packBlockSlots([...occ.block.waiting.map((o) => this.blockItem(o)), probe], {
+      inFlight: occ.block.inFlight.map((o) => this.blockItem(o)),
+    });
+    return blockSlotOf(slots, probe.id) ?? slots.length;
+  }
+
   private async queueInfo(r: OrderRecord): Promise<QueueInfo | null> {
     if (!WAITING_FOR_LANE.includes(r.status)) return null;
-    const occ = (await this.laneOccupancy())[r.lane];
-    const idx = occ.waiting.findIndex((o) => o.id === r.id);
+    const occ = await this.laneOccupancy();
+    const idx = occ[r.lane].waiting.findIndex((o) => o.id === r.id);
     if (idx < 0) return null;
     if (r.lane === 'block') {
-      const position = idx + 1 + occ.inFlight.length;
+      const position = blockSlotOf(this.blockSlots(occ), r.id) ?? idx + 1;
       return { lane: 'block', position, etaMinutes: position * BLOCK_INTERVAL_MINUTES };
     }
     return { lane: 'standard', position: idx + 1, etaMinutes: BLOCK_INTERVAL_MINUTES };
@@ -153,13 +193,16 @@ export class OrderService {
     } catch {
       tipHeight = null;
     }
-    const block = occ.block.waiting.length + occ.block.inFlight.length;
+    const slots = this.blockSlots(occ);
+    const inFlightWeight = occ.block.inFlight.reduce((a, o) => a + (o.quote?.revealWeight ?? 0), 0);
     return {
       standard: {
         lane: 'standard',
         waiting: occ.standard.waiting.length,
         inFlight: occ.standard.inFlight.length,
         capacity: this.d.settings.standardConcurrency,
+        weightBudget: null,
+        inFlightWeight: 0,
         etaMinutesForNext: BLOCK_INTERVAL_MINUTES,
       },
       block: {
@@ -167,7 +210,10 @@ export class OrderService {
         waiting: occ.block.waiting.length,
         inFlight: occ.block.inFlight.length,
         capacity: 1,
-        etaMinutesForNext: (block + 1) * BLOCK_INTERVAL_MINUTES,
+        weightBudget: BLOCK_LANE_WEIGHT_BUDGET,
+        inFlightWeight,
+        // Conservative: an order that opens a new slot (e.g. a Full Block Degent).
+        etaMinutesForNext: (slots.length + 1) * BLOCK_INTERVAL_MINUTES,
       },
       tipHeight,
     };
@@ -189,24 +235,13 @@ export class OrderService {
     if (!meta.ok) throw invalid('content metadata violates the collection rules', { checks: meta.checks });
     const recipientError = checkRecipientAddress(req.recipientAddress, s.network);
     if (recipientError) throw invalid(recipientError);
-    const lane = tierForSize(req.contentLength, s.collection)!.lane;
-    const band = s.policy.bands[lane];
-    const minRate = Math.max(s.collection.minFeeRate, band.minFeeRate);
-    if (req.feeRate < minRate) throw invalid(`feeRate must be >= ${minRate} sat/vB`, { minFeeRate: minRate });
-    if (req.feeRate > band.maxFeeRate) throw invalid(`feeRate must be <= ${band.maxFeeRate} sat/vB for the ${lane} lane`);
+    if (req.feeRate < s.collection.minFeeRate) throw invalid(`feeRate must be >= ${s.collection.minFeeRate} sat/vB`, { minFeeRate: s.collection.minFeeRate });
 
     const now = this.now();
     const expiresAt = new Date(now.getTime() + s.collection.quoteTtlSeconds * 1000);
     const occ = await this.laneOccupancy();
-    if (lane === 'block') {
-      // Block Degents are one per block. Refuse new ones when the queue alone would outlast the
-      // rescue timeout: we would be selling a parent link we cannot deliver in time.
-      const ahead = occ.block.waiting.length + occ.block.inFlight.length;
-      const etaSeconds = (ahead + 1) * BLOCK_INTERVAL_MINUTES * 60;
-      if (etaSeconds > s.collection.rescueAfterSeconds * 0.8)
-        throw new DomainError('queue_full', 503, 'the Block Degent queue is full; try again later', { ahead });
-    }
-    const quote = computeQuote({
+    // The lane comes out of the exact weight (ADR-0005 §3), so quote first, then check the lane's fee band.
+    const draft = computeQuote({
       network: s.network,
       config: s.collection,
       tier: req.tier,
@@ -218,8 +253,24 @@ export class OrderService {
       revealPubkey: hexToBytes(req.revealPubkey),
       feeRate: req.feeRate,
       expiresAt,
-      queuePosition: occ.block.waiting.length + occ.block.inFlight.length + 1,
+      queuePosition: null,
     });
+    const lane = draft.lane;
+    const band = s.policy.bands[lane];
+    const minRate = Math.max(s.collection.minFeeRate, band.minFeeRate);
+    if (req.feeRate < minRate) throw invalid(`feeRate must be >= ${minRate} sat/vB`, { minFeeRate: minRate });
+    if (req.feeRate > band.maxFeeRate) throw invalid(`feeRate must be <= ${band.maxFeeRate} sat/vB for the ${lane} lane`);
+
+    let queuePosition: number | null = null;
+    if (lane === 'block') {
+      // Block slots are limited by weight. Refuse new ones when the slot this order would get lies
+      // beyond the rescue timeout: we would be selling a parent link we cannot deliver in time.
+      queuePosition = this.blockSlotForNew(occ, req.tier, draft.revealWeight);
+      const etaSeconds = queuePosition * BLOCK_INTERVAL_MINUTES * 60;
+      if (etaSeconds > s.collection.rescueAfterSeconds * 0.8)
+        throw new DomainError('queue_full', 503, 'the block lane queue is full; try again later', { slot: queuePosition });
+    }
+    const quote = { ...draft, queuePosition, etaMinutes: lane === 'block' ? queuePosition! * BLOCK_INTERVAL_MINUTES : null };
 
     const token = this.d.newToken?.() ?? randomBytes(32).toString('base64url');
     const at = now.toISOString();
@@ -313,7 +364,7 @@ export class OrderService {
       revealPubkey: hexToBytes(r.revealPubkey),
       feeRate: r.quote!.feeRate,
       expiresAt,
-      queuePosition: occ.block.waiting.length + occ.block.inFlight.length + 1,
+      queuePosition: r.lane === 'block' ? this.blockSlotForNew(occ, r.tier, r.quote!.revealWeight) : null,
     });
     r = await this.transition(r, 'approved', { detail: 'binding quote issued', patch: { review, quote, expiresAt: quote.expiresAt } });
     return this.publicOrder(r);
@@ -334,6 +385,8 @@ export class OrderService {
     const s = this.d.settings;
     const content = inscriptionContent(r.contentType, bytes, s.collection.parentInscriptionId);
     const commitOutpoint = { txid: req.commitTxid.toLowerCase(), vout: req.commitVout };
+    // ADR-0005 §1: SIGHASH_ALL|ANYONECANPAY over [parent return, child]. The browser pre-committed
+    // output 0 = (collection address, parent value); anything else is refused before it is stored.
     const res = verifyHalfSignedReveal({
       network: s.network,
       psbtBase64: req.halfSignedRevealPsbt,
@@ -343,14 +396,11 @@ export class OrderService {
       expectedCommitValue: BigInt(quote.commitValueSats),
       expectedRecipientAddress: r.recipientAddress,
       expectedPostage: BigInt(quote.postageSats),
+      expectedSighash: 'all_anyonecanpay',
+      expectedParentReturnAddress: s.collectionAddress,
+      expectedParentValue: BigInt(s.parentValueSats),
     });
     if (!res.ok) throw new DomainError('reveal_invalid', 422, `half-signed reveal rejected: ${res.reason}`);
-    // The same PSBT must also be a valid self-rescue; prove it now, not after the user has paid.
-    try {
-      buildRescueReveal({ network: s.network, halfSignedPsbtBase64: req.halfSignedRevealPsbt });
-    } catch (e) {
-      throw new DomainError('reveal_invalid', 422, `half-signed reveal is not rescuable: ${(e as Error).message}`);
-    }
     await this.d.reveals.put(r.id, req.halfSignedRevealPsbt);
     r = await this.transition(r, 'awaiting_payment', {
       detail: 'half-signed reveal verified and stored',
@@ -365,14 +415,46 @@ export class OrderService {
     return this.publicOrder(r);
   }
 
-  async getRescue(orderId: string, authorization: string | undefined): Promise<RescueResponse> {
+  /**
+   * ADR-0005 §2: the service holds no transaction the user could broadcast alone (a 0x81 reveal
+   * needs the parent). It returns the inputs for `buildResignedRescue`, which the browser runs with
+   * the ephemeral key K_e from the user's recovery bundle.
+   */
+  async getRescue(orderId: string, authorization: string | undefined): Promise<RescueInputs> {
     const r = await this.authorize(orderId, authorization);
     if (r.status !== 'rescue_available')
       throw new DomainError('rescue_unavailable', 409, `rescue is not available in status ${r.status}`, { status: r.status });
-    const psbt = await this.d.reveals.get(r.id);
-    if (!psbt) throw new DomainError('internal', 500, 'stored reveal missing');
-    const rescue = buildRescueReveal({ network: this.d.settings.network, halfSignedPsbtBase64: psbt });
-    return { orderId: r.id, txid: rescue.txid, hex: rescue.hex, weight: rescue.weight };
+    const s = this.d.settings;
+    const quote = r.quote!;
+    const bytes = await this.d.content.get(r.contentSha256);
+    if (!bytes) throw new DomainError('internal', 500, 'stored content missing');
+    const content = inscriptionContent(r.contentType, bytes, s.collection.parentInscriptionId);
+    const rescueWeight = estimateResignedRescueWeight({ content, recipientScript: addressToScript(r.recipientAddress, s.network) });
+    const rescueFeeSats = quote.commitValueSats - quote.postageSats;
+    let suggestedFeeRate = s.collection.minFeeRate;
+    try {
+      if (this.d.fees) suggestedFeeRate = Math.max(s.collection.minFeeRate, (await this.d.fees.getFees()).standard.normal);
+    } catch {
+      suggestedFeeRate = s.collection.minFeeRate;
+    }
+    return {
+      orderId: r.id,
+      network: r.network,
+      commitTxid: r.commitOutpoint!.txid,
+      commitVout: r.commitOutpoint!.vout,
+      commitValueSats: quote.commitValueSats,
+      contentType: r.contentType,
+      contentLength: r.contentLength,
+      contentSha256: r.contentSha256,
+      parentInscriptionId: s.collection.parentInscriptionId,
+      recipientAddress: r.recipientAddress,
+      revealPubkey: r.revealPubkey,
+      postageSats: quote.postageSats,
+      rescueWeight,
+      rescueFeeSats,
+      rescueFeeRate: Math.round((rescueFeeSats / vsizeFromWeight(rescueWeight)) * 1000) / 1000,
+      suggestedFeeRate,
+    };
   }
 }
 
@@ -391,7 +473,7 @@ function asObject(body: unknown, allowed: string[]): Record<string, unknown> {
 export function parseCreateOrder(body: unknown): CreateOrderRequest {
   const o = asObject(body, CREATE_KEYS);
   const errors: string[] = [];
-  if (o.tier !== 'standard' && o.tier !== 'block') errors.push('tier must be "standard" or "block"');
+  if (!isTier(o.tier)) errors.push('tier must be "standard", "large" or "fullblock"');
   if (typeof o.contentType !== 'string' || o.contentType.length > 100) errors.push('contentType must be a string');
   if (!Number.isSafeInteger(o.contentLength) || (o.contentLength as number) <= 0) errors.push('contentLength must be a positive integer');
   if (!isSha256Hex(o.contentSha256)) errors.push('contentSha256 must be 64 lowercase hex characters');

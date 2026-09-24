@@ -62,6 +62,14 @@ describe('loadConfig', () => {
     const c = loadConfig(testnetEnv);
     expect(c.corsOrigins).toEqual(['https://degent.club', 'https://staging.degent.club']);
     expect(c.settings.collection.parentInscriptionId).toBe(`${'a'.repeat(64)}i0`);
+    expect(c.settings.parentValueSats).toBe(10_000);
+    expect(loadConfig({ ...testnetEnv, PARENT_VALUE_SATS: '20000' }).settings.parentValueSats).toBe(20_000);
+    expect(problems({ ...testnetEnv, PARENT_VALUE_SATS: '100' }).join('\n')).toMatch(/PARENT_VALUE_SATS/);
+  });
+
+  it('service fees are per ADR-0005 tier', () => {
+    const c = loadConfig({ ...testnetEnv, SERVICE_FEE_ADDRESS: addr('testnet'), SERVICE_FEE_SATS_STANDARD: '1', SERVICE_FEE_SATS_LARGE: '2', SERVICE_FEE_SATS_FULLBLOCK: '3' });
+    expect(c.settings.collection.serviceFeeSats).toEqual({ standard: 1, large: 2, fullblock: 3 });
   });
 
   it('refuses mainnet with the in-memory dev signer', () => {
@@ -77,7 +85,7 @@ describe('loadConfig', () => {
   });
 
   it('validates formats', () => {
-    const p = problems({ ...testnetEnv, REVEAL_ENCRYPTION_KEY: 'short', CORS_ORIGINS: 'https://degent.club/path', PORT: 'x', STANDARD_CONCURRENCY: '50', SERVICE_FEE_SATS_BLOCK: '100' });
+    const p = problems({ ...testnetEnv, REVEAL_ENCRYPTION_KEY: 'short', CORS_ORIGINS: 'https://degent.club/path', PORT: 'x', STANDARD_CONCURRENCY: '50', SERVICE_FEE_SATS_LARGE: '100' });
     expect(p.join('\n')).toMatch(/REVEAL_ENCRYPTION_KEY/);
     expect(p.join('\n')).toMatch(/CORS_ORIGINS/);
     expect(p.join('\n')).toMatch(/PORT/);
