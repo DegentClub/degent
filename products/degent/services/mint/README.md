@@ -226,7 +226,7 @@ pnpm --filter @bsh/degent-mint test         # unit + API + worker + e2e on a fak
 pnpm --filter @bsh/degent-mint typecheck
 ```
 
-Operations: [RUNBOOK.md](./RUNBOOK.md).
+Operations: [RUNBOOK.md](./RUNBOOK.md). Launch (Club parent, signed Gallery, env): [docs/LAUNCH-CHAIN-SETUP.md](../../../../docs/LAUNCH-CHAIN-SETUP.md).
 
 ## Known gaps
 

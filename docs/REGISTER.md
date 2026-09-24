@@ -17,8 +17,15 @@ and what the mint service serves in the meantime.
 One inscription, held in the club's own ord wallet (cold, multisig-controlled — see *Custody*), whose content is the club charter (a short HTML page) and whose metadata (CBOR, per the ord `--cbor-metadata` flag) carries:
 
 ```json
-{ "name": "Decentralized Gentlemen Club", "charter": "10000", "register": "<inscription id of the Gallery, filled after 1.2>" }
+{ "name": "Decentralized Gentlemen Club", "charter": "10000" }
 ```
+
+(An earlier draft also carried `"register": "<Gallery id>"`. Inscription metadata is immutable and the Gallery can only
+be inscribed after the parent, so the pointer is not written: the Gallery is the parent's signed child, found with
+ord `/r/children/<parent>` and announced as `GALLERY_INSCRIPTION_ID`, `GET /v1/register` → `gallery`.) The parent is
+inscribed to the owner's ord wallet, the Gallery inscribed with `--parent`, and only then is the parent sent to the
+collection address; step by step in [LAUNCH-CHAIN-SETUP.md](LAUNCH-CHAIN-SETUP.md), prepared by
+`scripts/prepare-parent.mjs`.
 
 ### 1.2 The Gallery (existing 4,112)
 The first 4,112 Degents were inscribed before the parent existed, so they cannot be its children. They are recorded instead by one **Gallery inscription**, a child of the parent, whose content is a JSON document:
@@ -28,6 +35,17 @@ The first 4,112 Degents were inscribed before the parent existed, so they cannot
 ```
 
 The Gallery is signed: the metadata includes a BIP-322 signature over `sha256(content)` by the club's announced signing address, so a forked gallery cannot impersonate it. Additions after 4,112 do not touch the Gallery; they use 1.3.
+
+Exact form (`scripts/prepare-gallery.mjs` builds it, `chain-setup verify-gallery` checks it): the content is the compact
+JSON above (no whitespace, members ordered by `n`, 4,112 unique ids, no trailing newline); the signed message is the
+single ASCII line
+
+```
+degent.club Gallery v1: 4112 members, sha256 <sha256(content), lowercase hex>, parent <parent inscription id>
+```
+
+and the CBOR metadata is `{ kind: "degent.club/gallery", version: 1, parent, count, sha256, message, signer, signature }`
+(BIP-322 simple, base64). Binding the parent id into the message keeps the signature from being replayed under another parent.
 
 ### 1.3 New members (4,113 →)
 Every new mint is revealed by the mint service (`@bsh/degent-mint`, ADR-0002) as a **child of the Club parent**:
