@@ -1,0 +1,22 @@
+{
+  "name": "@bsh/degent-x-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p .",
+    "dev": "tsx src/main.ts",
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@bsh/events": "workspace:*",
+    "@bsh/degent-mint-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "vitest": "^5.0.1",
+    "@types/node": "^22",
+    "tsx": "^4.23.15"
+  }
+}

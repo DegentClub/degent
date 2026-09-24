@@ -1,0 +1,14 @@
+name: degent-x-bot
+package: "@bsh/degent-x-bot"
+kind: service
+product: degent
+owner: team-degent
+summary: "@degentclub content engine - approval-tier classifier, content safety (address filter, NFA rules), and Register-fact drafts from delivered mints and stats behind a review queue."
+lifecycle: experimental
+depends_on: ["@bsh/events", "@bsh/degent-mint-sdk"]
+consumes: ["deps/scribbit/contracts/asyncapi/platform-events.yaml#/channels/degentMintOrderStatus", contracts/openapi/degent-mint.yaml]
+stores: ["memory:degent_x_bot_drafts"]
+secrets: ["services/degent-x-bot/x-access-token"]
+env_schema: ./env.schema.json
+docs: ./README.md
+commands: { dev: dev, test: test, typecheck: typecheck }
