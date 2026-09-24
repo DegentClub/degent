@@ -1,14 +1,149 @@
 import { useCallback, useEffect, useId, useRef, useState, type DragEvent } from 'react';
-import { readImageInfo, sniffContentType, type Tier } from '@bsh/degent-mint-sdk';
+import { readImageInfo, sniffContentType, tierForSize, TIER_LABELS, type Tier } from '@bsh/degent-mint-sdk';
 import { useMint } from '../flow/context';
 import { laneForArtwork } from '../flow/effects';
 import type { Artwork } from '../flow/state';
+import { Frame } from '../components/Frame';
+import { Link } from '../components/Link';
 import { ScreenHeading } from '../components/ScreenHeading';
 import { Alert, Badge, Button, Fact, Mono, Panel, errorText, useObjectUrl } from '../components/ui';
 import { ART_BRIEF, tierRule } from '../lib/rules';
 import { capScale, classifySize, fitToRange, scaleLadder, type FitResult } from '../lib/compression';
-import { formatBytesExact, formatSize, groupDigits } from '../lib/format';
+import { formatBytesExact, formatSize, groupDigits, shortHash } from '../lib/format';
 import type { EncodeType, SourceImage } from '../services/types';
+import type { StudioArtwork } from '../services/studioApi';
+
+/** Step 3: a studio Degent chosen in the gallery skips the upload/compression tools (ADR-0007). */
+export function Create() {
+  const { state } = useMint();
+  return state.studioArtwork ? <CreateStudio studioArtwork={state.studioArtwork} /> : <CreateUpload />;
+}
+
+/**
+ * The exact bytes come from the studio's immutable content endpoint; their SHA-256 must match the
+ * artwork record before anything else happens. Tier follows from the size; no brief to tick — the
+ * studio reviewed the piece when the artist hung it.
+ */
+function CreateStudio({ studioArtwork }: { studioArtwork: StudioArtwork }) {
+  const { state, dispatch, services, app } = useMint();
+  const config = state.config!;
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const art = state.artwork && state.artwork.sha256 === studioArtwork.contentSha256 ? state.artwork : null;
+
+  useEffect(() => {
+    if (art) return;
+    let alive = true;
+    setBusy(true);
+    setError(null);
+    services.studio
+      .getContent(studioArtwork.id)
+      .then((c) => {
+        if (!alive) return;
+        const sha256 = services.inscription.sha256Hex(c.bytes);
+        if (studioArtwork.contentSha256 && sha256 !== studioArtwork.contentSha256) {
+          throw new Error(`The bytes served for this artwork hash to ${shortHash(sha256)}, not the ${shortHash(studioArtwork.contentSha256)} on record. Refusing to mint them.`);
+        }
+        const info = readImageInfo(c.bytes);
+        const tier = tierForSize(c.bytes.length, config);
+        if (!tier) throw new Error(`${formatBytesExact(c.bytes.length)} does not fit any tier of this collection.`);
+        const artwork: Artwork = {
+          fileName: `${studioArtwork.title}.${(info?.contentType ?? c.contentType).replace('image/', '')}`,
+          bytes: c.bytes,
+          contentType: info?.contentType ?? sniffContentType(c.bytes) ?? c.contentType,
+          size: c.bytes.length,
+          width: info?.width ?? 0,
+          height: info?.height ?? 0,
+          sha256,
+          origin: 'original',
+        };
+        dispatch({ type: 'TIER_SELECTED', tier: tier.tier });
+        dispatch({ type: 'ARTWORK_READY', artwork });
+      })
+      .catch((e) => alive && setError(errorText(e)))
+      .finally(() => alive && setBusy(false));
+    return () => {
+      alive = false;
+    };
+  }, [art, studioArtwork, services, config, dispatch]);
+
+  const previewUrl = useObjectUrl(art?.bytes ?? null, art?.contentType ?? 'application/octet-stream');
+  const rule = tierRule(config, state.tier);
+  const laneInfo =
+    art && state.wallet ? laneForArtwork(services, { artwork: art, recipientAddress: state.wallet.ordinals.address, config, network: app.network }) : null;
+  const laneSurprise = laneInfo !== null && laneInfo.lane !== null && laneInfo.lane !== rule.lane;
+
+  return (
+    <div className="screen">
+      <ScreenHeading
+        step="Step 3 of 7"
+        title="Mint this Degent."
+        lede="A studio piece: the artist hung it, the house reviewed it, and the exact bytes come from the gallery. Nothing to upload or compress."
+      />
+      <Panel title={studioArtwork.title} kicker={`By ${shortHash(studioArtwork.artist, 6)}${studioArtwork.featured ? ' · featured' : ''}`}>
+        <div className="exact">
+          <Frame size="large" src={previewUrl ?? services.studio.contentUrl(studioArtwork.id)} alt={`${studioArtwork.title}: the exact bytes to be inscribed`} />
+          <div className="exact__facts">
+            {studioArtwork.description ? <p>{studioArtwork.description}</p> : null}
+            <div aria-live="polite" className="small muted">
+              {busy ? 'Fetching the exact bytes from the studio…' : ''}
+            </div>
+            {error ? <Alert tone="bad" title="Could not fetch the artwork">{error}</Alert> : null}
+            {art ? (
+              <dl className="facts">
+                <Fact label="Tier">
+                  <Badge tone="brass">{TIER_LABELS[state.tier]}</Badge> <span className="muted small">by size</span>
+                </Fact>
+                <Fact label="Bytes">
+                  <Mono>{formatBytesExact(art.size)}</Mono> <span className="muted">({formatSize(art.size)})</span>
+                </Fact>
+                <Fact label="Dimensions">
+                  <Mono>
+                    {art.width} × {art.height}px
+                  </Mono>
+                </Fact>
+                <Fact label="Content type">
+                  <Mono>{art.contentType}</Mono>
+                </Fact>
+                <Fact label="SHA-256 (matches the studio record)">
+                  <Mono wrap>{art.sha256}</Mono>
+                </Fact>
+                {laneInfo ? (
+                  <Fact label="Reveal weight → lane">
+                    <span data-testid="artwork-lane">
+                      <Mono>{groupDigits(laneInfo.weight)} WU</Mono>{' '}
+                      {laneInfo.lane ? <Badge tone={laneInfo.lane === 'block' ? 'brass' : 'neutral'}>{laneInfo.lane} lane</Badge> : <Badge tone="bad">too heavy</Badge>}
+                    </span>
+                  </Fact>
+                ) : null}
+              </dl>
+            ) : null}
+            {laneSurprise && laneInfo?.lane === 'block' ? (
+              <Alert tone="warn" title={`This ${rule.label} travels the block lane`}>
+                Its reveal weighs {groupDigits(laneInfo.weight)} WU, over the 400,000 WU standard relay limit, so it queues for a block slot.
+              </Alert>
+            ) : null}
+          </div>
+        </div>
+        <p className="small muted">
+          Changed your mind? <Link to={{ name: 'gallery', page: 1, artist: null }}>Pick another Degent</Link> or{' '}
+          <button type="button" className="linkbtn" onClick={() => dispatch({ type: 'STUDIO_ARTWORK_CLEARED' })}>
+            mint your own art instead
+          </button>
+          .
+        </p>
+      </Panel>
+      <div className="actions">
+        <Button variant="ghost" onClick={() => dispatch({ type: 'BACK' })}>
+          Back
+        </Button>
+        <Button disabled={!art || busy} onClick={() => dispatch({ type: 'GO', step: 'validate' })}>
+          Continue to Validate
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 interface Loaded {
   name: string;
@@ -25,7 +160,7 @@ async function blobBytes(b: Blob): Promise<Uint8Array> {
   return new Uint8Array(await b.arrayBuffer());
 }
 
-export function Create() {
+function CreateUpload() {
   const { state, dispatch, services, app } = useMint();
   const config = state.config!;
   const rule = tierRule(config, state.tier);

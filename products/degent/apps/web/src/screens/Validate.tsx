@@ -56,7 +56,7 @@ export function Validate() {
     try {
       const o = await openOrder(
         { services, vault, pollMs: Math.min(app.pollIntervalMs, 1000) },
-        { tier: state.tier, artwork: art, wallet: state.wallet!, feeRate: Math.max(defaultRate, config.minFeeRate) },
+        { tier: state.tier, artwork: art, wallet: state.wallet!, feeRate: Math.max(defaultRate, config.minFeeRate), artworkId: state.studioArtwork?.id ?? null },
       );
       dispatch({ type: 'ORDER_UPDATED', order: o });
     } catch (e) {

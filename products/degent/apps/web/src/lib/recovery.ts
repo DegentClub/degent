@@ -43,6 +43,10 @@ export interface RecoveryBundle {
   revealPubkey: string;
   /** Bearer token for this order's mutating API calls (rescue inputs). Keep private. */
   orderToken: string;
+  /** Studio artwork this order mints (ADR-0007), so a rescue reproduces the same attribution. */
+  artworkId?: string;
+  /** Edition number reserved at quote time (plan §3.4). */
+  edition?: number;
   note: string;
   warning: string;
 }
@@ -97,7 +101,9 @@ export function isRecoveryBundle(v: unknown): v is RecoveryBundle {
     typeof b.revealPrivkey === 'string' &&
     HEX32.test(b.revealPrivkey) &&
     typeof b.revealPubkey === 'string' &&
-    HEX32.test(b.revealPubkey)
+    HEX32.test(b.revealPubkey) &&
+    (b.artworkId === undefined || (typeof b.artworkId === 'string' && b.artworkId.length > 0)) &&
+    (b.edition === undefined || (typeof b.edition === 'number' && Number.isSafeInteger(b.edition) && b.edition >= 0))
   );
 }
 

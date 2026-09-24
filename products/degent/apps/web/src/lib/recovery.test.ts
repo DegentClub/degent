@@ -63,6 +63,25 @@ describe('recovery bundle storage', () => {
     expect(parseRecovery('[]')).toBeNull();
   });
 
+  it('v2 bundles may carry artworkId and edition (ADR-0007); bundles without them still load', () => {
+    const s = store();
+    const withArt: RecoveryBundle = { ...bundle, artworkId: 'art_demo_chairman', edition: 3 };
+    expect(saveRecovery(withArt, s)).toBe(true);
+    expect(loadRecovery(s)).toEqual(withArt);
+    expect(parseRecovery(recoveryJson(withArt))).toEqual(withArt);
+    expect(recoveryJson(withArt)).toContain('"artworkId": "art_demo_chairman"');
+    expect(isRecoveryBundle(bundle)).toBe(true);
+    expect(loadRecovery(s)?.artworkId).toBe('art_demo_chairman');
+  });
+
+  it('rejects malformed artworkId / edition', () => {
+    expect(isRecoveryBundle({ ...bundle, artworkId: 42 })).toBe(false);
+    expect(isRecoveryBundle({ ...bundle, artworkId: '' })).toBe(false);
+    expect(isRecoveryBundle({ ...bundle, edition: '1' })).toBe(false);
+    expect(isRecoveryBundle({ ...bundle, edition: -1 })).toBe(false);
+    expect(isRecoveryBundle({ ...bundle, edition: 1.5 })).toBe(false);
+  });
+
   it('base64 helpers round-trip large byte arrays', () => {
     const bytes = new Uint8Array(200_001).map((_, i) => (i * 31) & 0xff);
     expect(base64ToBytes(bytesToBase64(bytes))).toEqual(bytes);

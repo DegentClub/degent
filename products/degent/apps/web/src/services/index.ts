@@ -5,6 +5,7 @@ import { createRealWallets } from './real/wallet';
 import { createRealInscription } from './real/inscription';
 import { createEsploraChain } from './real/chain';
 import { createCanvasImages } from './real/images';
+import { createStudioApi } from './studioApi';
 import { createFakeServices } from './fakes';
 
 /** Live services talk to the mint API, the wallet extension and esplora. */
@@ -12,6 +13,7 @@ export function createLiveServices(app: AppConfig): Services {
   return {
     mode: 'live',
     mintApi: createRealMintApi(app.mintApiUrl),
+    studio: createStudioApi({ baseUrl: app.studioApiUrl }),
     wallets: createRealWallets(),
     chain: createEsploraChain(app.esploraUrl, app.ordContentUrl),
     inscription: createRealInscription(),

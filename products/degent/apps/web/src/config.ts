@@ -4,10 +4,14 @@ import type { Network } from '@bsh/degent-mint-sdk';
 export interface AppConfig {
   network: Network;
   mintApiUrl: string;
+  /** Artist Studio base URL (`/v1/...` is appended). */
+  studioApiUrl: string;
   esploraUrl: string;
   explorerUrl: string;
   ordContentUrl: string;
   pollIntervalMs: number;
+  /** Artworks per gallery page. */
+  galleryPageSize: number;
   demo: boolean;
 }
 
@@ -32,11 +36,13 @@ function trimSlash(url: string): string {
 
 export interface EnvLike {
   VITE_MINT_API_URL?: string;
+  VITE_STUDIO_API_URL?: string;
   VITE_ESPLORA_URL?: string;
   VITE_NETWORK?: string;
   VITE_EXPLORER_URL?: string;
   VITE_ORD_URL?: string;
   VITE_POLL_MS?: string;
+  VITE_GALLERY_PAGE_SIZE?: string;
 }
 
 export function readConfig(env: EnvLike, search: string): AppConfig {
@@ -45,13 +51,16 @@ export function readConfig(env: EnvLike, search: string): AppConfig {
   const rawNet = (env.VITE_NETWORK ?? 'mainnet') as Network;
   const network: Network = NETWORKS.includes(rawNet) ? rawNet : 'mainnet';
   const poll = Number(env.VITE_POLL_MS ?? '');
+  const pageSize = Number(env.VITE_GALLERY_PAGE_SIZE ?? '');
   return {
     network,
     mintApiUrl: trimSlash(env.VITE_MINT_API_URL ?? '/api'),
+    studioApiUrl: trimSlash(env.VITE_STUDIO_API_URL ?? '/studio'),
     esploraUrl: trimSlash(env.VITE_ESPLORA_URL ?? defaultEsplora(network)),
     explorerUrl: trimSlash(env.VITE_EXPLORER_URL ?? 'https://explore.block.space'),
     ordContentUrl: trimSlash(env.VITE_ORD_URL ?? 'https://ordinals.com'),
     pollIntervalMs: Number.isFinite(poll) && poll > 0 ? poll : demo ? 1200 : 5000,
+    galleryPageSize: Number.isInteger(pageSize) && pageSize > 0 && pageSize <= 100 ? pageSize : 12,
     demo,
   };
 }

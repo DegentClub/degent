@@ -11,6 +11,7 @@ function toSession(w: ConnectedWallet, name: string): WalletSession {
     ordinals: { address: w.ordinals.address, publicKey: w.ordinals.publicKey, addressType: w.ordinals.addressType },
     payment: { address: w.payment.address, publicKey: w.payment.publicKey, addressType: w.payment.addressType },
     signPsbt: (psbt, req) => w.signPsbt(psbt, req),
+    signMessage: (message, address, type) => w.signMessage(message, address, type ?? 'bip322-simple'),
     disconnect: () => w.disconnect(),
   };
   if (w.pushTx) session.pushTx = (hex) => w.pushTx!(hex);

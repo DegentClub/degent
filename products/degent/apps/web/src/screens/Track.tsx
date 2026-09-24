@@ -3,7 +3,8 @@ import type { Order } from '@bsh/degent-mint-sdk';
 import { useMint } from '../flow/context';
 import { rescue } from '../flow/effects';
 import { ScreenHeading } from '../components/ScreenHeading';
-import { Alert, Badge, Button, CopyBlock, ExternalLink, Mono, Panel, errorText, useObjectUrl } from '../components/ui';
+import { Alert, Badge, Button, CopyBlock, ExternalLink, Money, Mono, Panel, errorText, useObjectUrl } from '../components/ui';
+import { orderArtworkId, orderEdition, royaltyPaidOf } from '../services/types';
 import { buildTimeline, isTerminal, STATUS_COPY } from '../lib/timeline';
 import { clearRecovery, parseRecovery, recoveryJson } from '../lib/recovery';
 import { formatTimestamp, shortHash } from '../lib/format';
@@ -125,6 +126,9 @@ export function Track() {
   };
 
   const commitTxid = order?.commitOutpoint?.txid ?? state.recovery?.commitTxid ?? state.pay.commitTxid;
+  const royaltyPaid = royaltyPaidOf(order);
+  const artworkId = orderArtworkId(order) ?? state.recovery?.artworkId ?? null;
+  const edition = orderEdition(order) ?? state.recovery?.edition ?? null;
 
   return (
     <div className="screen">
@@ -167,6 +171,20 @@ export function Track() {
             </>
           ) : null}
         </p>
+        {artworkId ? (
+          <p className="small" data-testid="studio-order">
+            Studio Degent <Mono>{artworkId}</Mono>
+            {edition !== null ? <> · edition <span className="mono">#{edition}</span></> : null}
+          </p>
+        ) : null}
+        {royaltyPaid ? (
+          <p className="small" data-testid="artist-paid">
+            <Badge tone="good">Artist paid</Badge> <Money sats={royaltyPaid.sats} /> in{' '}
+            <ExternalLink href={`${app.explorerUrl}/tx/${royaltyPaid.txid}`}>
+              {shortHash(royaltyPaid.txid, 6)}:{royaltyPaid.vout}
+            </ExternalLink>
+          </p>
+        ) : null}
         {order?.queue && order.queue.position !== null ? (
           <p className="small">
             {order.queue.lane === 'block' ? (

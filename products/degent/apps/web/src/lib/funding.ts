@@ -1,10 +1,14 @@
 /**
  * Funding PSBT construction (browser side; ADR-0002 §2 step 3).
  *
- * The funding transaction spends the user's payment UTXOs to:
+ * The funding transaction spends the user's payment UTXOs to (plan §3.2, ADR-0007 §5):
  *   [0] the commit address (commit value = reveal fee + postage)
- *   [1] the service fee address, when the service fee is > 0
+ *   [1] the artist's proven payout address (studio artworks only; omitted when 0)
+ *   [2] the club / service fee address, when the fee is > 0
  *   [n] change back to the payment address, when above dust
+ * An output is omitted only when its value is 0; a royalty below the dust limit of the payout
+ * script type is raised to it (and `notes` says so). The expected outputs (script + value) are
+ * recorded so the wallet-signed transaction can be checked output by output, not only by txid.
  *
  * Its txid is computed from the unsigned transaction. That is only possible when every input is
  * segwit (witnesses are excluded from txids); nested segwit (p2sh-p2wpkh) contributes a
@@ -17,6 +21,20 @@ import type { Network } from '@bsh/degent-mint-sdk';
 import type { AddressType, Utxo, WalletAccount } from '../services/types';
 
 export const DUST_CHANGE = 546;
+
+/** Dust limit (sats) of an output paying this address, by script type (Bitcoin Core policy). */
+export function dustLimit(address: string): number {
+  switch (classifyAddress(address)) {
+    case 'p2tr':
+      return 330;
+    case 'p2wpkh':
+      return 294;
+    case 'p2sh-p2wpkh':
+      return 540;
+    default:
+      return 546;
+  }
+}
 /** When payment and ordinals share an address (e.g. UniSat), UTXOs at or below this may carry inscriptions. */
 export const INSCRIPTION_GUARD_SATS = 10_000;
 
@@ -90,11 +108,20 @@ export function spendableType(account: WalletAccount): 'p2tr' | 'p2wpkh' | 'p2sh
   throw new Error(`Unsupported payment address type for ${account.address}.`);
 }
 
+export type FundingLabel = 'commit' | 'artist-royalty' | 'service-fee' | 'change';
+
 export interface FundingOutput {
   address: string;
   value: number;
-  label: 'commit' | 'service-fee' | 'change';
+  label: FundingLabel;
 }
+
+export const FUNDING_LABELS: Record<FundingLabel, string> = {
+  commit: 'Commit (reveal fee + postage)',
+  'artist-royalty': 'Artist royalty',
+  'service-fee': 'Club fee',
+  change: 'Change back to you',
+};
 
 export interface CoinSelection {
   inputs: Utxo[];
@@ -111,7 +138,7 @@ export interface CoinSelection {
 export function selectCoins(args: {
   utxos: Utxo[];
   inputType: 'p2tr' | 'p2wpkh' | 'p2sh-p2wpkh';
-  targets: Array<{ address: string; value: number; label: 'commit' | 'service-fee' }>;
+  targets: Array<{ address: string; value: number; label: Exclude<FundingLabel, 'change'> }>;
   changeAddress: string;
   feeRate: number;
   guardInscriptions: boolean;
@@ -148,11 +175,24 @@ export function selectCoins(args: {
   throw new InsufficientFundsError(needed, total);
 }
 
+/** One output as it must appear in the signed transaction: scriptPubKey (hex) and value (sats). */
+export interface ExpectedOutput {
+  script: string;
+  value: number;
+  label: FundingLabel;
+}
+
 export interface FundingPsbt {
   psbtBase64: string;
   txid: string;
   commitVout: number;
+  /** Index of the artist royalty output (1) when there is one. */
+  royaltyVout: number | null;
   selection: CoinSelection;
+  /** Scripts and values the wallet-signed transaction must reproduce exactly, in order. */
+  outputs: ExpectedOutput[];
+  /** Things the user should know (e.g. a royalty raised to the dust limit). */
+  notes: string[];
   inputsToSign: Array<{ index: number; address: string }>;
 }
 
@@ -200,14 +240,27 @@ export function buildFundingPsbt(args: {
   ordinalsAddress: string;
   commitAddress: string;
   commitValue: number;
+  /** Output [1]: the artist's royalty (ADR-0007 §5). Omitted when null or 0. */
+  artistRoyalty?: { address: string; value: number } | null;
+  /** Output [2] (or [1] without a royalty): the club / service fee. Omitted when null or 0. */
   serviceFee: { address: string; value: number } | null;
   feeRate: number;
 }): FundingPsbt {
   const net = scureNetwork(args.network);
   const inputType = spendableType(args.payment);
-  const targets: Array<{ address: string; value: number; label: 'commit' | 'service-fee' }> = [
+  const notes: string[] = [];
+  const targets: Array<{ address: string; value: number; label: Exclude<FundingLabel, 'change'> }> = [
     { address: args.commitAddress, value: args.commitValue, label: 'commit' },
   ];
+  if (args.artistRoyalty && args.artistRoyalty.value > 0) {
+    const dust = dustLimit(args.artistRoyalty.address);
+    let value = args.artistRoyalty.value;
+    if (value < dust) {
+      notes.push(`The artist royalty of ${value} sats is below the ${dust}-sat dust limit of the payout address and was raised to ${dust} sats.`);
+      value = dust;
+    }
+    targets.push({ address: args.artistRoyalty.address, value, label: 'artist-royalty' });
+  }
   if (args.serviceFee && args.serviceFee.value > 0) {
     targets.push({ address: args.serviceFee.address, value: args.serviceFee.value, label: 'service-fee' });
   }
@@ -238,19 +291,52 @@ export function buildFundingPsbt(args: {
     }
   }
   for (const o of selection.outputs) tx.addOutputAddress(o.address, BigInt(o.value), net);
+  const outputs: ExpectedOutput[] = selection.outputs.map((o, i) => ({
+    script: hex.encode(tx.getOutput(i).script!),
+    value: o.value,
+    label: o.label,
+  }));
+  const royaltyIndex = selection.outputs.findIndex((o) => o.label === 'artist-royalty');
 
   return {
     psbtBase64: base64.encode(tx.toPSBT()),
     txid: unsignedTxid(tx, scriptSigs),
     commitVout: 0,
+    royaltyVout: royaltyIndex >= 0 ? royaltyIndex : null,
     selection,
+    outputs,
+    notes,
     inputsToSign: selection.inputs.map((_, index) => ({ index, address: args.payment.address })),
   };
 }
 
-/** Finalize (if needed) a wallet-signed funding PSBT and return the raw tx + txid. */
-export function extractSignedTx(psbtBase64: string): { hex: string; txid: string } {
+export interface SignedOutput {
+  script: string;
+  value: number;
+}
+
+/** Finalize (if needed) a wallet-signed funding PSBT and return the raw tx, its txid and its outputs. */
+export function extractSignedTx(psbtBase64: string): { hex: string; txid: string; outputs: SignedOutput[] } {
   const tx = btc.Transaction.fromPSBT(base64.decode(psbtBase64));
   if (!tx.isFinal) tx.finalize();
-  return { hex: hex.encode(tx.extract()), txid: tx.id };
+  const outputs: SignedOutput[] = Array.from({ length: tx.outputsLength }, (_, i) => {
+    const o = tx.getOutput(i);
+    return { script: hex.encode(o.script!), value: Number(o.amount!) };
+  });
+  return { hex: hex.encode(tx.extract()), txid: tx.id, outputs };
+}
+
+/**
+ * Compare the outputs of the signed transaction with the ones the PSBT was built with, script
+ * by script and value by value. Returns a description of the first difference, or null.
+ */
+export function compareOutputs(expected: ExpectedOutput[], actual: SignedOutput[]): string | null {
+  if (actual.length !== expected.length) return `expected ${expected.length} outputs, the signed transaction has ${actual.length}`;
+  for (let i = 0; i < expected.length; i++) {
+    const e = expected[i]!;
+    const a = actual[i]!;
+    if (a.script !== e.script) return `output ${i} (${FUNDING_LABELS[e.label]}) pays a different script`;
+    if (a.value !== e.value) return `output ${i} (${FUNDING_LABELS[e.label]}) value changed from ${e.value} to ${a.value} sats`;
+  }
+  return null;
 }

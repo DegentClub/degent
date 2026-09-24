@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createKeyVault, type KeyVault } from '../src/flow/keyVault';
 import {
+  FundingOutputsMismatchError,
   FundingTxidMismatchError,
   MissingBundleError,
   MissingKeyError,
@@ -15,7 +16,8 @@ import {
 import { base64ToBytes, loadRecovery } from '../src/lib/recovery';
 import { hex } from '@scure/base';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { fakes, memoryStore, stateAtQuote, testApp } from './helpers';
+import { fakes, memoryStore, stateAtQuote, stateAtQuoteForArtwork, testApp } from './helpers';
+import { DEMO_ARTWORKS, demoArtistPayout } from '../src/services/fakes';
 
 /** Vault that records discards into the shared call log. */
 function loggingVault(log: string[]): KeyVault {
@@ -109,6 +111,49 @@ describe('pay sequence', () => {
       FundingTxidMismatchError,
     );
     expect(log).not.toContain('chain.broadcast');
+  });
+
+  it('refuses to broadcast when the wallet changes an output’s value: scripts and values are compared, not only the txid', async () => {
+    const { log, services, app, vault, state, store } = await setup({ wallet: { tamperOutput: true } });
+    const prepared = await preparePayment(
+      { services, vault, app, store },
+      { order: state.order!, artwork: state.artwork!, wallet: state.wallet!, config: state.config! },
+    );
+    const err = await signAndBroadcast({ services }, { wallet: state.wallet!, funding: prepared.funding }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(FundingOutputsMismatchError);
+    expect(err).toBeInstanceOf(FundingTxidMismatchError);
+    expect((err as Error).message).toMatch(/output 1 \(Club fee\) value changed from 25000 to 24999 sats/);
+    expect((err as Error).message).toMatch(/NOT broadcast/);
+    expect(log).not.toContain('chain.broadcast');
+  });
+
+  it('studio artwork: no upload, royalty as output [1], artworkId and edition in the bundle', async () => {
+    const log: string[] = [];
+    const services = fakes({ log });
+    const app = testApp();
+    const vault = loggingVault(log);
+    const { state } = await stateAtQuoteForArtwork(services, app, DEMO_ARTWORKS[0]!.id, vault);
+    expect(log).toContain('api.createOrder');
+    expect(log).not.toContain('api.uploadContent');
+    expect(state.order!.status).toBe('approved');
+    const store = memoryStore(log);
+    const prepared = await preparePayment(
+      { services, vault, app, store },
+      { order: state.order!, artwork: state.artwork!, wallet: state.wallet!, config: state.config! },
+    );
+    expect(prepared.funding.selection.outputs.map((o) => o.label)).toEqual(['commit', 'artist-royalty', 'service-fee', 'change']);
+    expect(prepared.funding.selection.outputs[1]).toMatchObject({ address: demoArtistPayout('ada', 'mainnet'), value: 5_000 });
+    expect(prepared.funding.selection.outputs[2]).toMatchObject({ value: 45_000 });
+    expect(prepared.bundle.artworkId).toBe(DEMO_ARTWORKS[0]!.id);
+    expect(prepared.bundle.edition).toBe(1);
+    expect(loadRecovery(store)).toMatchObject({ artworkId: DEMO_ARTWORKS[0]!.id, edition: 1 });
+    const txid = await signAndBroadcast({ services }, { wallet: state.wallet!, funding: prepared.funding });
+    expect(txid).toBe(prepared.funding.txid);
+    // The mint sees the payment and records the royalty (vout 1) with the studio.
+    const paid = await services.mintApi.getOrder(state.order!.id);
+    expect(paid.status).toBe('paid');
+    expect((paid as { royaltyPaid?: unknown }).royaltyPaid).toEqual({ txid, vout: 1, sats: 5_000 });
+    expect(services.studioState.royalties).toEqual([expect.objectContaining({ orderId: state.order!.id, fundingTxid: txid, vout: 1, royaltySats: 5_000 })]);
   });
 
   it('uses the wallet relay when it offers pushTx', async () => {

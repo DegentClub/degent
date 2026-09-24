@@ -6,6 +6,8 @@ import { ScreenHeading } from '../components/ScreenHeading';
 import { Alert, Button, CopyBlock, Fact, Money, Mono, Panel, errorText } from '../components/ui';
 import { recoveryJson, RECOVERY_WARNING } from '../lib/recovery';
 import { formatFeeRate, groupDigits, shortHash } from '../lib/format';
+import { FUNDING_LABELS } from '../lib/funding';
+import { artworkQuote } from '../services/types';
 
 const PHASE_TEXT: Partial<Record<PayPhase, string>> = {
   'fetching-utxos': 'Looking up your payment coins…',
@@ -106,7 +108,7 @@ export function Pay() {
               <ul className="plain">
                 {f.selection.outputs.map((o, i) => (
                   <li key={i}>
-                    <span className="muted small">{o.label === 'commit' ? 'Commit (reveal fee + postage)' : o.label === 'service-fee' ? 'Service fee' : 'Change back to you'}</span>{' '}
+                    <span className="muted small">{FUNDING_LABELS[o.label]}</span>{' '}
                     <Money sats={o.value} /> → <Mono>{shortHash(o.address, 8)}</Mono>
                   </li>
                 ))}
@@ -123,6 +125,13 @@ export function Pay() {
               <Money sats={f.selection.outputs.filter((o) => o.label !== 'change').reduce((s, o) => s + o.value, 0) + f.selection.fee} strong />
             </Fact>
           </dl>
+        ) : null}
+        {f && f.notes.length > 0 ? (
+          <Alert tone="info" title="Note">
+            {f.notes.map((n) => (
+              <p key={n}>{n}</p>
+            ))}
+          </Alert>
         ) : null}
         {f && f.selection.excluded.length > 0 ? (
           <p className="small muted">
@@ -162,8 +171,8 @@ export function Pay() {
         <Panel title="2 · Sign & broadcast">
           <p>
             Your wallet ({wallet!.name}) will show one transaction paying <Money sats={quote.commitValueSats} /> to the commit
-            address{quote.serviceFeeSats > 0 ? ' and the service fee' : ''}. Do not edit it — a changed transaction will be
-            refused before broadcast.
+            address{artworkQuote(quote)?.artistRoyaltySats ? ', the artist’s royalty' : ''}{quote.serviceFeeSats > 0 ? ' and the club fee' : ''}. Do not edit it — a
+            changed transaction (any output’s script or value, or the id) will be refused before broadcast.
           </p>
           <div className="actions">
             <Button busy={pay.phase === 'awaiting-wallet' || pay.phase === 'broadcasting'} disabled={!kept} onClick={() => void sign()}>

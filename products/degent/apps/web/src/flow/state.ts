@@ -2,6 +2,7 @@ import type { Order, ServiceConfig, Tier } from '@bsh/degent-mint-sdk';
 import type { FeeSnapshot, QueueSnapshot, WalletSession } from '../services/types';
 import type { RecoveryBundle } from '../lib/recovery';
 import type { FundingPsbt } from '../lib/funding';
+import type { StudioArtwork } from '../services/studioApi';
 
 export type Step = 'welcome' | 'connect' | 'create' | 'validate' | 'quote' | 'pay' | 'track';
 
@@ -61,6 +62,8 @@ export interface FlowState {
   wallet: WalletSession | null;
   tier: Tier;
   artwork: Artwork | null;
+  /** A studio artwork chosen in the gallery (ADR-0007): Create shows it instead of the upload tools. */
+  studioArtwork: StudioArtwork | null;
   briefAck: Record<string, boolean>;
   order: Order | null;
   feeRate: number | null;
@@ -90,6 +93,7 @@ export function initialState(resumeOffer: RecoveryBundle | null = null): FlowSta
     wallet: null,
     tier: 'standard',
     artwork: null,
+    studioArtwork: null,
     briefAck: {},
     order: null,
     feeRate: null,

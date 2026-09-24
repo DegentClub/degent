@@ -5,6 +5,7 @@
 import type { Order, ServiceConfig, Tier } from '@bsh/degent-mint-sdk';
 import type { FeeSnapshot, QueueSnapshot, WalletSession } from '../services/types';
 import type { RecoveryBundle } from '../lib/recovery';
+import type { StudioArtwork } from '../services/studioApi';
 import { isLegacy, type FundingPsbt } from '../lib/funding';
 import { initialPay, initialState, STEPS, type Artwork, type FlowState, type PayPhase, type Step } from './state';
 
@@ -18,6 +19,8 @@ export type FlowAction =
   | { type: 'TIER_SELECTED'; tier: Tier }
   | { type: 'ARTWORK_READY'; artwork: Artwork }
   | { type: 'ARTWORK_CLEARED' }
+  | { type: 'STUDIO_ARTWORK_SELECTED'; artwork: StudioArtwork }
+  | { type: 'STUDIO_ARTWORK_CLEARED' }
   | { type: 'BRIEF_TOGGLED'; id: string; checked: boolean }
   | { type: 'ORDER_UPDATED'; order: Order }
   | { type: 'FEE_RATE_SET'; feeRate: number }
@@ -88,6 +91,10 @@ export function flowReducer(s: FlowState, a: FlowAction): FlowState {
       return { ...clearOrder(s), artwork: a.artwork };
     case 'ARTWORK_CLEARED':
       return { ...clearOrder(s), artwork: null };
+    case 'STUDIO_ARTWORK_SELECTED':
+      return s.studioArtwork?.id === a.artwork.id ? { ...s, studioArtwork: a.artwork } : { ...clearOrder(s), studioArtwork: a.artwork, artwork: null };
+    case 'STUDIO_ARTWORK_CLEARED':
+      return s.studioArtwork === null ? s : { ...clearOrder(s), studioArtwork: null, artwork: null };
     case 'BRIEF_TOGGLED':
       return { ...s, briefAck: { ...s.briefAck, [a.id]: a.checked } };
     case 'ORDER_UPDATED': {

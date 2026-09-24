@@ -11,6 +11,8 @@ export interface MintContextValue {
   services: Services;
   vault: KeyVault;
   store: KeyValueStore | null;
+  /** Per-tab storage for the studio session token (sessionStorage); null when unavailable. */
+  sessionStore: KeyValueStore | null;
   state: FlowState;
   dispatch: Dispatch<FlowAction>;
 }

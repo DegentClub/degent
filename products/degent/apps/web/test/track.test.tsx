@@ -109,6 +109,29 @@ describe('Track screen', () => {
   });
 });
 
+describe('Track: studio artwork orders', () => {
+  it('shows “Artist paid” with the funding txid:vout once the order carries royaltyPaid', async () => {
+    const t = await paidAndTracking();
+    const real = t.services.mintApi.getOrder.bind(t.services.mintApi);
+    const txid = 'd4'.repeat(32);
+    t.services.mintApi.getOrder = async (id) => ({ ...(await real(id)), artworkId: 'art_demo_chairman', edition: 7, royaltyPaid: { txid, vout: 1, sats: 5_000 } }) as never;
+    renderApp(t.services, { initial: t.state, app: t.app, vault: t.vault, store: t.store });
+    const paid = await screen.findByTestId('artist-paid');
+    expect(paid).toHaveTextContent('Artist paid');
+    expect(paid).toHaveTextContent('5,000 sats');
+    expect(within(paid).getByRole('link', { name: /d4d4d4:1/ })).toHaveAttribute('href', `https://explore.block.space/tx/${txid}`);
+    expect(screen.getByTestId('studio-order')).toHaveTextContent('Studio Degent art_demo_chairman · edition #7');
+  });
+
+  it('shows nothing about artists for a self-made Degent', async () => {
+    const t = await paidAndTracking();
+    renderApp(t.services, { initial: t.state, app: t.app, vault: t.vault, store: t.store });
+    await screen.findByText('hash match ✓', {}, { timeout: 3000 });
+    expect(screen.queryByTestId('artist-paid')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('studio-order')).not.toBeInTheDocument();
+  });
+});
+
 describe('resume from localStorage', () => {
   it('offers to resume a saved order on load and tracks it', async () => {
     const t = await paidAndTracking();

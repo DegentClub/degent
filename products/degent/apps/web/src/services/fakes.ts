@@ -7,7 +7,7 @@
  * simulated deterministically: it is NOT @bsh/inscription and must never touch real funds.
  */
 import * as btc from '@scure/btc-signer';
-import { base64, hex } from '@scure/base';
+import { base64, base64url, hex } from '@scure/base';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import type {
@@ -20,16 +20,30 @@ import type {
   RescueInputs,
   SubmitRevealRequest,
 } from '@bsh/degent-mint-sdk';
-import { BLOCK_LANE_WEIGHT_BUDGET, laneForWeight, TIER_LABELS } from '@bsh/degent-mint-sdk';
+import {
+  BLOCK_LANE_WEIGHT_BUDGET,
+  DEGENT_RULES,
+  DEGENT_RULES_CONFIG,
+  DEGENT_RULES_VERSION,
+  laneForWeight,
+  readImageInfo,
+  sniffContentType,
+  TIER_LABELS,
+  tierForSize,
+  validateContentMeta,
+} from '@bsh/degent-mint-sdk';
 import type {
   ChainApi,
+  CreateOrderRequestExt,
   EncodedImage,
   FeeSnapshot,
   ImageTools,
   InscriptionContentInput,
   InscriptionOps,
   MintApi,
+  OrderExt,
   QueueSnapshot,
+  QuoteExt,
   Services,
   SourceImage,
   Utxo,
@@ -38,7 +52,20 @@ import type {
   WalletService,
   WalletSession,
 } from './types';
-import { scureNetwork } from '../lib/funding';
+import {
+  StudioApiError,
+  type ArtworkList,
+  type ArtworkStatus,
+  type AutomatedReview,
+  type RoyaltyRecord,
+  type StudioApi,
+  type StudioArtist,
+  type StudioArtwork,
+  type StudioConfig,
+  type StudioReviewCheck,
+} from './studioApi';
+import { classifyAddress, scureNetwork } from '../lib/funding';
+import { payoutAddressKind, payoutMessage, PAYOUT_MESSAGE_TEMPLATE } from '../lib/studioSession';
 
 const enc = new TextEncoder();
 const sha256Hex = (b: Uint8Array) => hex.encode(sha256(b));
@@ -248,9 +275,22 @@ export function createFakeChain(log: CallLog = [], state?: Partial<FakeChainStat
 
 export type FakeScenario = 'happy' | 'rescue' | 'reject';
 
+/** What the fake mint needs from the fake studio for artwork orders (plan §3.1). */
+export interface FakeStudioHooks {
+  artwork(id: string): StudioArtwork | undefined;
+  artist(address: string): StudioArtist | undefined;
+  content(id: string): Uint8Array | undefined;
+  recordRoyalty(rec: Omit<RoyaltyRecord, 'artist' | 'recordedAt'>): void;
+}
+
+/** Royalty split the fake mint applies (ADR-0007 §5: 10% of the mint price to the artist). */
+export const FAKE_ROYALTY_BPS = 1000;
+
 export interface FakeMintOptions {
   network: Network;
   scenario?: FakeScenario;
+  /** Studio artworks the mint can sell (set by createFakeServices). */
+  studio?: FakeStudioHooks;
   /** Service returns a commit address that does not match the browser's (tamper test). */
   tamperCommit?: boolean;
   /** GET /rescue fails (service gone) so the front end must build the rescue locally. */
@@ -291,6 +331,7 @@ export function createFakeMintApi(
 
   const requests = new Map<string, CreateOrderRequest>();
   const tokens = new Map<string, string>();
+  const editions = new Map<string, number>();
   const auth = (id: string, token: string) => {
     if (!token) throw new Error('401 unauthorized: missing order token');
     if (tokens.get(id) !== token) throw new Error('403 forbidden: order token does not match');
@@ -301,7 +342,7 @@ export function createFakeMintApi(
     return o;
   };
 
-  const quoteFor = (req: CreateOrderRequest): Quote => {
+  const quoteFor = (req: CreateOrderRequest, art?: { artworkId: string; artistAddress: string; edition: number }): Quote => {
     if (!config.tiers.some((t) => t.tier === req.tier)) throw new Error(`422 validation_failed: unknown tier ${req.tier}`);
     // ADR-0005 §3: the lane comes from the weight, not from the tier.
     const revealWeight = fakeRevealWeight(req.contentLength, req.contentType);
@@ -319,6 +360,13 @@ export function createFakeMintApi(
       opts.network,
     );
     const queue = opts.queue ?? { blockLaneLength: 3, blockLaneEtaMinutes: 30, standardLaneLength: 14 };
+    // Studio artwork (ADR-0007 §5): mint price = twice the tier's service fee; 10% of it to the artist, the rest to the club.
+    const mintPriceSats = art ? serviceFeeSats * 2 : 0;
+    const artistRoyaltySats = art ? Math.floor((mintPriceSats * FAKE_ROYALTY_BPS) / 10_000) : 0;
+    const clubFeeSats = art ? mintPriceSats - artistRoyaltySats : serviceFeeSats;
+    const extras: Partial<QuoteExt> = art
+      ? { clubFeeSats, artistRoyaltySats, artistAddress: art.artistAddress, artworkId: art.artworkId, mintPriceSats, edition: art.edition }
+      : {};
     return {
       tier: req.tier,
       lane,
@@ -327,17 +375,89 @@ export function createFakeMintApi(
       revealVsize,
       revealFeeSats,
       postageSats: config.postageSats,
-      serviceFeeSats,
+      serviceFeeSats: clubFeeSats,
       commitValueSats,
-      totalSats: commitValueSats + serviceFeeSats,
+      totalSats: commitValueSats + clubFeeSats + artistRoyaltySats,
       commitAddress: opts.tamperCommit ? fakeAddress('attacker-commit', opts.network) : commitAddress,
       binding: true,
       expiresAt: new Date(now() + config.quoteTtlSeconds * 1000).toISOString(),
       queuePosition: lane === 'block' ? queue.blockLaneLength + 1 : null,
       etaMinutes: lane === 'block' ? (queue.blockLaneLength + 1) * 10 : 10,
-    };
+      ...extras,
+    } as Quote;
   };
   void BLOCK_LANE_WEIGHT_BUDGET;
+
+  /**
+   * Plan §3.1: an order for a studio artwork. The bytes are the studio's, reviewed at submission, so
+   * the order is created `approved` with a BINDING quote (awaiting_content → reviewing → approved
+   * recorded on the timeline) and no upload is needed. Output [1] of the funding tx is the royalty.
+   */
+  const createArtworkOrder = (artworkId: string, req: CreateOrderRequestExt) => {
+    const art = opts.studio?.artwork(artworkId);
+    if (!art) throw new Error(`404 artwork_not_found: no artwork ${artworkId}`);
+    if (art.status !== 'approved' || !art.contentSha256) throw new Error(`422 artwork_not_mintable: artwork ${artworkId} is ${art.status}`);
+    const artist = opts.studio?.artist(art.artist);
+    if (!artist?.payoutAddress) throw new Error('422 artist_payout_missing: the artist has not proven a payout address');
+    const bytes = opts.studio?.content(artworkId);
+    if (!bytes) throw new Error(`422 artwork_not_mintable: artwork ${artworkId} has no content`);
+    const tier = tierForSize(art.contentLength, config);
+    if (!tier || tier.tier !== req.tier) throw new Error(`422 validation_failed: ${art.contentLength} bytes is not a ${req.tier} Degent`);
+    if (req.contentSha256 !== art.contentSha256) throw new Error('422 content_mismatch: contentSha256 differs from the artwork');
+    const edition = (editions.get(artworkId) ?? 0) + 1;
+    editions.set(artworkId, edition);
+    const full: CreateOrderRequest = {
+      ...req,
+      contentType: art.contentType,
+      contentLength: art.contentLength,
+      contentSha256: art.contentSha256,
+    };
+    const id = `ord_demo_${(++seq).toString().padStart(4, '0')}_${art.contentSha256.slice(0, 6)}`;
+    const at = iso();
+    const quote = quoteFor(full, { artworkId, artistAddress: artist.payoutAddress, edition });
+    const aq = quote as QuoteExt;
+    const order: OrderExt = {
+      id,
+      network: opts.network,
+      status: 'approved',
+      tier: req.tier,
+      contentType: art.contentType,
+      contentLength: art.contentLength,
+      contentSha256: art.contentSha256,
+      recipientAddress: req.recipientAddress,
+      revealPubkey: req.revealPubkey,
+      quote,
+      review: {
+        approved: true,
+        reasons: [],
+        checks: [{ id: 'studio', passed: true, detail: `Artwork ${artworkId} reviewed by the studio at submission` }],
+      },
+      rescued: false,
+      queue: null,
+      commitOutpoint: null,
+      revealTxid: null,
+      inscriptionId: null,
+      serviceFeeAddress: fakeAddress('degent-service-fee', opts.network),
+      timeline: [
+        { status: 'awaiting_content', at },
+        { status: 'reviewing', at, detail: `artwork ${artworkId} reviewed at submission` },
+        { status: 'approved', at, detail: `artwork ${artworkId} reviewed at submission` },
+      ],
+      createdAt: at,
+      updatedAt: at,
+      artworkId,
+      artistAddress: artist.payoutAddress,
+      artistRoyaltySats: aq.artistRoyaltySats!,
+      clubFeeSats: aq.clubFeeSats!,
+      edition,
+    };
+    orders.set(id, order);
+    requests.set(id, full);
+    bodies.set(id, bytes);
+    const orderToken = hex.encode(schnorr.utils.randomSecretKey());
+    tokens.set(id, orderToken);
+    return { order: order as Order, orderToken };
+  };
 
   return {
     orders,
@@ -354,8 +474,11 @@ export function createFakeMintApi(
       log.push('api.getQueue');
       return opts.queue ?? { blockLaneLength: 3, blockLaneEtaMinutes: 30, standardLaneLength: 14, updatedAt: iso() };
     },
-    async createOrder(req) {
+    async createOrder(reqIn) {
       log.push('api.createOrder');
+      const req = reqIn as CreateOrderRequestExt;
+      const artworkId = typeof req.artworkId === 'string' && req.artworkId.length > 0 ? req.artworkId : null;
+      if (artworkId) return createArtworkOrder(artworkId, req);
       const id = `ord_demo_${(++seq).toString().padStart(4, '0')}_${req.contentSha256.slice(0, 6)}`;
       const at = iso();
       const order: Order = {
@@ -429,7 +552,24 @@ export function createFakeMintApi(
       if (!next) return o;
       let cur = o;
       let txid: string | undefined;
-      if (next === 'paid') txid = o.commitOutpoint?.txid;
+      if (next === 'paid') {
+        txid = o.commitOutpoint?.txid;
+        // ADR-0007 §5 / plan §3.3: the mint verified output [1] paid the artist and records it.
+        const ox = o as OrderExt;
+        if (txid && ox.artworkId && typeof ox.artistRoyaltySats === 'number' && ox.artistRoyaltySats > 0) {
+          const royaltyPaid = { txid, vout: 1, sats: ox.artistRoyaltySats };
+          cur = { ...cur, royaltyPaid } as Order;
+          opts.studio?.recordRoyalty({
+            orderId: o.id,
+            artworkId: ox.artworkId,
+            minterAddress: o.recipientAddress,
+            royaltySats: ox.artistRoyaltySats,
+            fundingTxid: txid,
+            vout: 1,
+            at: iso(),
+          });
+        }
+      }
       if (next === 'queued') {
         const pos = o.quote?.queuePosition ?? 1;
         cur = { ...cur, queue: { lane: o.quote?.lane ?? 'standard', position: pos, etaMinutes: pos * 10 } };
@@ -492,8 +632,18 @@ export interface FakeWalletOptions {
   paymentType?: 'p2wpkh' | 'p2sh-p2wpkh' | 'p2tr' | 'p2pkh';
   /** Wallet mutates the transaction before signing (should be caught by the txid check). */
   tamper?: boolean;
+  /** Wallet shaves one sat off output 1 before signing (caught by the output script/value check). */
+  tamperOutput?: boolean;
   rejectSign?: boolean;
   withPushTx?: boolean;
+}
+
+/**
+ * Deterministic stand-in for a BIP-322 simple signature: a function of the address and the message
+ * only, so the fake studio can verify it without the wallet's key. No real service accepts it.
+ */
+export function fakeMessageSignature(address: string, message: string): string {
+  return base64.encode(sha256(enc.encode(`fake-bip322|${address}|${message}`)));
 }
 
 export function createFakeWallets(log: CallLog = [], opts: FakeWalletOptions = {}): WalletService {
@@ -531,9 +681,22 @@ export function createFakeWallets(log: CallLog = [], opts: FakeWalletOptions = {
           if (opts.rejectSign) throw new Error('User rejected the request.');
           const tx = btc.Transaction.fromPSBT(base64.decode(psbtBase64));
           if (opts.tamper) tx.updateInput(0, { sequence: 0xfffffffd }, true);
+          if (opts.tamperOutput && tx.outputsLength > 1) tx.updateOutput(1, { amount: tx.getOutput(1).amount! - 1n }, true);
           for (const { index } of req.inputsToSign) tx.signIdx(payPriv, index);
           if (req.finalize) tx.finalize();
           return { psbtBase64: base64.encode(tx.toPSBT()) };
+        },
+        async signMessage(message, address, type = 'bip322-simple') {
+          log.push('wallet.signMessage');
+          if (opts.rejectSign) throw new Error('User rejected the request.');
+          if (address !== session.ordinals.address && address !== session.payment.address) {
+            throw new Error(`${entry.name}: ${address} is not one of this wallet’s addresses.`);
+          }
+          const kind = classifyAddress(address);
+          if (type === 'bip322-simple' && kind !== 'p2tr' && kind !== 'p2wpkh') {
+            throw new Error(`${entry.name} cannot produce a BIP-322 simple signature with a ${kind} address.`);
+          }
+          return fakeMessageSignature(address, message);
         },
         async disconnect() {
           log.push('wallet.disconnect');
@@ -601,31 +764,597 @@ export function createFakeImages(opts: FakeImageOptions = {}): ImageTools {
   };
 }
 
+// ------------------------------------------------------------------ generated PNGs (demo gallery)
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(b: Uint8Array): number {
+  let c = 0xffffffff;
+  for (let i = 0; i < b.length; i++) c = CRC_TABLE[(c ^ b[i]!) & 0xff]! ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function adler32(b: Uint8Array): number {
+  let a = 1;
+  let s = 0;
+  for (let i = 0; i < b.length; i++) {
+    a = (a + b[i]!) % 65521;
+    s = (s + a) % 65521;
+  }
+  return ((s << 16) | a) >>> 0;
+}
+
+const u32be = (n: number): Uint8Array => Uint8Array.of((n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255);
+
+function concat(parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0;
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.length;
+  }
+  return out;
+}
+
+/** zlib stream of stored (uncompressed) deflate blocks: valid for every PNG decoder, no compressor needed. */
+function zlibStored(data: Uint8Array): Uint8Array {
+  const parts: Uint8Array[] = [Uint8Array.of(0x78, 0x01)];
+  for (let i = 0; i < data.length; i += 65535) {
+    const chunk = data.subarray(i, i + 65535);
+    const final = i + 65535 >= data.length ? 1 : 0;
+    const len = chunk.length;
+    parts.push(Uint8Array.of(final, len & 255, (len >> 8) & 255, ~len & 255, (~len >> 8) & 255), chunk);
+  }
+  parts.push(u32be(adler32(data)));
+  return concat(parts);
+}
+
+function pngChunk(type: string, data: Uint8Array): Uint8Array {
+  const body = concat([enc.encode(type), data]);
+  return concat([u32be(data.length), body, u32be(crc32(body))]);
+}
+
+/** A real 8-bit greyscale PNG (readable by `readImageInfo` and any browser), pixel value from `grey(x, y)`. */
+export function generatePng(width: number, height: number, grey: (x: number, y: number) => number): Uint8Array {
+  const raw = new Uint8Array(height * (width + 1));
+  for (let y = 0; y < height; y++) {
+    const row = y * (width + 1);
+    raw[row] = 0; // filter: none
+    for (let x = 0; x < width; x++) raw[row + 1 + x] = Math.max(0, Math.min(255, Math.round(grey(x, y))));
+  }
+  const ihdr = concat([u32be(width), u32be(height), Uint8Array.of(8, 0, 0, 0, 0)]);
+  return concat([
+    Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', zlibStored(raw)),
+    pngChunk('IEND', new Uint8Array(0)),
+  ]);
+}
+
+const demoBytesCache = new Map<number, Uint8Array>();
+
+/**
+ * A framed square "gentleman" placeholder (dark frame, ivory mat, a placard band), 500 x 500 px,
+ * ~250 KB: a Standard Degent by size, so the demo mint can quote and inscribe it.
+ */
+export function demoArtworkBytes(seed: number, side = 500): Uint8Array {
+  const key = seed * 100_000 + side;
+  const cached = demoBytesCache.get(key);
+  if (cached) return cached;
+  const frame = Math.round(side * 0.056);
+  const mat = frame + Math.round(side * 0.024);
+  const bytes = generatePng(side, side, (x, y) => {
+    const d = Math.min(x, y, side - 1 - x, side - 1 - y);
+    if (d < frame) return 38 + ((d >> 2) & 1) * 26;
+    if (d < mat) return 214;
+    const placard = y > side - mat - 74 && y < side - mat - 26 && x > side / 2 - 92 && x < side / 2 + 92;
+    if (placard) return 18;
+    return 128 + Math.sin(x / (13 + seed * 2) + seed) * 46 + Math.cos(y / (19 + seed) + seed * 1.7) * 46;
+  });
+  demoBytesCache.set(key, bytes);
+  return bytes;
+}
+
+// ------------------------------------------------------------------ studio (simulated)
+
+export interface FakeStudioOptions {
+  network: Network;
+  /** Verdict the fake review gives an upload that passes the byte rules. */
+  reviewScenario?: 'approve' | 'reject' | 'needsHuman';
+  /** `needsHuman`: the house approves after this many `getArtwork` polls (never, when unset). */
+  houseResolvesAfterPolls?: number;
+  /** Seed the three example artworks (default true). */
+  seedGallery?: boolean;
+  now?: () => number;
+}
+
+export interface FakeStudioState {
+  artists: Map<string, StudioArtist>;
+  artworks: Map<string, StudioArtwork>;
+  /** sha256 → bytes */
+  contents: Map<string, Uint8Array>;
+  royalties: RoyaltyRecord[];
+  sessions: Map<string, { address: string; expiresAt: number }>;
+  /** artwork id → upload token */
+  uploadTokens: Map<string, string>;
+  challenges: Map<string, { address: string; message: string; expiresAt: number; used: boolean }>;
+  polls: Map<string, number>;
+}
+
+export interface FakeStudio extends StudioApi {
+  state: FakeStudioState;
+  hooks: FakeStudioHooks;
+}
+
+export const DEMO_ARTISTS = {
+  ada: { label: 'artist-ada', displayName: 'Ada of the Lily Pad' },
+  bram: { label: 'artist-bram', displayName: 'Bram Frogsworth' },
+} as const;
+
+export interface DemoArtworkSeed {
+  id: string;
+  title: string;
+  description: string;
+  artist: keyof typeof DEMO_ARTISTS;
+  featured: boolean;
+  seed: number;
+}
+
+export const DEMO_ARTWORKS: readonly DemoArtworkSeed[] = [
+  { id: 'art_demo_chairman', title: 'The Chairman', description: 'Pepe presides. Tuxedo by Savile Row, bowtie by decree.', artist: 'ada', featured: true, seed: 1 },
+  { id: 'art_demo_martini', title: 'Martini Hour', description: 'Shaken, framed, placarded DEGENT.', artist: 'bram', featured: false, seed: 2 },
+  { id: 'art_demo_regen', title: 'Regen at Dawn', description: 'A gentleman at first light, REGEN on the plaque.', artist: 'ada', featured: false, seed: 3 },
+];
+
+/** Taproot identity address of a demo artist (what they sign in with). */
+export function demoArtistAddress(artist: keyof typeof DEMO_ARTISTS, network: Network): string {
+  return btc.p2tr(validXOnly(enc.encode(DEMO_ARTISTS[artist].label)), undefined, scureNetwork(network)).address!;
+}
+
+/** Native SegWit payout address of a demo artist (BIP-322-proven in the seed). */
+export function demoArtistPayout(artist: keyof typeof DEMO_ARTISTS, network: Network): string {
+  return fakeAddress(`${DEMO_ARTISTS[artist].label}-payout`, network);
+}
+
+function studioConfig(network: Network): StudioConfig {
+  const cfg = DEGENT_RULES_CONFIG;
+  return {
+    network,
+    rulesVersion: DEGENT_RULES_VERSION,
+    rules: DEGENT_RULES.map((r) => ({ ...r })),
+    recommendedContentType: 'image/jpeg',
+    allowedContentTypes: [...cfg.allowedContentTypes],
+    tiers: cfg.tiers.map((t) => ({ tier: t.tier, label: t.label, minBytes: t.minBytes, maxBytes: t.maxBytes })),
+    minDimensionPx: cfg.minDimensionPx,
+    maxDimensionPx: cfg.maxDimensionPx,
+    maxUploadBytes: 4 * 1024 * 1024,
+    titleMaxChars: 80,
+    descriptionMaxChars: 500,
+    displayNameMaxChars: 40,
+    siwb: { domain: 'studio.degent.club', uri: 'https://studio.degent.club', ttlSeconds: 300 },
+    session: { ttlSeconds: 3600, audience: 'degent', scopes: ['artist'] },
+    payoutMessageTemplate: PAYOUT_MESSAGE_TEMPLATE,
+    payoutAddressKinds: ['p2wpkh', 'p2tr'],
+    visionReview: 'claude',
+  };
+}
+
+export function createFakeStudioApi(log: CallLog = [], opts: FakeStudioOptions): FakeStudio {
+  const now = opts.now ?? (() => Date.now());
+  const iso = (t = now()) => new Date(t).toISOString();
+  const network = opts.network;
+  const config = studioConfig(network);
+  const st: FakeStudioState = {
+    artists: new Map(),
+    artworks: new Map(),
+    contents: new Map(),
+    royalties: [],
+    sessions: new Map(),
+    uploadTokens: new Map(),
+    challenges: new Map(),
+    polls: new Map(),
+  };
+  const dataUrls = new Map<string, string>();
+  let seq = 0;
+
+  const err = (status: number, code: string, message: string): never => {
+    throw new StudioApiError(status, code, message);
+  };
+  const artistOf = (address: string): StudioArtist => {
+    let a = st.artists.get(address);
+    if (!a) {
+      const at = iso();
+      a = { address, network, displayName: null, payoutAddress: null, payoutVerifiedAt: null, artworks: { total: 0, approved: 0 }, joinedAt: at, updatedAt: at };
+      st.artists.set(address, a);
+    }
+    return a;
+  };
+  const withCounts = (a: StudioArtist): StudioArtist => {
+    const mine = [...st.artworks.values()].filter((w) => w.artist === a.address);
+    return { ...a, artworks: { total: mine.length, approved: mine.filter((w) => w.status === 'approved').length } };
+  };
+  const subOf = (token: string | undefined): string => {
+    if (!token) return err(401, 'unauthorized', 'A studio session is required.');
+    const s = st.sessions.get(token);
+    if (!s || s.expiresAt <= now()) return err(401, 'unauthorized', 'The studio session is missing, invalid or expired.');
+    return s.address;
+  };
+  const view = (w: StudioArtwork): StudioArtwork => ({
+    ...w,
+    mintedEditions: st.royalties.filter((r) => r.artworkId === w.id).length,
+    review: w.review ? { ...w.review } : null,
+    timeline: [...w.timeline],
+  });
+  const push = (w: StudioArtwork, status: ArtworkStatus, detail?: string): StudioArtwork => {
+    const at = iso();
+    const next: StudioArtwork = {
+      ...w,
+      status,
+      updatedAt: at,
+      contentUrl: status === 'approved' ? `/v1/artworks/${w.id}/content` : null,
+      timeline: [...w.timeline, { status, at, ...(detail ? { detail } : {}) }],
+    };
+    st.artworks.set(w.id, next);
+    return next;
+  };
+
+  // Seed: two artists with proven payouts, three approved artworks (one featured).
+  if (opts.seedGallery !== false) {
+    for (const key of Object.keys(DEMO_ARTISTS) as Array<keyof typeof DEMO_ARTISTS>) {
+      const a = artistOf(demoArtistAddress(key, network));
+      st.artists.set(a.address, { ...a, displayName: DEMO_ARTISTS[key].displayName, payoutAddress: demoArtistPayout(key, network), payoutVerifiedAt: a.joinedAt });
+    }
+    DEMO_ARTWORKS.forEach((d, i) => {
+      const bytes = demoArtworkBytes(d.seed);
+      const sha = sha256Hex(bytes);
+      st.contents.set(sha, bytes);
+      const t0 = now() - (DEMO_ARTWORKS.length - i) * 86_400_000;
+      const at = iso(t0);
+      const w: StudioArtwork = {
+        id: d.id,
+        artist: demoArtistAddress(d.artist, network),
+        network,
+        title: d.title,
+        description: d.description,
+        contentType: 'image/png',
+        contentLength: bytes.length,
+        contentSha256: sha,
+        status: 'approved',
+        needsHuman: false,
+        review: {
+          automated: { approved: true, needsHuman: false, reasons: [], checks: [{ id: 'design', passed: true, detail: 'Tuxedo and bowtie present' }], reviewer: 'rules+vision' },
+          house: null,
+          reviewedAt: at,
+        },
+        featured: d.featured,
+        featuredAt: d.featured ? at : null,
+        contentUrl: `/v1/artworks/${d.id}/content`,
+        timeline: [
+          { status: 'submitted', at },
+          { status: 'reviewing', at },
+          { status: 'approved', at, detail: 'Meets the brief' },
+        ],
+        createdAt: at,
+        updatedAt: at,
+      };
+      st.artworks.set(w.id, w);
+    });
+  }
+
+  const review = (w: StudioArtwork, bytes: Uint8Array): StudioArtwork => {
+    const info = readImageInfo(bytes);
+    const sniffed = sniffContentType(bytes);
+    const v = validateContentMeta(
+      { contentType: sniffed ?? w.contentType, contentLength: bytes.length, ...(info?.width && info?.height ? { width: info.width, height: info.height } : {}) },
+      DEGENT_RULES_CONFIG,
+    );
+    const checks: StudioReviewCheck[] = [
+      { id: 'magic_bytes', passed: sniffed === w.contentType, detail: sniffed ? `file header says ${sniffed}` : 'unrecognised file header' },
+      ...v.checks,
+    ];
+    const rulesOk = checks.every((c) => c.passed);
+    const reasons = [...v.reasons];
+    if (sniffed !== w.contentType) reasons.push(`The bytes are ${sniffed ?? 'not a recognised image'}, not ${w.contentType}.`);
+    let automated: AutomatedReview;
+    let status: ArtworkStatus;
+    if (!rulesOk) {
+      automated = { approved: false, needsHuman: false, reasons, checks, reviewer: 'rules' };
+      status = 'rejected';
+    } else if ((opts.reviewScenario ?? 'approve') === 'approve') {
+      automated = { approved: true, needsHuman: false, reasons: [], checks: [...checks, { id: 'design', passed: true, detail: 'Tuxedo and bowtie present' }, { id: 'framing', passed: true, detail: 'Framed, placard reads DEGENT' }], reviewer: 'rules+vision' };
+      status = 'approved';
+    } else if (opts.reviewScenario === 'reject') {
+      automated = {
+        approved: false,
+        needsHuman: false,
+        reasons: ['No bowtie. The bowtie is mandatory.'],
+        checks: [...checks, { id: 'design', passed: false, detail: 'Bowtie missing' }, { id: 'framing', passed: true, detail: 'Framed, placard reads DEGENT' }],
+        reviewer: 'rules+vision',
+      };
+      status = 'rejected';
+    } else {
+      automated = {
+        approved: false,
+        needsHuman: true,
+        reasons: [],
+        checks: [...checks, { id: 'design', passed: false, detail: 'skipped: no vision reviewer configured' }],
+        reviewer: 'rules+human-gate',
+      };
+      status = 'reviewing';
+    }
+    const reviewedAt = iso();
+    let next: StudioArtwork = { ...w, needsHuman: automated.needsHuman, review: { automated, house: null, reviewedAt } };
+    st.artworks.set(next.id, next);
+    next = push(next, 'reviewing', 'Automated review ran');
+    if (status !== 'reviewing') next = push(next, status, status === 'approved' ? 'Meets the brief' : automated.reasons[0]);
+    return next;
+  };
+
+  const api: FakeStudio = {
+    state: st,
+    hooks: {
+      artwork: (id) => st.artworks.get(id),
+      artist: (address) => st.artists.get(address),
+      content: (id) => {
+        const w = st.artworks.get(id);
+        return w?.contentSha256 ? st.contents.get(w.contentSha256) : undefined;
+      },
+      recordRoyalty(rec) {
+        const w = st.artworks.get(rec.artworkId);
+        if (!w) return;
+        if (st.royalties.some((r) => r.orderId === rec.orderId)) return;
+        st.royalties.push({ ...rec, artist: w.artist, recordedAt: iso() });
+      },
+    },
+    async getConfig() {
+      log.push('studio.getConfig');
+      return config;
+    },
+    async challenge(address, net) {
+      log.push('studio.challenge');
+      if (net !== network) return err(422, 'network_mismatch', `This studio serves ${network}, not ${net}.`);
+      if (typeof address !== 'string' || address.length < 14) return err(422, 'validation_failed', 'address is not a Bitcoin address');
+      const nonce = hex.encode(sha256(enc.encode(`nonce|${address}|${now()}|${++seq}`))).slice(0, 32);
+      const issuedAt = iso();
+      const expiresAt = now() + config.siwb.ttlSeconds * 1000;
+      const message = [
+        `${config.siwb.domain} wants you to sign in with your Bitcoin account:`,
+        address,
+        '',
+        'Sign in to the degent.club Artist Studio.',
+        '',
+        `URI: ${config.siwb.uri}`,
+        'Version: 1',
+        `Network: ${network}`,
+        `Nonce: ${nonce}`,
+        `Issued At: ${issuedAt}`,
+        `Expiration Time: ${iso(expiresAt)}`,
+      ].join('\n');
+      st.challenges.set(nonce, { address, message, expiresAt, used: false });
+      return { message, nonce, address, network, issuedAt, expiresAt: iso(expiresAt) };
+    },
+    async verify(req) {
+      log.push('studio.verify');
+      const ch = [...st.challenges.values()].find((c) => c.message === req.message && c.address === req.address);
+      if (!ch) return err(401, 'sign_in_failed', 'Unknown or altered challenge.');
+      if (ch.used) return err(401, 'sign_in_failed', 'This challenge was already used.');
+      if (ch.expiresAt <= now()) return err(401, 'sign_in_failed', 'The challenge expired; request a new one.');
+      if (req.signature !== fakeMessageSignature(req.address, req.message)) return err(401, 'sign_in_failed', 'The signature does not verify for this address.');
+      ch.used = true;
+      const artist = artistOf(req.address);
+      const token = `sess_${hex.encode(schnorr.utils.randomSecretKey())}`;
+      const expiresAt = now() + config.session.ttlSeconds * 1000;
+      st.sessions.set(token, { address: req.address, expiresAt });
+      return { token, expiresAt: iso(expiresAt), method: 'bip322-simple', artist: withCounts(artist) };
+    },
+    async getMe(token) {
+      log.push('studio.getMe');
+      return withCounts(artistOf(subOf(token)));
+    },
+    async updateMe(token, req) {
+      log.push('studio.updateMe');
+      const sub = subOf(token);
+      const a = artistOf(sub);
+      let next = { ...a };
+      if (req.displayName !== undefined) {
+        if (req.displayName !== null && req.displayName.length > config.displayNameMaxChars) return err(422, 'validation_failed', 'displayName is too long');
+        next.displayName = req.displayName === '' ? null : req.displayName;
+      }
+      if (req.payout) {
+        const kind = payoutAddressKind(req.payout.address);
+        if (kind === 'legacy') return err(422, 'payout_address_legacy', 'The payout address must be a SegWit (bc1q…) or Taproot (bc1p…) address.');
+        if (kind === 'unknown') return err(422, 'validation_failed', 'The payout address is not a Bitcoin address.');
+        if (req.payout.signature !== fakeMessageSignature(req.payout.address, payoutMessage(req.payout.address, sub))) {
+          return err(422, 'payout_proof_invalid', 'The BIP-322 proof does not verify for that address and this session.');
+        }
+        next = { ...next, payoutAddress: req.payout.address, payoutVerifiedAt: iso() };
+      }
+      next.updatedAt = iso();
+      st.artists.set(sub, next);
+      return withCounts(next);
+    },
+    async getMyRoyalties(token, page = 1, pageSize = 24) {
+      log.push('studio.getMyRoyalties');
+      const sub = subOf(token);
+      const mine = st.royalties.filter((r) => r.artist === sub).sort((x, y) => (x.at < y.at ? 1 : -1));
+      const start = (page - 1) * pageSize;
+      return {
+        items: mine.slice(start, start + pageSize),
+        totals: { records: mine.length, royaltySats: mine.reduce((s, r) => s + r.royaltySats, 0) },
+        page,
+        pageSize,
+        total: mine.length,
+      };
+    },
+    async getArtist(address) {
+      log.push('studio.getArtist');
+      const a = st.artists.get(address);
+      if (!a) return err(404, 'not_found', `No artist ${address}`);
+      const c = withCounts(a);
+      return { address: c.address, displayName: c.displayName, artworks: c.artworks.approved, joinedAt: c.joinedAt };
+    },
+    async listArtworks(query, token) {
+      log.push('studio.listArtworks');
+      const status = query.status ?? 'approved';
+      let artist = query.artist;
+      if (status !== 'approved') {
+        const sub = subOf(token);
+        if (artist === undefined) artist = sub;
+        if (artist !== sub) return err(403, 'forbidden', 'Only your own artworks can be listed by status.');
+      }
+      const page = query.page ?? 1;
+      const pageSize = query.pageSize ?? 24;
+      const all = [...st.artworks.values()]
+        .filter((w) => w.status === status && (artist === undefined || w.artist === artist))
+        .sort((x, y) => Number(y.featured) - Number(x.featured) || (x.createdAt < y.createdAt ? 1 : x.createdAt > y.createdAt ? -1 : 0));
+      const start = (page - 1) * pageSize;
+      const list: ArtworkList = { items: all.slice(start, start + pageSize).map(view), page, pageSize, total: all.length };
+      return list;
+    },
+    async getArtwork(id, token) {
+      log.push('studio.getArtwork');
+      const w = st.artworks.get(id);
+      if (!w) return err(404, 'not_found', `No artwork ${id}`);
+      if (w.status !== 'approved') {
+        let sub: string | null = null;
+        try {
+          sub = subOf(token);
+        } catch {
+          sub = null;
+        }
+        if (sub !== w.artist) return err(404, 'not_found', `No artwork ${id}`);
+      }
+      if (w.status === 'reviewing' && w.needsHuman && opts.houseResolvesAfterPolls !== undefined) {
+        const n = (st.polls.get(id) ?? 0) + 1;
+        st.polls.set(id, n);
+        if (n >= opts.houseResolvesAfterPolls) {
+          const resolved: StudioArtwork = {
+            ...w,
+            needsHuman: false,
+            review: { automated: w.review?.automated ?? null, house: { decision: 'approve', reasons: [], reviewerId: 'key_house', at: iso() }, reviewedAt: iso() },
+          };
+          st.artworks.set(id, resolved);
+          return view(push(resolved, 'approved', 'The house approved it'));
+        }
+      }
+      return view(w);
+    },
+    async createArtwork(token, req) {
+      log.push('studio.createArtwork');
+      const sub = subOf(token);
+      if (!req.title || req.title.length > config.titleMaxChars) return err(422, 'validation_failed', `title must be 1-${config.titleMaxChars} characters`);
+      if (req.description && req.description.length > config.descriptionMaxChars) return err(422, 'validation_failed', 'description is too long');
+      const v = validateContentMeta({ contentType: req.contentType, contentLength: req.contentLength }, DEGENT_RULES_CONFIG);
+      if (!v.ok) return err(422, 'validation_failed', v.reasons.join(' '));
+      const id = `art_${hex.encode(sha256(enc.encode(`art|${sub}|${++seq}|${now()}`))).slice(0, 24)}`;
+      const at = iso();
+      const w: StudioArtwork = {
+        id,
+        artist: sub,
+        network,
+        title: req.title,
+        description: req.description ?? null,
+        contentType: req.contentType,
+        contentLength: req.contentLength,
+        contentSha256: null,
+        status: 'submitted',
+        needsHuman: false,
+        review: null,
+        featured: false,
+        featuredAt: null,
+        contentUrl: null,
+        timeline: [{ status: 'submitted', at }],
+        createdAt: at,
+        updatedAt: at,
+      };
+      st.artworks.set(id, w);
+      const uploadToken = base64url.encode(schnorr.utils.randomSecretKey()).replace(/=+$/, '');
+      st.uploadTokens.set(id, uploadToken);
+      return { artwork: view(w), uploadToken };
+    },
+    async uploadContent(id, uploadToken, bytes) {
+      log.push('studio.uploadContent');
+      const w = st.artworks.get(id);
+      if (!w) return err(404, 'not_found', `No artwork ${id}`);
+      if (!uploadToken) return err(401, 'unauthorized', 'Missing upload token.');
+      if (st.uploadTokens.get(id) !== uploadToken) return err(403, 'forbidden', 'Wrong upload token for this artwork.');
+      if (w.status !== 'submitted') return err(409, 'conflict', `Artwork ${id} already has content (${w.status}).`);
+      if (bytes.length !== w.contentLength) return err(422, 'content_mismatch', `Declared ${w.contentLength} bytes, received ${bytes.length}.`);
+      const sha = sha256Hex(bytes);
+      st.contents.set(sha, bytes);
+      const withBytes: StudioArtwork = { ...w, contentSha256: sha };
+      st.artworks.set(id, withBytes);
+      return view(review(withBytes, bytes));
+    },
+    async getContent(id) {
+      log.push('studio.getContent');
+      const w = st.artworks.get(id);
+      const bytes = w?.status === 'approved' && w.contentSha256 ? st.contents.get(w.contentSha256) : undefined;
+      if (!w || !bytes) return err(404, 'not_found', `No approved content for artwork ${id}`);
+      return { bytes, contentType: w.contentType, sha256: w.contentSha256 };
+    },
+    contentUrl(id) {
+      const cached = dataUrls.get(id);
+      if (cached) return cached;
+      const w = st.artworks.get(id);
+      const bytes = w?.status === 'approved' && w.contentSha256 ? st.contents.get(w.contentSha256) : undefined;
+      if (!w || !bytes) return `about:blank#${id}`;
+      const url = `data:${w.contentType};base64,${base64.encode(bytes)}`;
+      dataUrls.set(id, url);
+      return url;
+    },
+    async delist(id, token) {
+      log.push('studio.delist');
+      const sub = subOf(token);
+      const w = st.artworks.get(id);
+      if (!w) return err(404, 'not_found', `No artwork ${id}`);
+      if (w.artist !== sub) return err(403, 'forbidden', 'Not your artwork.');
+      if (w.status !== 'approved') return err(409, 'illegal_transition', `Only approved artworks can be delisted (this one is ${w.status}).`);
+      dataUrls.delete(id);
+      return view(push(w, 'delisted', 'Delisted by the artist'));
+    },
+  };
+  return api;
+}
+
 // ------------------------------------------------------------------ bundle
 
 export interface FakeServicesOptions {
   network?: Network;
   log?: CallLog;
-  mint?: Omit<FakeMintOptions, 'network' | 'chain'>;
+  mint?: Omit<FakeMintOptions, 'network' | 'chain' | 'studio'>;
+  studio?: Omit<FakeStudioOptions, 'network'>;
   wallet?: FakeWalletOptions;
   images?: FakeImageOptions | ImageTools;
 }
 
 export interface FakeServices extends Services {
+  studio: FakeStudio;
   log: CallLog;
   chainState: FakeChainState;
   apiOrders: Map<string, Order>;
+  studioState: FakeStudioState;
 }
 
 export function createFakeServices(o: FakeServicesOptions = {}): FakeServices {
   const log = o.log ?? [];
   const network = o.network ?? 'mainnet';
   const chain = createFakeChain(log);
-  const mintApi = createFakeMintApi(log, { network, chain: chain.state, ...(o.mint ?? {}) });
+  const studio = createFakeStudioApi(log, { network, ...(o.studio ?? {}) });
+  const mintApi = createFakeMintApi(log, { network, chain: chain.state, studio: studio.hooks, ...(o.mint ?? {}) });
   const images = o.images && 'encode' in o.images ? o.images : createFakeImages(o.images as FakeImageOptions | undefined);
   return {
     mode: 'demo',
     mintApi,
+    studio,
     wallets: createFakeWallets(log, o.wallet),
     chain,
     inscription: createFakeInscription(log),
@@ -633,5 +1362,6 @@ export function createFakeServices(o: FakeServicesOptions = {}): FakeServices {
     log,
     chainState: chain.state,
     apiOrders: mintApi.orders,
+    studioState: studio.state,
   };
 }

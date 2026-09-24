@@ -5,7 +5,8 @@ import { openOrder, verifyCommit } from '../flow/effects';
 import { canEnter } from '../flow/reducer';
 import { ScreenHeading } from '../components/ScreenHeading';
 import { Alert, Badge, Button, Fact, Money, Mono, Panel, errorText, useNow } from '../components/ui';
-import { formatCountdown, formatEta, formatFeeRate, groupDigits, ordinal } from '../lib/format';
+import { formatCountdown, formatEta, formatFeeRate, groupDigits, ordinal, shortHash } from '../lib/format';
+import { artworkQuote } from '../services/types';
 
 type Preset = 'economy' | 'normal' | 'priority' | 'custom';
 
@@ -70,7 +71,7 @@ export function QuoteScreen() {
       vault.discard(order.id);
       const o = await openOrder(
         { services, vault, pollMs: Math.min(app.pollIntervalMs, 1000) },
-        { tier: state.tier, artwork: state.artwork!, wallet: state.wallet!, feeRate: rate },
+        { tier: state.tier, artwork: state.artwork!, wallet: state.wallet!, feeRate: rate, artworkId: state.studioArtwork?.id ?? null },
       );
       dispatch({ type: 'ORDER_UPDATED', order: o });
       if (!o.review?.approved) dispatch({ type: 'GO', step: 'validate' });
@@ -88,6 +89,8 @@ export function QuoteScreen() {
   const laneSurprise = rule !== undefined && rule.lane !== quote.lane;
   const sharesBlock = rule?.sharesBlock ?? true;
   const canPay = canEnter(state, 'pay') && !rateChanged && !busy;
+  // ADR-0007 §5: a studio Degent's bill has four lines; the royalty is output [1] of the funding tx.
+  const aq = artworkQuote(quote);
 
   return (
     <div className="screen">
@@ -155,10 +158,44 @@ export function QuoteScreen() {
         {error ? <Alert tone="bad" title="Could not re-quote">{error}</Alert> : null}
       </Panel>
 
-      <Panel title="Breakdown" kicker={`${tierLabel} · ${quote.lane} lane`}>
-        <table className="bill">
+      <Panel title="Breakdown" kicker={`${tierLabel} · ${quote.lane} lane${aq ? ' · studio Degent' : ''}`}>
+        <table className="bill" data-testid="bill">
           <caption className="sr-only">Quote breakdown</caption>
           <tbody>
+            {aq ? (
+              <>
+                <tr>
+                  <th scope="row">
+                    Network cost <span className="muted small">(reveal fee {groupDigits(quote.revealVsize)} vB × {formatFeeRate(quote.feeRate)} + postage)</span>
+                  </th>
+                  <td data-testid="network-cost">
+                    <Money sats={quote.commitValueSats} />
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Club fee</th>
+                  <td data-testid="club-fee">{aq.clubFeeSats > 0 ? <Money sats={aq.clubFeeSats} /> : <span className="mono">none</span>}</td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    Artist royalty{' '}
+                    <span className="muted small">
+                      (to <span className="mono" data-testid="artist-address" title={aq.artistAddress ?? undefined}>{aq.artistAddress ? shortHash(aq.artistAddress, 6) : '—'}</span>
+                      {state.studioArtwork ? `, for “${state.studioArtwork.title}”` : ''})
+                    </span>
+                  </th>
+                  <td data-testid="artist-royalty">{aq.artistRoyaltySats > 0 ? <Money sats={aq.artistRoyaltySats} /> : <span className="mono">none</span>}</td>
+                </tr>
+                <tr className="bill__total">
+                  <th scope="row">Total</th>
+                  <td data-testid="total">
+                    <Money sats={quote.totalSats} strong />
+                  </td>
+                </tr>
+              </>
+            ) : null}
+            {!aq ? (
+              <>
             <tr>
               <th scope="row">Reveal transaction</th>
               <td className="mono">
@@ -197,11 +234,14 @@ export function QuoteScreen() {
                 <Money sats={quote.totalSats} strong />
               </td>
             </tr>
+              </>
+            ) : null}
           </tbody>
         </table>
         <p className="small muted">
           Plus the network fee of your funding transaction, which depends on your wallet’s coins and is shown exactly before
           you sign.
+          {aq ? ' The royalty and the club fee are separate outputs of that transaction, paid by you directly; the reveal is untouched.' : ''}
         </p>
         <dl className="facts facts--inline">
           <Fact label="Tier">{tierLabel}</Fact>

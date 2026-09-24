@@ -1,6 +1,8 @@
 import { useMint } from '../flow/context';
 import { ResumeBanner } from '../components/ResumeBanner';
-import { Button, Money, Panel } from '../components/ui';
+import { Badge, Button, Money, Panel } from '../components/ui';
+import { Link } from '../components/Link';
+import { shortHash } from '../lib/format';
 import { formatEta, formatFeeRate, formatSize } from '../lib/format';
 import { tierRule } from '../lib/rules';
 
@@ -28,10 +30,25 @@ export function Welcome() {
           linked to the club’s parent inscription, so any ord indexer can verify membership. No hand-kept list. No
           custodian. <strong>What you preview here is byte-for-byte what lands on chain.</strong>
         </p>
+        {state.studioArtwork ? (
+          <p className="selected" data-testid="selected-artwork">
+            <Badge tone="brass">Selected</Badge> You are minting <strong>{state.studioArtwork.title}</strong> by{' '}
+            <span className="mono">{shortHash(state.studioArtwork.artist, 6)}</span> from the gallery.{' '}
+            <button type="button" className="linkbtn" onClick={() => dispatch({ type: 'STUDIO_ARTWORK_CLEARED' })}>
+              Mint your own instead
+            </button>
+          </p>
+        ) : null}
         <div className="row">
           <Button onClick={() => dispatch({ type: 'GO', step: 'connect' })} disabled={!config}>
             Start minting
           </Button>
+          <Link to={{ name: 'gallery', page: 1, artist: null }} className="btn btn--secondary">
+            Browse the gallery
+          </Link>
+          <Link to={{ name: 'studio' }} className="btn btn--ghost">
+            Artist Studio
+          </Link>
           {!config && !state.error ? <span className="muted small" role="status">Fetching the house rules…</span> : null}
         </div>
       </section>

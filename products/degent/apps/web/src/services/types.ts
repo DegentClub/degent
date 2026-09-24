@@ -9,9 +9,89 @@ import type {
   CreateOrderRequest,
   Network,
   Order,
+  Quote,
   RescueInputs,
   SubmitRevealRequest,
 } from '@bsh/degent-mint-sdk';
+import type { StudioApi } from './studioApi';
+
+export type { StudioApi } from './studioApi';
+
+// ---------------------------------------------------------------- studio artworks in mint orders (plan §3.1)
+
+/**
+ * The mint contract is gaining these fields for studio artwork orders (plan §3.1, ADR-0007 §5).
+ * They are OPTIONAL on the wire and read defensively here: an order without them is a plain
+ * self-made Degent and renders exactly as before.
+ */
+export interface ArtworkQuoteFields {
+  /** The club's share, output [2] of the funding transaction. */
+  clubFeeSats: number;
+  /** The artist's royalty, output [1] of the funding transaction (never a reveal output). */
+  artistRoyaltySats: number;
+  /** The artist's proven payout address (ADR-0007 §3). */
+  artistAddress: string;
+  artworkId: string;
+  mintPriceSats: number;
+  /** Edition number reserved at quote time (plan §3.4). */
+  edition: number;
+}
+
+export interface ArtworkOrderFields {
+  artworkId: string;
+  artistAddress: string;
+  artistRoyaltySats: number;
+  clubFeeSats: number;
+  edition: number;
+  /** Set by the mint once it verified output [1] of the funding transaction. */
+  royaltyPaid: { txid: string; vout: number; sats: number };
+}
+
+export type QuoteExt = Quote & Partial<ArtworkQuoteFields>;
+export type OrderExt = Order & Partial<ArtworkOrderFields>;
+export type CreateOrderRequestExt = CreateOrderRequest & { artworkId?: string };
+
+const isSats = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+
+/** The four-line breakdown facts, or null when the quote is for a self-made Degent. */
+export function artworkQuote(q: Quote | null | undefined): {
+  clubFeeSats: number;
+  artistRoyaltySats: number;
+  artistAddress: string | null;
+  artworkId: string | null;
+  mintPriceSats: number | null;
+  edition: number | null;
+} | null {
+  if (!q) return null;
+  const x = q as QuoteExt;
+  if (!isSats(x.clubFeeSats) || !isSats(x.artistRoyaltySats)) return null;
+  return {
+    clubFeeSats: x.clubFeeSats,
+    artistRoyaltySats: x.artistRoyaltySats,
+    artistAddress: typeof x.artistAddress === 'string' && x.artistAddress.length > 0 ? x.artistAddress : null,
+    artworkId: typeof x.artworkId === 'string' ? x.artworkId : null,
+    mintPriceSats: isSats(x.mintPriceSats) ? x.mintPriceSats : null,
+    edition: typeof x.edition === 'number' && Number.isSafeInteger(x.edition) ? x.edition : null,
+  };
+}
+
+/** `order.royaltyPaid` when the mint has verified the artist's output. */
+export function royaltyPaidOf(o: Order | null | undefined): { txid: string; vout: number; sats: number } | null {
+  const r = (o as OrderExt | null | undefined)?.royaltyPaid;
+  if (!r || typeof r !== 'object') return null;
+  if (typeof r.txid !== 'string' || !/^[0-9a-f]{64}$/.test(r.txid) || !Number.isSafeInteger(r.vout) || !isSats(r.sats)) return null;
+  return { txid: r.txid, vout: r.vout, sats: r.sats };
+}
+
+export function orderArtworkId(o: Order | null | undefined): string | null {
+  const id = (o as OrderExt | null | undefined)?.artworkId;
+  return typeof id === 'string' && id.length > 0 ? id : null;
+}
+
+export function orderEdition(o: Order | null | undefined): number | null {
+  const e = (o as OrderExt | null | undefined)?.edition ?? artworkQuote(o?.quote)?.edition ?? null;
+  return typeof e === 'number' && Number.isSafeInteger(e) ? e : null;
+}
 
 // ---------------------------------------------------------------- mint service
 
@@ -59,7 +139,8 @@ export interface MintApi {
   getConfig(): Promise<ServiceConfig>;
   getFees(): Promise<FeeSnapshot>;
   getQueue(): Promise<QueueSnapshot>;
-  createOrder(req: CreateOrderRequest): Promise<CreatedOrder>;
+  /** With `artworkId` (plan §3.1) the bytes come from the studio; the service may skip the upload. */
+  createOrder(req: CreateOrderRequestExt): Promise<CreatedOrder>;
   /** PUT /v1/orders/{id}/content (application/octet-stream). Starts the automated art review. */
   uploadContent(orderId: string, orderToken: string, bytes: Uint8Array): Promise<Order>;
   /** POST /v1/orders/{id}/reveal with the half-signed reveal. */
@@ -74,7 +155,8 @@ export interface MintApi {
 
 // ---------------------------------------------------------------- wallet
 
-export type WalletId = 'unisat' | 'xverse' | 'leather' | 'okx' | 'magiceden';
+/** Wallet ids are the wallet-kit's (the registry grows there, e.g. `xcp`, `horizon`). */
+export type WalletId = import('@bsh/wallet-kit').WalletId;
 export type AddressType = 'p2tr' | 'p2wpkh' | 'p2sh-p2wpkh' | 'p2pkh' | 'unknown';
 
 export interface WalletAccount {
@@ -102,6 +184,8 @@ export interface SignPsbtResult {
   txid?: string;
 }
 
+export type MessageSignatureType = 'bip322-simple' | 'ecdsa';
+
 export interface WalletSession {
   id: WalletId;
   name: string;
@@ -109,6 +193,11 @@ export interface WalletSession {
   ordinals: WalletAccount;
   payment: WalletAccount;
   signPsbt(psbtBase64: string, req: SignPsbtRequest): Promise<SignPsbtResult>;
+  /**
+   * Sign a text message with one of the wallet's own addresses (Sign-in-with-Bitcoin and the payout
+   * proof, ADR-0007 §2-3). BIP-322 simple by default; base64 signature.
+   */
+  signMessage?(message: string, address: string, type?: MessageSignatureType): Promise<string>;
   pushTx?(hex: string): Promise<string>;
   disconnect(): Promise<void>;
 }
@@ -220,6 +309,8 @@ export interface ImageTools {
 export interface Services {
   mode: 'live' | 'demo';
   mintApi: MintApi;
+  /** The Artist Studio (ADR-0007): gallery, sign-in, artworks, royalties. */
+  studio: StudioApi;
   wallets: WalletService;
   chain: ChainApi;
   inscription: InscriptionOps;

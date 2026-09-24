@@ -17,10 +17,11 @@ import type { Network, Order, RescueInputs, ServiceConfig, Tier } from '@bsh/deg
 import { laneForWeight, type Lane } from '@bsh/degent-mint-sdk';
 import { hex } from '@scure/base';
 import type { Services, WalletSession, RescueTx, InscriptionContentInput } from '../services/types';
+import { artworkQuote, orderEdition } from '../services/types';
 import type { AppConfig } from '../config';
 import type { Artwork } from './state';
 import type { KeyVault } from './keyVault';
-import { buildFundingPsbt, extractSignedTx, type FundingPsbt } from '../lib/funding';
+import { buildFundingPsbt, compareOutputs, extractSignedTx, type FundingPsbt } from '../lib/funding';
 import {
   base64ToBytes,
   bytesToBase64,
@@ -73,7 +74,14 @@ export function laneForArtwork(
 
 export async function openOrder(
   deps: { services: Services; vault: KeyVault; sleep?: Sleep; pollMs?: number; maxPolls?: number },
-  args: { tier: Tier; artwork: Artwork; wallet: WalletSession; feeRate: number },
+  args: {
+    tier: Tier;
+    artwork: Artwork;
+    wallet: WalletSession;
+    feeRate: number;
+    /** Studio artwork being minted (ADR-0007): sent on the order; the service may skip the upload. */
+    artworkId?: string | null;
+  },
 ): Promise<Order> {
   const { mintApi, inscription } = deps.services;
   const key = inscription.generateEphemeralKey();
@@ -85,12 +93,16 @@ export async function openOrder(
     recipientAddress: args.wallet.ordinals.address,
     revealPubkey: key.pubkeyHex,
     feeRate: args.feeRate,
+    ...(args.artworkId ? { artworkId: args.artworkId } : {}),
   });
   if (!created.orderToken) throw new MissingTokenError();
   let order = created.order;
   deps.vault.put(order.id, key.privkey);
   deps.vault.putToken(order.id, created.orderToken);
-  order = await mintApi.uploadContent(order.id, requireToken(deps.vault, order.id), args.artwork.bytes);
+  // A studio artwork was reviewed at submission: the service may already hold the bytes and answer
+  // `approved` with a binding quote (plan §3.1). Otherwise the exact bytes go up as for any Degent.
+  const preReviewed = !!args.artworkId && order.status !== 'awaiting_content' && !!order.quote?.binding;
+  if (!preReviewed) order = await mintApi.uploadContent(order.id, requireToken(deps.vault, order.id), args.artwork.bytes);
   const sleep = deps.sleep ?? realSleep;
   const maxPolls = deps.maxPolls ?? 60;
   for (let i = 0; i < maxPolls && (order.status === 'awaiting_content' || order.status === 'reviewing'); i++) {
@@ -157,8 +169,14 @@ export async function preparePayment(
   const utxos = await chain.getUtxos(wallet.payment.address);
 
   args.onPhase?.('building');
-  if (quote.serviceFeeSats > 0 && !order.serviceFeeAddress) {
+  // Studio artwork (ADR-0007 §5): output [1] pays the artist, output [2] the club; the reveal is untouched.
+  const aq = artworkQuote(quote);
+  const clubFee = aq ? aq.clubFeeSats : quote.serviceFeeSats;
+  if (clubFee > 0 && !order.serviceFeeAddress) {
     throw new Error('The service quoted a fee but gave no fee address. Refusing to build the payment.');
+  }
+  if (aq && aq.artistRoyaltySats > 0 && !aq.artistAddress) {
+    throw new Error('The service quoted an artist royalty but gave no artist payout address. Refusing to build the payment.');
   }
   const funding = buildFundingPsbt({
     network: deps.app.network,
@@ -167,10 +185,8 @@ export async function preparePayment(
     ordinalsAddress: wallet.ordinals.address,
     commitAddress,
     commitValue: quote.commitValueSats,
-    serviceFee:
-      quote.serviceFeeSats > 0 && order.serviceFeeAddress
-        ? { address: order.serviceFeeAddress, value: quote.serviceFeeSats }
-        : null,
+    artistRoyalty: aq && aq.artistRoyaltySats > 0 && aq.artistAddress ? { address: aq.artistAddress, value: aq.artistRoyaltySats } : null,
+    serviceFee: clubFee > 0 && order.serviceFeeAddress ? { address: order.serviceFeeAddress, value: clubFee } : null,
     feeRate: quote.feeRate,
   });
   // ADR-0005 §1: SIGHASH_ALL|ANYONECANPAY over [parent return, child]. Output 0 is signed up front to
@@ -218,6 +234,8 @@ export async function preparePayment(
     revealPrivkey: hex.encode(privkey),
     revealPubkey: order.revealPubkey,
     orderToken,
+    ...(aq?.artworkId ? { artworkId: aq.artworkId } : {}),
+    ...(orderEdition(order) !== null ? { edition: orderEdition(order)! } : {}),
     note: RECOVERY_NOTE,
     warning: RECOVERY_WARNING,
   };
@@ -229,19 +247,39 @@ export async function preparePayment(
 }
 
 export class FundingTxidMismatchError extends Error {
-  constructor(expected: string, got: string) {
+  constructor(expected: string, got: string, detail?: string) {
     super(
-      `Your wallet changed the funding transaction (expected txid ${expected}, got ${got}). ` +
-        'It was NOT broadcast: the pre-signed reveal only spends the original transaction. Try again ' +
-        'without editing the transaction in your wallet.',
+      `Your wallet changed the funding transaction (${detail ?? `expected txid ${expected}, got ${got}`}). ` +
+        'It was NOT broadcast: the pre-signed reveal only spends the original transaction' +
+        (detail ? ', and every output (commit, artist royalty, club fee, change) must stay exactly as quoted' : '') +
+        '. Try again without editing the transaction in your wallet.',
     );
     this.name = 'FundingTxidMismatchError';
   }
 }
 
+/** The signed transaction's outputs differ from the PSBT's (script or value), not only its txid. */
+export class FundingOutputsMismatchError extends FundingTxidMismatchError {
+  constructor(expected: string, got: string, detail: string) {
+    super(expected, got, detail);
+    this.name = 'FundingOutputsMismatchError';
+  }
+}
+
+/**
+ * Check a wallet-signed funding transaction against the PSBT it was asked to sign: every output's
+ * script and value (plan §3.2), then the txid the reveal was signed against.
+ */
+export function checkSignedFunding(funding: FundingPsbt, signed: { txid: string; outputs: Array<{ script: string; value: number }> }): void {
+  const diff = compareOutputs(funding.outputs, signed.outputs);
+  if (diff) throw new FundingOutputsMismatchError(funding.txid, signed.txid, diff);
+  if (signed.txid !== funding.txid) throw new FundingTxidMismatchError(funding.txid, signed.txid);
+}
+
 /**
  * Ask the wallet to sign (not broadcast) the funding PSBT, check that the signed transaction is the
- * one the reveal was signed against, then broadcast it (wallet relay if offered, else esplora).
+ * one the reveal was signed against (outputs and txid), then broadcast it (wallet relay if offered,
+ * else esplora).
  */
 export async function signAndBroadcast(
   deps: { services: Services },
@@ -253,8 +291,9 @@ export async function signAndBroadcast(
     finalize: true,
     broadcast: false,
   });
-  const { hex: rawHex, txid } = extractSignedTx(signed.psbtBase64);
-  if (txid !== args.funding.txid) throw new FundingTxidMismatchError(args.funding.txid, txid);
+  const extracted = extractSignedTx(signed.psbtBase64);
+  checkSignedFunding(args.funding, extracted);
+  const { hex: rawHex, txid } = extracted;
   args.onPhase?.('broadcasting');
   const pushed = args.wallet.pushTx ? await args.wallet.pushTx(rawHex) : await deps.services.chain.broadcast(rawHex);
   return pushed || txid;

@@ -1,6 +1,8 @@
 import { useMint } from '../flow/context';
 import { shortHash } from '../lib/format';
+import { isMintRoute, useRoute } from '../lib/router';
 import { Button } from './ui';
+import { Link } from './Link';
 
 export function BowtieMark({ size = 28 }: { size?: number }) {
   return (
@@ -15,15 +17,30 @@ export function Header() {
   const { state, dispatch } = useMint();
   const w = state.wallet;
   const locked = state.step === 'pay' && state.pay.phase !== 'idle' && state.pay.phase !== 'error';
+  const route = useRoute();
+  const section = isMintRoute(route) ? 'mint' : route.name.startsWith('studio') ? 'studio' : route.name === 'gallery' || route.name === 'artwork' ? 'gallery' : null;
   return (
     <header className="header">
       <div className="header__brand">
-        <BowtieMark />
-        <span className="wordmark">
-          degent<span className="wordmark__dot">.</span>club
-        </span>
-        <span className="header__tag">The Mint</span>
+        <Link to={{ name: 'home' }} className="header__home" aria-label="degent.club home">
+          <BowtieMark />
+          <span className="wordmark">
+            degent<span className="wordmark__dot">.</span>club
+          </span>
+        </Link>
+        <span className="header__tag">{section === 'studio' ? 'The Studio' : section === 'gallery' ? 'The Gallery' : 'The Mint'}</span>
       </div>
+      <nav className="topnav" aria-label="Site">
+        <Link to={{ name: 'gallery', page: 1, artist: null }} aria-current={section === 'gallery' ? 'page' : undefined}>
+          Gallery
+        </Link>
+        <Link to={{ name: 'mint', artworkId: null }} aria-current={section === 'mint' ? 'page' : undefined}>
+          Mint
+        </Link>
+        <Link to={{ name: 'studio' }} aria-current={section === 'studio' ? 'page' : undefined}>
+          Studio
+        </Link>
+      </nav>
       {w ? (
         <div className="header__wallet">
           <span className="chip" title={w.ordinals.address}>

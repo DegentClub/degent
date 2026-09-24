@@ -159,6 +159,29 @@ async function runViewport(browser, url, width) {
   check(await onChain.evaluate((img) => img.complete && img.naturalWidth > 0), 'on-chain image did not decode');
   await shot('delivered');
 
+  // The Open Studio (ADR-0007): gallery, one artwork, the studio signed in with the fake wallet.
+  await page.getByRole('navigation', { name: 'Site' }).getByRole('link', { name: 'Gallery' }).click();
+  await h1(/hung by their makers/);
+  await page.getByText('Showing 1–3 of 3').waitFor();
+  const frames = page.locator('.gallery .frame__img');
+  check((await frames.count()) === 3, 'expected three framed artworks');
+  for (const img of await frames.all()) check(await img.evaluate((el) => el.complete && el.naturalWidth > 0), 'gallery image did not decode');
+  await shot('gallery');
+
+  await page.getByRole('link', { name: /The Chairman by/ }).click();
+  await h1(/The Chairman/);
+  await page.getByRole('button', { name: 'Mint this Degent' }).waitFor();
+  check((await page.locator('.pills .pill').count()) === 5, 'expected five rule pills');
+  await shot('artwork');
+
+  await page.getByRole('navigation', { name: 'Site' }).getByRole('link', { name: 'Studio' }).click();
+  await h1(/Membership is earned by making/);
+  await page.getByRole('button', { name: 'Sign in with Bitcoin' }).click();
+  await page.getByRole('heading', { name: 'Your profile' }).waitFor();
+  await page.getByRole('button', { name: 'Prove & save payout address' }).click();
+  await page.getByText('✓ Proven').waitFor();
+  await shot('studio');
+
   await context.close();
   check(problems.length === 0, `${width}px: browser problems:\n  ${problems.join('\n  ')}`);
   return saved;
