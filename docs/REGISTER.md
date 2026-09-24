@@ -17,8 +17,15 @@ and what the mint service serves in the meantime.
 One inscription, held in the club's own ord wallet (cold, multisig-controlled — see *Custody*), whose content is the club charter (a short HTML page) and whose metadata (CBOR, per the ord `--cbor-metadata` flag) carries:
 
 ```json
-{ "name": "Decentralized Gentlemen Club", "charter": "10000", "register": "<inscription id of the Gallery, filled after 1.2>" }
+{ "name": "Decentralized Gentlemen Club", "charter": "10000" }
 ```
+
+(An earlier draft also carried `"register": "<Gallery id>"`. Inscription metadata is immutable and the Gallery can only
+be inscribed after the parent, so the pointer is not written: the Gallery is the parent's signed child, found with
+ord `/r/children/<parent>` and announced as `GALLERY_INSCRIPTION_ID`, `GET /v1/register` → `gallery`.) The parent is
+inscribed to the owner's ord wallet, the Gallery inscribed with `--parent`, and only then is the parent sent to the
+collection address; step by step in [LAUNCH-CHAIN-SETUP.md](LAUNCH-CHAIN-SETUP.md), prepared by
+`scripts/prepare-parent.mjs`.
 
 ### 1.2 The Gallery (existing 4,112)
 The first 4,112 Degents were inscribed before the parent existed, so they cannot be its children. They are recorded instead by one **Gallery inscription**, a child of the parent, whose content is a JSON document:
@@ -28,6 +35,17 @@ The first 4,112 Degents were inscribed before the parent existed, so they cannot
 ```
 
 The Gallery is signed: the metadata includes a BIP-322 signature over `sha256(content)` by the club's announced signing address, so a forked gallery cannot impersonate it. Additions after 4,112 do not touch the Gallery; they use 1.3.
+
+Exact form (`scripts/prepare-gallery.mjs` builds it, `chain-setup verify-gallery` checks it): the content is the compact
+JSON above (no whitespace, members ordered by `n`, 4,112 unique ids, no trailing newline); the signed message is the
+single ASCII line
+
+```
+degent.club Gallery v1: 4112 members, sha256 <sha256(content), lowercase hex>, parent <parent inscription id>
+```
+
+and the CBOR metadata is `{ kind: "degent.club/gallery", version: 1, parent, count, sha256, message, signer, signature }`
+(BIP-322 simple, base64). Binding the parent id into the message keeps the signature from being replayed under another parent.
 
 ### 1.3 New members (4,113 →)
 Every new mint is revealed by the mint service (`@bsh/degent-mint`, ADR-0002) as a **child of the Club parent**:
@@ -65,7 +83,27 @@ node scripts/blockspace-query.mjs --collection collection.json --compare compare
 
 `scripts/blockspace-query.mjs` sums `content_length` over every id from ord's recursive endpoint, caches results, and prints a markdown table. Publish the table and the `compare.json` ids monthly so the comparison is reproducible.
 
-### 2.1 What counts as "blockspace"
+### 2.1 One certified count
+
+The site has shown three conflicting figures (site-spec "Known defects"): 4,027 minted / 1,470 MB on the site, 4,112 in
+`collection.json`, 4,113 / 1,508 MB in an internal analysis. `products/degent/services/mint/scripts/reconcile-count.mjs`
+settles them:
+
+```sh
+node products/degent/services/mint/scripts/reconcile-count.mjs --ord https://<your-ord> --export magic-eden-ids.json --out count-report
+```
+
+It counts unique, well-formed ids in the roster (numbers 1..N contiguous), sums ord `content_length` when a URL is given
+(cached; otherwise it labels the roster's `sizeKb`×1024 as an estimate), diffs an exported id list, and writes
+`count-report.json` + `.md` with one explanation per discrepancy class: `stale-count` / `over-count`, `unit-mismatch`
+(MiB or KiB labelled MB), `duplicate-in-roster`, `roster-numbering`, `missing-from-export`, `extra-in-export`,
+`export-hygiene`, `size-mismatch-vs-ord`, `ord-unavailable`. From the committed roster alone: **4,112 Degents,
+1,544,701,318 bytes = 1,544.7 MB = 1,473.1 MiB** (estimate until re-run against ord). The site's 4,027 is a stale
+snapshot (85 members, #4028–#4112, are missing) and its "1,470 MB" is the MiB total of all 4,112; the internal
+1,508 "MB" is the KiB sum divided by 1000, and its 4,113 counts one row that is not a Degent. Always publish bytes
+with the unit (MB = 10^6) and the source.
+
+### 2.2 What counts as "blockspace"
 Content bytes of the reveal transaction's inscription envelope. This undercounts total weight (envelope overhead, commit tx) by a few percent but is the same measure for every collection, which is what makes the comparison fair. State it that way in public.
 
 ## 3. Custody

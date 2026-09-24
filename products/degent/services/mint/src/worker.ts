@@ -57,22 +57,41 @@ export interface WorkerDeps {
   log?: Logger;
 }
 
+/** Log line names the ops dashboard/alerts read (products/degent/ops; checked by test/ops.test.ts). */
+export const LOG_GAUGES = 'mint gauges';
+export const LOG_BROADCAST_FAILED = 'broadcast failed';
+export const LOG_NO_PARENT = 'no parent UTXO configured; cannot reveal';
+
+/**
+ * Point-in-time gauges, logged once a minute as ONE `mint gauges` line (the only periodic gauge line; the ops
+ * dashboard/alerts in products/degent/ops and the stuck-order alerts in docs/DEPLOY.md read it). Top-level fields
+ * are flat so LogQL `| json` can unwrap them; booleans are logged as 0/1. `counts` and `oldestSeconds` are
+ * objects keyed by status, which `| json` flattens to `counts_<status>` / `oldestSeconds_<status>`.
+ */
+export interface MintGauges {
+  memberReview: number;
+  /** Age of the oldest order waiting for members, from reviewStartedAt; 0 when none. */
+  memberReviewOldestAgeSeconds: number;
+  rescueAvailable: number;
+  queued: number;
+  revealing: number;
+  awaitingConfirmation: number;
+  parentKnown: boolean;
+  parentConfirmed: boolean;
+  parentLeased: boolean;
+  /** Orders per non-terminal status (every GAUGE_STATUSES key present, 0 when none). */
+  counts: Record<string, number>;
+  /** Seconds the oldest order in each non-terminal status has been in it (0 when none). */
+  oldestSeconds: Record<string, number>;
+}
+
 export interface TickReport {
   transitions: Array<{ orderId: string; from: OrderStatus; to: OrderStatus }>;
   errors: Array<{ orderId: string; step: string; error: string }>;
 }
 
-/** Every non-terminal status: what the periodic `order status snapshot` log line reports (docs/DEPLOY.md alerts). */
-export const SNAPSHOT_STATUSES: readonly OrderStatus[] = ORDER_STATUSES.filter((s) => !['rejected', 'expired', 'failed', 'delivered'].includes(s));
-
-export interface StatusSnapshot {
-  /** Orders per status (every SNAPSHOT_STATUSES key present, 0 when none). */
-  counts: Record<string, number>;
-  /** Seconds the oldest order in each status has been in it (0 when none). */
-  oldestSeconds: Record<string, number>;
-  /** Whether the service knows a parent UTXO (false pauses every reveal). */
-  parent: boolean;
-}
+/** Every non-terminal status: the keys of `counts` / `oldestSeconds` in the `mint gauges` line. */
+export const GAUGE_STATUSES: readonly OrderStatus[] = ORDER_STATUSES.filter((s) => !['rejected', 'expired', 'failed', 'delivered'].includes(s));
 
 export class MintWorker {
   private readonly log: Logger;
@@ -93,7 +112,6 @@ export class MintWorker {
   private async move(r: OrderRecord, to: OrderStatus, opts: Parameters<OrderService['transition']>[2] = {}): Promise<OrderRecord> {
     const saved = await this.d.orders.transition(r, to, opts);
     this.report.transitions.push({ orderId: r.id, from: r.status, to });
-    this.log.info('order transition', { orderId: r.id, from: r.status, to, detail: opts.detail, txid: opts.txid });
     return saved;
   }
 
@@ -133,40 +151,65 @@ export class MintWorker {
     }
   }
 
-  /** Counts and oldest age per non-terminal status; logged periodically by run() for alerting. */
-  async snapshot(): Promise<StatusSnapshot> {
+  /** Gauges for the ops dashboard and alerts; non-terminal statuses only, so the cost does not grow with history. */
+  async gauges(): Promise<MintGauges> {
     const now = this.nowMs();
+    const rows = await this.d.store.listByStatus(GAUGE_STATUSES);
     const counts: Record<string, number> = {};
     const oldestSeconds: Record<string, number> = {};
-    for (const s of SNAPSHOT_STATUSES) {
-      counts[s] = 0;
-      oldestSeconds[s] = 0;
+    for (const st of GAUGE_STATUSES) {
+      counts[st] = 0;
+      oldestSeconds[st] = 0;
     }
-    for (const r of await this.d.store.listByStatus(SNAPSHOT_STATUSES)) {
+    let oldestReview = Infinity;
+    for (const r of rows) {
       counts[r.status] = (counts[r.status] ?? 0) + 1;
       const since = Date.parse(r.timeline.at(-1)?.at ?? r.updatedAt);
       const age = Number.isFinite(since) ? Math.max(0, Math.floor((now - since) / 1000)) : 0;
       oldestSeconds[r.status] = Math.max(oldestSeconds[r.status] ?? 0, age);
+      if (r.status === 'member_review' && r.reviewStartedAt) oldestReview = Math.min(oldestReview, Date.parse(r.reviewStartedAt));
     }
-    const parent = (await this.d.parents.current().catch(() => null)) !== null;
-    return { counts, oldestSeconds, parent };
+    const count = (st: OrderStatus) => counts[st] ?? 0;
+    // An unreadable parent reports as unknown (parentKnown 0 pages) rather than suppressing the whole line.
+    const parent = await this.d.parents.current().catch(() => null);
+    return {
+      memberReview: count('member_review'),
+      memberReviewOldestAgeSeconds: Number.isFinite(oldestReview) ? Math.max(0, Math.round((now - oldestReview) / 1000)) : 0,
+      rescueAvailable: count('rescue_available'),
+      queued: count('queued'),
+      revealing: count('revealing'),
+      awaitingConfirmation: count('paid') + count('confirming') + count('revealed') + count('confirmed') + count('verified'),
+      parentKnown: parent !== null,
+      parentConfirmed: parent?.confirmed ?? false,
+      parentLeased: (await this.d.parents.leasedBy().catch(() => null)) !== null,
+      counts,
+      oldestSeconds,
+    };
   }
 
-  /** Tick every `intervalMs` until the signal aborts; log an `order status snapshot` every `snapshotEveryMs`. */
-  async run(intervalMs: number, signal: AbortSignal, snapshotEveryMs = 60_000): Promise<void> {
-    let lastSnapshot = -Infinity;
+  /** Tick every `intervalMs` until the signal aborts; log `mint gauges` at most every `gaugeEveryMs`. */
+  async run(intervalMs: number, signal: AbortSignal, gaugeEveryMs = 60_000): Promise<void> {
+    let lastGauges = -Infinity;
     while (!signal.aborted) {
+      if (this.nowMs() - lastGauges >= gaugeEveryMs) {
+        lastGauges = this.nowMs();
+        await this.gauges()
+          // Booleans as 0/1 so LogQL can `unwrap` them.
+          .then((g) =>
+            this.log.info(LOG_GAUGES, {
+              ...g,
+              parentKnown: g.parentKnown ? 1 : 0,
+              parentConfirmed: g.parentConfirmed ? 1 : 0,
+              parentLeased: g.parentLeased ? 1 : 0,
+            }),
+          )
+          .catch((e) => this.log.error('gauges failed', { error: e instanceof Error ? e.message : String(e) }));
+      }
       const rep = await this.tick().catch((e) => {
         this.log.error('tick failed', { error: e instanceof Error ? e.message : String(e) });
         return null;
       });
       if (rep && rep.transitions.length) this.log.info('tick', { transitions: rep.transitions.length, errors: rep.errors.length });
-      if (this.nowMs() - lastSnapshot >= snapshotEveryMs) {
-        lastSnapshot = this.nowMs();
-        await this.snapshot()
-          .then((snap) => this.log.info('order status snapshot', { ...snap }))
-          .catch((e) => this.log.error('status snapshot failed', { error: e instanceof Error ? e.message : String(e) }));
-      }
       await new Promise<void>((res) => {
         const t = setTimeout(res, intervalMs);
         signal.addEventListener('abort', () => (clearTimeout(t), res()), { once: true });
@@ -286,7 +329,7 @@ export class MintWorker {
       await this.onRevealSeen(r, parentValue);
       return true;
     }
-    this.log.warn('broadcast failed', { orderId: r.id, lane: r.lane, via: res.via, error: res.error, retryable: res.retryable });
+    this.log.warn(LOG_BROADCAST_FAILED, { orderId: r.id, lane: r.lane, via: res.via, error: res.error, retryable: res.retryable });
     if (res.retryable) {
       // Keep the lease and the exact tx: retrying the same bytes is idempotent.
       await this.d.orders.patch(r, { broadcastAttempts: r.broadcastAttempts + 1, lastError: res.error });
@@ -360,7 +403,7 @@ export class MintWorker {
       if (await this.d.parents.leasedBy()) return; // a reveal is mid-flight on the parent
       const parent = await this.d.parents.current();
       if (!parent) {
-        this.log.error('no parent UTXO configured; cannot reveal', {});
+        this.log.error(LOG_NO_PARENT, {});
         return;
       }
       if (o.lane === 'standard' && !parent.confirmed && parent.createdByLane === 'block') continue;

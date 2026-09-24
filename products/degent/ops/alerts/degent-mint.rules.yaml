@@ -1,0 +1,165 @@
+# degent-mint alert rules — Loki ruler format (Prometheus rule groups whose `expr` is LogQL).
+# Built only from the service's JSON log lines; every field and msg used here is checked against the service code
+# by test/ops.test.ts at the repository root, and every runbook_url anchor against RUNBOOK.md.
+# The stream selector assumes the log shipper labels degent-mint's stdout with job="degent-mint"
+# (see products/degent/ops/README.md). Thresholds are starting points; tune after the signet rehearsal.
+groups:
+  - name: degent-mint.chain
+    interval: 1m
+    rules:
+      - alert: DegentMintParentMissing
+        expr: |
+          min by (service) (min_over_time({job="degent-mint"} | json | msg="mint gauges" | unwrap parentKnown [10m])) < 1
+          or
+          sum(count_over_time({job="degent-mint"} | json | msg="no parent UTXO configured; cannot reveal" [10m])) > 0
+        for: 10m
+        labels: { severity: critical, service: degent-mint }
+        annotations:
+          summary: The mint does not know the parent UTXO; every reveal is paused.
+          description: "`mint gauges` reports parentKnown=0 (or the worker logs `no parent UTXO configured; cannot reveal`). Paid orders will drift to rescue_available after RESCUE_AFTER_SECONDS."
+          runbook_url: products/degent/services/mint/RUNBOOK.md#6-parent-missing-or-stuck
+
+      - alert: DegentMintParentLeaseStuck
+        expr: |
+          min by (service) (min_over_time({job="degent-mint"} | json | msg="mint gauges" | unwrap parentLeased [30m])) >= 1
+        for: 0m
+        labels: { severity: warning, service: degent-mint }
+        annotations:
+          summary: The parent lease has been held for 30 minutes.
+          description: "A reveal normally finishes within one tick; a lease held for 30 min means an order is stuck in `revealing` (usually a broadcaster problem)."
+          runbook_url: products/degent/services/mint/RUNBOOK.md#6-parent-missing-or-stuck
+
+      - alert: DegentMintBroadcastFailing
+        expr: |
+          sum by (lane, via) (count_over_time({job="degent-mint"} | json | msg="broadcast failed" [15m])) > 3
+        for: 0m
+        labels: { severity: warning, service: degent-mint }
+        annotations:
+          summary: "Lane {{ $labels.lane }} broadcasts via {{ $labels.via }} are failing."
+          description: "More than 3 `broadcast failed` lines in 15 min. Retryable failures keep the lease and rebroadcast the same tx."
+          runbook_url: products/degent/services/mint/RUNBOOK.md#4-lane-broadcaster-down
+
+      - alert: DegentMintBroadcastRejected
+        expr: |
+          sum by (lane, via) (count_over_time({job="degent-mint"} | json | msg="broadcast failed" | retryable="false" [15m])) > 0
+        for: 0m
+        labels: { severity: critical, service: degent-mint }
+        annotations:
+          summary: "A {{ $labels.lane }} reveal was permanently rejected by {{ $labels.via }}."
+          description: "Permanent rejections release the lease and requeue the order. Repeated `missingorspent` means the stored parent location is wrong."
+          runbook_url: products/degent/services/mint/RUNBOOK.md#4-lane-broadcaster-down
+
+      - alert: DegentMintPolicySignerRefused
+        expr: |
+          sum(count_over_time({job="degent-mint"} | json | msg="policy signer refused" [15m])) > 0
+        for: 0m
+        labels: { severity: critical, service: degent-mint }
+        annotations:
+          summary: The policy signer refused to co-sign a reveal.
+          description: "The order moved to rescue_available. A refusal means the reveal did not match ADR-0002 §3; never widen the policy to get it through."
+          runbook_url: products/degent/services/mint/RUNBOOK.md#5-rescue
+
+  - name: degent-mint.orders
+    interval: 1m
+    rules:
+      - alert: DegentMintQueuedTooLong
+        expr: |
+          quantile_over_time(0.95, {job="degent-mint"} | json | msg="order transition" | from="queued" | unwrap msInPreviousStatus [1h]) by (lane) > 7200000
+        for: 15m
+        labels: { severity: warning, service: degent-mint }
+        annotations:
+          summary: "p95 time in queued above 2 h on the {{ $labels.lane }} lane."
+          description: "Orders wait too long for a lane slot or the parent. Check GET /v1/queue and the parent health panel."
+          runbook_url: products/degent/services/mint/RUNBOOK.md#1-stuck-order
+
+      - alert: DegentMintRevealingStuck
+        expr: |
+          min by (service) (min_over_time({job="degent-mint"} | json | msg="mint gauges" | unwrap revealing [30m])) > 0
+        for: 0m
+        labels: { severity: warning, service: degent-mint }
+        annotations:
+          summary: Orders have been in `revealing` for 30 minutes.
+          description: "`revealing` normally lasts one tick. Look for `broadcast failed` and `worker step failed` for the order."
+          runbook_url: products/degent/services/mint/RUNBOOK.md#1-stuck-order
+
+      - alert: DegentMintOrderStuck
+        expr: |
+          max by (service) (max_over_time({job="degent-mint"} | json | msg="mint gauges" | unwrap oldestSeconds_revealed [15m])) > 10800
+        for: 0m
+        labels: { severity: warning, service: degent-mint }
+        annotations:
+          summary: An order's reveal has been unconfirmed for more than 3 hours.
+          description: "`mint gauges` → `oldestSeconds.revealed` (per-status ages; `counts.<status>` beside them). A reveal that does not confirm was dropped or underpaid: check it on the lane's explorer and rebroadcast or wait (RUNBOOK §1, §4)."
+          runbook_url: products/degent/services/mint/RUNBOOK.md#1-stuck-order
+
+      - alert: DegentMintRescueSurge
+        expr: |
+          sum(count_over_time({job="degent-mint"} | json | msg="order transition" | to="rescue_available" [1h])) > 2
+        for: 0m
+        labels: { severity: warning, service: degent-mint }
+        annotations:
+          summary: More than 2 orders moved to rescue_available in the last hour.
+          description: "Timeouts, policy refusals or a changed parent value hand orders to self-rescue. Users can rescue, but the club loses the parent link."
+          runbook_url: products/degent/services/mint/RUNBOOK.md#5-rescue
+
+      - alert: DegentMintWorkerErrors
+        expr: |
+          sum by (step) (count_over_time({job="degent-mint"} | json | msg="worker step failed" [15m])) > 5
+        for: 0m
+        labels: { severity: warning, service: degent-mint }
+        annotations:
+          summary: "Worker step {{ $labels.step }} failed more than 5 times in 15 min."
+          description: "One order's failure never stops a tick; repeated failures on one step usually mean a backend (esplora, ord) is down."
+          runbook_url: products/degent/services/mint/RUNBOOK.md#1-stuck-order
+
+      - alert: DegentMintWorkerSilent
+        expr: |
+          absent_over_time({job="degent-mint"} | json | msg="mint gauges" [10m])
+        for: 5m
+        labels: { severity: critical, service: degent-mint }
+        annotations:
+          summary: No `mint gauges` line for 10 minutes; the worker is not ticking.
+          description: "The worker logs gauges every minute. Without it nothing is paid, revealed or rescued."
+          runbook_url: products/degent/services/mint/RUNBOOK.md#8-worker-silent
+
+  - name: degent-mint.members
+    interval: 5m
+    rules:
+      - alert: DegentMintMemberReviewAging
+        expr: |
+          max by (service) (max_over_time({job="degent-mint"} | json | msg="mint gauges" | unwrap memberReviewOldestAgeSeconds [15m])) > 604800
+        for: 30m
+        labels: { severity: warning, service: degent-mint }
+        annotations:
+          summary: An order has waited more than 7 days for the members' vote.
+          description: "Half of the default 14-day REVIEW_SLA_SECONDS. Ping the club; after the SLA the order goes to self-rescue without the parent."
+          runbook_url: products/degent/services/mint/RUNBOOK.md#member-review-adr-0007
+
+      - alert: DegentMintMemberReviewBacklog
+        expr: |
+          max by (service) (max_over_time({job="degent-mint"} | json | msg="mint gauges" | unwrap memberReview [15m])) > 25
+        for: 1h
+        labels: { severity: warning, service: degent-mint }
+        annotations:
+          summary: More than 25 orders are waiting for the members' vote.
+          description: "Members are not keeping up. Nothing is stranded (the SLA hands orders to self-rescue), but minters wait."
+          runbook_url: products/degent/services/mint/RUNBOOK.md#member-review-adr-0007
+
+  - name: degent-mint.review
+    interval: 5m
+    rules:
+      - alert: DegentMintArtRejectRateHigh
+        expr: |
+          (
+            sum(count_over_time({job="degent-mint"} | json | msg="art review verdict" | approved="false" [1h]))
+            /
+            sum(count_over_time({job="degent-mint"} | json | msg="art review verdict" [1h]))
+          ) > 0.5
+          and
+          sum(count_over_time({job="degent-mint"} | json | msg="art review verdict" [1h])) >= 10
+        for: 15m
+        labels: { severity: warning, service: degent-mint }
+        annotations:
+          summary: More than half of the uploads in the last hour were rejected by the art review.
+          description: "Hard rejections come only from file rules and the safety categories. A spike usually means a client bug (wrong content type) or an over-eager vision verdict."
+          runbook_url: products/degent/services/mint/RUNBOOK.md#7-art-review

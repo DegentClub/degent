@@ -1,0 +1,788 @@
+{
+  "uid": "degent-mint",
+  "title": "degent.club mint",
+  "description": "Built only from degent-mint's JSON log lines (see products/degent/ops/README.md). Loki; the stream is selected by the `job` variable.",
+  "tags": [
+    "degent",
+    "mint"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "timezone": "utc",
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "loki",
+        "type": "datasource",
+        "query": "loki",
+        "label": "Loki",
+        "current": {}
+      },
+      {
+        "name": "job",
+        "type": "textbox",
+        "label": "job label",
+        "query": "degent-mint",
+        "current": {
+          "text": "degent-mint",
+          "value": "degent-mint"
+        }
+      }
+    ]
+  },
+  "links": [
+    {
+      "title": "Runbook",
+      "url": "https://github.com/DegentClub/degent/blob/main/products/degent/services/mint/RUNBOOK.md",
+      "type": "link",
+      "targetBlank": true
+    }
+  ],
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Orders",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Orders by status over time",
+      "description": "Transitions into each status per interval (`order transition`, field `to`). Every transition is logged, API and worker.",
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "sum by (to) (count_over_time({job=\"$job\"} | json | msg=\"order transition\" [$__interval]))",
+          "legendFormat": "{{to}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right"
+        }
+      },
+      "links": [
+        {
+          "title": "Runbook",
+          "url": "https://github.com/DegentClub/degent/blob/main/products/degent/services/mint/RUNBOOK.md#1-stuck-order",
+          "targetBlank": true
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Time in status p50 / p95",
+      "description": "How long orders sat in a status before leaving it (`msInPreviousStatus` on the transition out, by `from`).",
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "quantile_over_time(0.5, {job=\"$job\"} | json | msg=\"order transition\" | unwrap msInPreviousStatus [$__interval]) by (from)",
+          "legendFormat": "p50 {{from}}",
+          "queryType": "range"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "quantile_over_time(0.95, {job=\"$job\"} | json | msg=\"order transition\" | unwrap msInPreviousStatus [$__interval]) by (from)",
+          "legendFormat": "p95 {{from}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "links": [
+        {
+          "title": "Runbook",
+          "url": "https://github.com/DegentClub/degent/blob/main/products/degent/services/mint/RUNBOOK.md#1-stuck-order",
+          "targetBlank": true
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Pay \u2192 delivered latency",
+      "description": "Payment seen \u2192 delivered (`payToDeliveredMs`, logged on the `delivered` transition), by lane. Includes the member vote.",
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 9,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "quantile_over_time(0.5, {job=\"$job\"} | json | msg=\"order transition\" | to=\"delivered\" | unwrap payToDeliveredMs [$__interval]) by (lane)",
+          "legendFormat": "p50 {{lane}}",
+          "queryType": "range"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "quantile_over_time(0.95, {job=\"$job\"} | json | msg=\"order transition\" | to=\"delivered\" | unwrap payToDeliveredMs [$__interval]) by (lane)",
+          "legendFormat": "p95 {{lane}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Oldest order per status",
+      "description": "Seconds the oldest order has been in each non-terminal status (`mint gauges` \u2192 `oldestSeconds.<status>`, flattened by `| json` to `oldestSeconds_<status>`). `revealing` should be one tick, `queued` minutes; `paid`/`confirming` wait for the commit to confirm, `confirmed`/`verified` for ord.",
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "max_over_time({job=\"$job\"} | json | msg=\"mint gauges\" | unwrap oldestSeconds_paid [$__interval]) by (service)",
+          "legendFormat": "paid",
+          "queryType": "range"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "max_over_time({job=\"$job\"} | json | msg=\"mint gauges\" | unwrap oldestSeconds_confirming [$__interval]) by (service)",
+          "legendFormat": "confirming",
+          "queryType": "range"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "max_over_time({job=\"$job\"} | json | msg=\"mint gauges\" | unwrap oldestSeconds_queued [$__interval]) by (service)",
+          "legendFormat": "queued",
+          "queryType": "range"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "max_over_time({job=\"$job\"} | json | msg=\"mint gauges\" | unwrap oldestSeconds_revealing [$__interval]) by (service)",
+          "legendFormat": "revealing",
+          "queryType": "range"
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "max_over_time({job=\"$job\"} | json | msg=\"mint gauges\" | unwrap oldestSeconds_revealed [$__interval]) by (service)",
+          "legendFormat": "revealed",
+          "queryType": "range"
+        },
+        {
+          "refId": "F",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "max_over_time({job=\"$job\"} | json | msg=\"mint gauges\" | unwrap oldestSeconds_confirmed [$__interval]) by (service)",
+          "legendFormat": "confirmed",
+          "queryType": "range"
+        },
+        {
+          "refId": "G",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "max_over_time({job=\"$job\"} | json | msg=\"mint gauges\" | unwrap oldestSeconds_verified [$__interval]) by (service)",
+          "legendFormat": "verified",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "links": [
+        {
+          "title": "Runbook",
+          "url": "https://github.com/DegentClub/degent/blob/main/products/degent/services/mint/RUNBOOK.md#1-stuck-order",
+          "targetBlank": true
+        }
+      ]
+    },
+    {
+      "id": 117,
+      "type": "row",
+      "title": "Members and rescue",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 25,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "member_review backlog",
+      "description": "Orders waiting for the members' vote (`mint gauges` \u2192 `memberReview`, logged every minute by the worker).",
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "max_over_time({job=\"$job\"} | json | msg=\"mint gauges\" | unwrap memberReview [$__interval]) by (service)",
+          "legendFormat": "waiting",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {},
+      "links": [
+        {
+          "title": "Runbook",
+          "url": "https://github.com/DegentClub/degent/blob/main/products/degent/services/mint/RUNBOOK.md#member-review-adr-0007",
+          "targetBlank": true
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Oldest member_review",
+      "description": "Age of the oldest order in member_review (`memberReviewOldestAgeSeconds`). REVIEW_SLA_SECONDS (default 14 d) hands it to self-rescue.",
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 26,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "max_over_time({job=\"$job\"} | json | msg=\"mint gauges\" | unwrap memberReviewOldestAgeSeconds [$__interval]) by (service)",
+          "legendFormat": "oldest",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "links": [
+        {
+          "title": "Runbook",
+          "url": "https://github.com/DegentClub/degent/blob/main/products/degent/services/mint/RUNBOOK.md#member-review-adr-0007",
+          "targetBlank": true
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "rescue_available",
+      "description": "Orders offered self-rescue now (`rescueAvailable` gauge) and new entries per interval (`order transition` to=rescue_available).",
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 26,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "max_over_time({job=\"$job\"} | json | msg=\"mint gauges\" | unwrap rescueAvailable [$__interval]) by (service)",
+          "legendFormat": "current",
+          "queryType": "range"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "sum(count_over_time({job=\"$job\"} | json | msg=\"order transition\" | to=\"rescue_available\" [$__interval]))",
+          "legendFormat": "entered",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {},
+      "links": [
+        {
+          "title": "Runbook",
+          "url": "https://github.com/DegentClub/degent/blob/main/products/degent/services/mint/RUNBOOK.md#5-rescue",
+          "targetBlank": true
+        }
+      ]
+    },
+    {
+      "id": 126,
+      "type": "row",
+      "title": "Chain",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 34,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Lane broadcast failures",
+      "description": "`broadcast failed` by lane, backend (`via`) and `retryable`. Retryable ones rebroadcast the same tx every tick; permanent ones requeue.",
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 35,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "sum by (lane, via, retryable) (count_over_time({job=\"$job\"} | json | msg=\"broadcast failed\" [$__interval]))",
+          "legendFormat": "{{lane}} via {{via}} retryable={{retryable}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars"
+          }
+        },
+        "overrides": []
+      },
+      "options": {},
+      "links": [
+        {
+          "title": "Runbook",
+          "url": "https://github.com/DegentClub/degent/blob/main/products/degent/services/mint/RUNBOOK.md#4-lane-broadcaster-down",
+          "targetBlank": true
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Parent health",
+      "description": "`mint gauges`: parentKnown / parentConfirmed / parentLeased (0/1), plus `no parent UTXO configured; cannot reveal` errors. No parent pauses every reveal.",
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 35,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "min_over_time({job=\"$job\"} | json | msg=\"mint gauges\" | unwrap parentKnown [$__interval]) by (service)",
+          "legendFormat": "known",
+          "queryType": "range"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "min_over_time({job=\"$job\"} | json | msg=\"mint gauges\" | unwrap parentConfirmed [$__interval]) by (service)",
+          "legendFormat": "confirmed",
+          "queryType": "range"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "max_over_time({job=\"$job\"} | json | msg=\"mint gauges\" | unwrap parentLeased [$__interval]) by (service)",
+          "legendFormat": "leased",
+          "queryType": "range"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "sum(count_over_time({job=\"$job\"} | json | msg=\"no parent UTXO configured; cannot reveal\" [$__interval]))",
+          "legendFormat": "no-parent errors",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {},
+      "links": [
+        {
+          "title": "Runbook",
+          "url": "https://github.com/DegentClub/degent/blob/main/products/degent/services/mint/RUNBOOK.md#6-parent-missing-or-stuck",
+          "targetBlank": true
+        }
+      ]
+    },
+    {
+      "id": 135,
+      "type": "row",
+      "title": "Art review",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 43,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Art review verdicts",
+      "description": "`art review verdict` by hard verdict (`approved`). Rejections come only from file rules and the safety categories.",
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "sum by (approved) (count_over_time({job=\"$job\"} | json | msg=\"art review verdict\" [$__interval]))",
+          "legendFormat": "approved={{approved}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {},
+      "links": [
+        {
+          "title": "Runbook",
+          "url": "https://github.com/DegentClub/degent/blob/main/products/degent/services/mint/RUNBOOK.md#7-art-review",
+          "targetBlank": true
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Advisory rule fails",
+      "description": "Advisory minting-rule fails per rule (never a rejection): `square`, `pepeInTuxWithBowtie`, `framedWithPlacard` = fail; and reviews with no accepted placard text.",
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 44,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "sum(count_over_time({job=\"$job\"} | json | msg=\"art review verdict\" | square=\"fail\" [$__interval]))",
+          "legendFormat": "square",
+          "queryType": "range"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "sum(count_over_time({job=\"$job\"} | json | msg=\"art review verdict\" | pepeInTuxWithBowtie=\"fail\" [$__interval]))",
+          "legendFormat": "pepe in tux + bowtie",
+          "queryType": "range"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "sum(count_over_time({job=\"$job\"} | json | msg=\"art review verdict\" | framedWithPlacard=\"fail\" [$__interval]))",
+          "legendFormat": "framed + placard",
+          "queryType": "range"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "sum(count_over_time({job=\"$job\"} | json | msg=\"art review verdict\" | advisoryFails > 0 [$__interval]))",
+          "legendFormat": "any rule failed",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {},
+      "links": [
+        {
+          "title": "Runbook",
+          "url": "https://github.com/DegentClub/degent/blob/main/products/degent/services/mint/RUNBOOK.md#7-art-review",
+          "targetBlank": true
+        }
+      ]
+    },
+    {
+      "id": 144,
+      "type": "row",
+      "title": "Errors",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Worker and signer errors",
+      "description": "`worker step failed` by step, `policy signer refused`, and `tick failed`.",
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 53,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "sum by (step) (count_over_time({job=\"$job\"} | json | msg=\"worker step failed\" [$__interval]))",
+          "legendFormat": "step {{step}}",
+          "queryType": "range"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "sum(count_over_time({job=\"$job\"} | json | msg=\"policy signer refused\" [$__interval]))",
+          "legendFormat": "policy signer refused",
+          "queryType": "range"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          },
+          "expr": "sum(count_over_time({job=\"$job\"} | json | msg=\"tick failed\" [$__interval]))",
+          "legendFormat": "tick failed",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {},
+      "links": [
+        {
+          "title": "Runbook",
+          "url": "https://github.com/DegentClub/degent/blob/main/products/degent/services/mint/RUNBOOK.md#1-stuck-order",
+          "targetBlank": true
+        }
+      ]
+    }
+  ]
+}

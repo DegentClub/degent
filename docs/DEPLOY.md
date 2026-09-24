@@ -195,13 +195,17 @@ parent link for those orders is gone. Target: RPO 1 h (hourly), RTO 30 min.
 
 Logs are JSON lines on stdout (`time`, `level`, `service`, `msg`, fields); journald (NixOS) or the Docker
 json-file driver ship them to Loki. Events (`degent.mint.order.<status>`) are on the in-process bus only until
-the RabbitMQ adapter exists, so **alerts come from logs**. Every minute the worker logs an
-`order status snapshot`: `counts.<status>` and `oldestSeconds.<status>` for every non-terminal status, and
-`parent` (false = no parent UTXO, all reveals paused).
+the RabbitMQ adapter exists, so **alerts come from logs**. Every minute the worker logs one `mint gauges` line:
+the flat gauges the ops dashboard reads (`memberReview`, `memberReviewOldestAgeSeconds`, `rescueAvailable`,
+`queued`, `revealing`, `awaitingConfirmation`, `parentKnown` / `parentConfirmed` / `parentLeased` as 0/1;
+`parentKnown` 0 = no parent UTXO, all reveals paused) plus `counts.<status>` and `oldestSeconds.<status>` for every
+non-terminal status. The ready-made Grafana dashboard and Loki rules built on these lines are in
+[`products/degent/ops/`](../products/degent/ops/README.md) (stream label `job="degent-mint"`); the table below is the
+same set of signals written against the fleet's journald labels.
 
 | Log `msg` | Fields | Meaning |
 |---|---|---|
-| `order status snapshot` | `counts.*`, `oldestSeconds.*`, `parent` | gauges for stuck orders, review backlog, rescue count |
+| `mint gauges` | `memberReview`, `memberReviewOldestAgeSeconds`, `rescueAvailable`, `queued`, `revealing`, `awaitingConfirmation`, `parentKnown`, `parentConfirmed`, `parentLeased`, `counts.*`, `oldestSeconds.*` | gauges for stuck orders, review backlog, rescue count, parent health |
 | `order transition` | `orderId`, `from`, `to`, `detail`, `txid` | every worker transition |
 | `broadcast failed` | `orderId`, `lane`, `via` (`esplora` / `libre-relay` / `slipstream`), `error`, `retryable` | lane broadcaster problems |
 | `policy signer refused` | `orderId`, `violations` | order moved to `rescue_available`; should never happen for honest orders |
@@ -218,14 +222,14 @@ Queries below use `{unit=~"degent-mint-(api|worker).service"}` (journald labels 
 
 | Alert | LogQL | Threshold (soft launch) |
 |---|---|---|
-| Orders stuck in a status | `max_over_time({unit="degent-mint-worker.service"} \| json \| msg="order status snapshot" \| unwrap oldestSeconds_revealing [10m])` (one rule per status: `paid`, `confirming`, `queued`, `revealing`, `revealed`, `confirmed`, `verified`) | `revealing` > 900 s, `paid`/`confirming` > 7200 s, `queued` > 3600 s (standard), `revealed` > 10800 s, `confirmed`/`verified` > 3600 s (ord lag) |
-| Review backlog | `max_over_time({unit="degent-mint-worker.service"} \| json \| msg="order status snapshot" \| unwrap counts_member_review [10m])` | > 20 orders, or `oldestSeconds_member_review` > 604800 (half the 14-day SLA) |
-| Rescue available | `max_over_time({unit="degent-mint-worker.service"} \| json \| msg="order status snapshot" \| unwrap counts_rescue_available [10m])` | > 0 notify (users must act); rising for 1 h page |
-| Parent missing | `count_over_time({unit="degent-mint-worker.service"} \| json \| msg="order status snapshot" \| parent="false" [5m])` | > 0 for 10 min: page |
+| Orders stuck in a status | `max_over_time({unit="degent-mint-worker.service"} \| json \| msg="mint gauges" \| unwrap oldestSeconds_revealing [10m])` (one rule per status: `paid`, `confirming`, `queued`, `revealing`, `revealed`, `confirmed`, `verified`) | `revealing` > 900 s, `paid`/`confirming` > 7200 s, `queued` > 3600 s (standard), `revealed` > 10800 s, `confirmed`/`verified` > 3600 s (ord lag) |
+| Review backlog | `max_over_time({unit="degent-mint-worker.service"} \| json \| msg="mint gauges" \| unwrap memberReview [10m])` | > 20 orders, or `memberReviewOldestAgeSeconds` > 604800 (half the 14-day SLA) |
+| Rescue available | `max_over_time({unit="degent-mint-worker.service"} \| json \| msg="mint gauges" \| unwrap rescueAvailable [10m])` | > 0 notify (users must act); rising for 1 h page |
+| Parent missing | `min_over_time({unit="degent-mint-worker.service"} \| json \| msg="mint gauges" \| unwrap parentKnown [10m])` | < 1: page |
 | Lane broadcast failures | `sum by (lane, via) (count_over_time({unit="degent-mint-worker.service"} \| json \| msg="broadcast failed" [15m]))` | > 5 in 15 min; any `retryable="false"` notify |
 | Policy refusal | `count_over_time({unit="degent-mint-worker.service"} \| json \| msg="policy signer refused" [15m])` | > 0: page |
 | Invariant broken | `count_over_time({unit="degent-mint-worker.service"} \| json \| msg=~"inscription sat fell into the fee\|child output does not pay the recipient\|reveal weight differs from quote" [15m])` | > 0: page, stop the worker (RUNBOOK) |
-| Service down | `count_over_time({unit=~"degent-mint-(api\|worker).service"} \| json \| msg=~"configuration error\|fatal" [5m])`; plus the absence of snapshots: `absent_over_time({unit="degent-mint-worker.service"} \| json \| msg="order status snapshot" [5m])` | any |
+| Service down | `count_over_time({unit=~"degent-mint-(api\|worker).service"} \| json \| msg=~"configuration error\|fatal" [5m])`; plus the absence of gauges: `absent_over_time({unit="degent-mint-worker.service"} \| json \| msg="mint gauges" [5m])` | any |
 | Health degraded | blackbox probe of `GET /v1/health`: `status != "ok"` (store, chain, parent) | 5 min |
 | Backup stale | `absent_over_time({unit="degent-mint-backup.service"} \| json \| msg="backup completed" [2h])` | fires |
 

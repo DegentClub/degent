@@ -9,7 +9,8 @@
     "dev": "NETWORK=${NETWORK:-regtest} tsx watch src/main.ts",
     "start": "tsx src/main.ts",
     "build": "node scripts/bundle.mjs",
-    "start:dist": "node dist/main.mjs"
+    "start:dist": "node dist/main.mjs",
+    "chain-setup": "tsx scripts/chain-setup.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",

@@ -3,6 +3,7 @@
  * fake clock and capturing broadcasters. Also a "browser" that does exactly what the front end
  * does: ephemeral key, create order, upload bytes, build the half-signed reveal, submit it.
  */
+import type { Logger } from '../../src/application/logger.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { p2tr } from '@scure/btc-signer';
@@ -81,6 +82,8 @@ export interface HarnessOptions {
   roster?: RosterMember[];
   /** Leave the telegram channel unconfigured (503 channel_unavailable). */
   noTelegram?: boolean;
+  /** Structured log sink for OrderService + worker (default: silent). */
+  log?: Logger;
 }
 
 /** Telegram fake: records messages; `failNext` makes the next N sends fail (retryable). */
@@ -152,6 +155,7 @@ export function makeHarness(opts: HarnessOptions = {}) {
     votes,
     parents,
     newId: () => `dgt_test${String(++n).padStart(4, '0')}`,
+    ...(opts.log ? { log: opts.log } : {}),
   });
   const approval = new ApprovalService({ orders, store, votes, holders, clock, sessionKey: SESSION_KEY });
   const register = new RegisterService({ settings, roster, store, holders, clock, statsCacheSeconds: 0 });
@@ -192,7 +196,7 @@ export function makeHarness(opts: HarnessOptions = {}) {
     clientIp: (c) => c.req.header('x-test-ip') ?? '127.0.0.1',
   });
   const broadcasters = { standard: new FakeBroadcaster('standard', chain), block: new FakeBroadcaster('block', chain) };
-  const worker = new MintWorker({ orders, store, content, reveals, chain, parents, signer, broadcasters, clock });
+  const worker = new MintWorker({ orders, store, content, reveals, chain, parents, signer, broadcasters, clock, ...(opts.log ? { log: opts.log } : {}) });
 
   return { email, telegram, retryClock, subscriptions, notifications, clock, chain, signer, settings, store, content, blobs, reveals, events, orders, approval, register, votes, holders, roster, parents, app, broadcasters, worker, ready, collectionScriptHex, parentTxid, parentValue };
 }

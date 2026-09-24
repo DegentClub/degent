@@ -139,3 +139,40 @@ describe('estimateTotal', () => {
     expect(etaMinutesForPosition(null)).toBeNull();
   });
 });
+
+describe('advisory minting rules', () => {
+  it('carries the four site rules verbatim', async () => {
+    const { MINTING_RULES } = await import('../src/index.js');
+    expect(MINTING_RULES.map((r) => r.title)).toEqual(['File Format & Size', 'Essential Design', 'Framing & Text', 'Quantity']);
+    expect(MINTING_RULES[2]!.text).toBe('Must be framed and include a placard that says “DEGEN”, “DEGENT”, or “REGEN”.');
+  });
+
+  it('square is exact from dimensions, unknown without them', async () => {
+    const { squareRuleAdvice } = await import('../src/index.js');
+    expect(squareRuleAdvice(1000, 1000).square).toBe('pass');
+    expect(squareRuleAdvice(1000, 999).square).toBe('fail');
+    expect(squareRuleAdvice(null, 1000).square).toBe('unknown');
+  });
+
+  it('merges earliest non-unknown verdict per rule and the first placard text', async () => {
+    const { mergeRuleAdvice, unknownRuleAdvice } = await import('../src/index.js');
+    const rules = { ...unknownRuleAdvice('vision only'), square: 'pass' as const, notes: { ...unknownRuleAdvice('vision only').notes, square: '800x800px is square' } };
+    const vision = {
+      square: 'fail' as const,
+      pepeInTuxWithBowtie: 'pass' as const,
+      framedWithPlacard: 'fail' as const,
+      placardText: 'DEGENT' as const,
+      notes: { square: 'looks wide', pepeInTuxWithBowtie: 'tux and bowtie', framedWithPlacard: 'no frame' },
+    };
+    const m = mergeRuleAdvice(rules, vision)!;
+    expect(m).toEqual({
+      square: 'pass',
+      pepeInTuxWithBowtie: 'pass',
+      framedWithPlacard: 'fail',
+      placardText: 'DEGENT',
+      notes: { square: '800x800px is square', pepeInTuxWithBowtie: 'tux and bowtie', framedWithPlacard: 'no frame' },
+    });
+    expect(mergeRuleAdvice(undefined, undefined)).toBeUndefined();
+    expect(mergeRuleAdvice(undefined, vision)).toEqual(vision);
+  });
+});

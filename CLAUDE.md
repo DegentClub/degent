@@ -18,6 +18,8 @@ and the catalog tool come from `DegentClub/scribbit`, vendored as a git submodul
 | `products/degent/packages/market-sdk/` | `@bsh/degent-market-sdk`: listing/buy types, settlement layout, royalty/fee maths, typed API client |
 | `products/degent/deploy/`, `flake.nix` | Dockerfiles, compose (signet/mainnet), generated `.env.*.example`, Caddy site, NixOS modules + packages. Guide: `docs/DEPLOY.md`; static checks: `test/deploy.test.ts` |
 | `scripts/rehearsal/` | Signet rehearsal runner + scenarios (`docs/REHEARSAL.md`), proven by `test/rehearsal.test.ts` |
+| `products/degent/ops/` | Grafana dashboard + Loki alert rules for degent-mint, built from its JSON log lines (`mint gauges`, `order transition`, …); checked by `test/ops.test.ts` |
+| `docs/LAUNCH-CHAIN-SETUP.md` | Owner's launch chain setup: Club parent, signed Gallery (`services/mint/scripts/prepare-*.mjs`, `chain-setup`) |
 | `contracts/` | Contracts **this product provides**: `openapi/degent-mint.yaml`, `asyncapi/degent-mint.yaml`, `openapi/degent-telegram-gate.yaml`, `openapi/degent-market.yaml`, `asyncapi/degent-market.yaml`. Platform contracts are at `deps/scribbit/contracts/` |
 | `deps/scribbit/` | SUBMODULE, read-only here: `platform/*`, `tools/catalog`, platform contracts, platform ADRs. Change it in DegentClub/scribbit, then bump the pin |
 | `catalog/catalog.json` | GENERATED index of every component, platform ones marked `external` (`pnpm catalog`). Query this before grepping |

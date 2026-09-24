@@ -29,6 +29,19 @@ interface Roadmap {
 }
 
 const roadmap = load(read('roadmap.yaml')) as Roadmap;
+
+/** Every item id that appears more than once, with where it appears ("p1.13 (p1, p1)"). */
+function duplicateIds(r: Pick<Roadmap, 'phases'>): string[] {
+  const seen = new Map<string, string[]>();
+  for (const p of r.phases) for (const i of p.items) seen.set(i.id, [...(seen.get(i.id) ?? []), p.id]);
+  return [...seen].filter(([, where]) => where.length > 1).map(([id, where]) => `${id} (${where.join(', ')})`);
+}
+
+/** Every depends_on entry that names no item ("p1.14 -> p1.99"). */
+function danglingDepends(r: Pick<Roadmap, 'phases'>): string[] {
+  const ids = new Set(r.phases.flatMap((p) => p.items.map((i) => i.id)));
+  return r.phases.flatMap((p) => p.items.flatMap((i) => (i.depends_on ?? []).filter((d) => !ids.has(d)).map((d) => `${i.id} -> ${d}`)));
+}
 const items = roadmap.phases.flatMap((p) => p.items);
 const localRepos = new Set(Object.entries(roadmap.repos).filter(([, r]) => !Array.isArray(r) && r.local).map(([k]) => k));
 
@@ -72,11 +85,12 @@ describe('roadmap.yaml', () => {
     expect(validate(roadmap), JSON.stringify(validate.errors, null, 2)).toBe(true);
   });
 
-  it('has unique ids and no dangling depends_on', () => {
-    const ids = items.map((i) => i.id);
-    expect(new Set(ids).size).toBe(ids.length);
-    const dangling = items.flatMap((i) => (i.depends_on ?? []).filter((d) => !ids.includes(d)).map((d) => `${i.id} -> ${d}`));
-    expect(dangling).toEqual([]);
+  it('has unique item ids across all phases (merged branches must renumber, not collide)', () => {
+    expect(duplicateIds(roadmap)).toEqual([]);
+  });
+
+  it('has no depends_on pointing at an unknown id', () => {
+    expect(danglingDepends(roadmap)).toEqual([]);
   });
 
   it('names repos that exist in the repos map', () => {
@@ -117,6 +131,27 @@ describe('roadmap.yaml', () => {
 
   it('done items in this repository are proven by a verify or a doc', () => {
     for (const i of items) if (i.status === 'done' && i.repo && localRepos.has(i.repo)) expect(Boolean(i.verify || i.doc), i.id).toBe(true);
+  });
+});
+
+describe('roadmap id checks (fixtures)', () => {
+  const item = (id: string, depends_on?: string[]): Item => ({ id, repo: 'degent', title: id, status: 'todo', ...(depends_on ? { depends_on } : {}) });
+  const fixture = (phases: Record<string, Item[]>): Pick<Roadmap, 'phases'> => ({ phases: Object.entries(phases).map(([id, items]) => ({ id, items })) });
+
+  it('flags an id duplicated within a phase and across phases', () => {
+    const r = fixture({ p1: [item('p1.13'), item('p1.14'), item('p1.13')], p2: [item('p2.1'), item('p1.14')] });
+    expect(duplicateIds(r)).toEqual(['p1.13 (p1, p1)', 'p1.14 (p1, p2)']);
+  });
+
+  it('flags depends_on naming an unknown id', () => {
+    const r = fixture({ p1: [item('p1.1'), item('p1.2', ['p1.1', 'p1.99'])], p2: [item('p2.1', ['p3.4'])] });
+    expect(danglingDepends(r)).toEqual(['p1.2 -> p1.99', 'p2.1 -> p3.4']);
+  });
+
+  it('accepts unique ids with resolvable depends_on', () => {
+    const r = fixture({ p1: [item('p1.1'), item('p1.2', ['p1.1'])], p2: [item('p2.1', ['p1.2'])] });
+    expect(duplicateIds(r)).toEqual([]);
+    expect(danglingDepends(r)).toEqual([]);
   });
 });
 

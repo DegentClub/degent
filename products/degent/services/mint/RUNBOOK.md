@@ -5,7 +5,9 @@ signer to "get an order through". Never copy half-signed reveals out of the data
 until the reveal is confirmed.
 
 Useful reads (no token needed): `GET /v1/health`, `GET /v1/queue`, `GET /v1/orders/{id}` (see `timeline`).
-Logs are JSON lines; every transition logs `order transition` with `orderId`, `from`, `to`, `txid`.
+Logs are JSON lines; every transition (API and worker) logs `order transition` with `orderId`, `from`, `to`, `lane`,
+`tier`, `msInPreviousStatus`, `txid` (and `payToDeliveredMs` on `delivered`); every upload logs `art review verdict`; the
+worker logs `mint gauges` every minute. Dashboard and alerts built on them: [`products/degent/ops/`](../../ops/README.md).
 Events: `degent.mint.order.<status>` on exchange `degent.mint`.
 
 ## 1. Stuck order
@@ -91,6 +93,38 @@ from the recovery bundle with the user's recovery passphrase, re-signs `[commit]
   outpoint), so the parent may advance freely, but re-initialising it with a different value (e.g. after a key
   rotation) makes every stored reveal unattachable: the worker moves those orders to `rescue_available`. Drain
   `paid`..`revealing` first, or keep the value.
+
+## 6. Parent missing or stuck
+
+Alerts `DegentMintParentMissing`, `DegentMintParentLeaseStuck`. Health: `GET /v1/health` → `checks.parent`.
+
+- **No parent known** (`parentKnown` 0, `no parent UTXO configured; cannot reveal`): the store has no parent and
+  `PARENT_OUTPOINT` was not set or not found at startup (`parent initialisation failed` in the logs). Locate the parent
+  (ord `/r/inscription/<PARENT_INSCRIPTION_ID>` → `satpoint`), check it pays `COLLECTION_ADDRESS`, set `PARENT_OUTPOINT`
+  and restart. First launch: [docs/LAUNCH-CHAIN-SETUP.md](../../../../docs/LAUNCH-CHAIN-SETUP.md) step 5.
+- **Parent unconfirmed for long** (`parentConfirmed` 0): the last reveal that moved it is unconfirmed; standard orders
+  wait while it came from a Block Degent reveal (by design). See section 3 for fee spikes.
+- **Lease held** (`parentLeased` 1 for 30 min): an order is stuck in `revealing`; follow section 4. Never clear the
+  lease by hand: the worker releases it on permanent rejection or rescue timeout.
+
+## 7. Art review
+
+Alert `DegentMintArtRejectRateHigh`; panels "Art review verdicts" and "Advisory rule fails".
+
+- Hard rejections come only from the rules reviewer (type sniffed from the bytes, size tier, dimensions) and the vision
+  reviewer's six safety categories. The order's `review.checks` names the failing check (`rules.*` or `vision.guidelines`).
+- A spike of `rules.magic_bytes` / `rules.size` rejections is usually a client bug. A spike of `vision.guidelines`
+  rejections: read a few verdict reasons; if the model is over-eager, adjust `ART_REVIEW_GUIDELINES_FILE` (the verdict
+  schema is fixed) or unset `ART_REVIEW_API_KEY` to fall back to rules-only review.
+- Vision outages do not reject anyone: the upload returns 503 `review_unavailable` and can be retried.
+- Advisory rule fails (`square`, `pepeInTuxWithBowtie`, `framedWithPlacard`) never reject; they are shown to the
+  collector and to voting members. Their rate is information for the club, not an ops problem.
+
+## 8. Worker silent
+
+Alert `DegentMintWorkerSilent`: no `mint gauges` line for 10 minutes. The worker runs in the service process
+(`src/main.ts`); check the process is up, then `tick failed` / `gauges failed` errors (store or chain backend down).
+Nothing is lost while it is down: payments, reveals and rescue timeouts are picked up on the next tick.
 
 ## Member review (ADR-0007)
 

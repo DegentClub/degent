@@ -4,7 +4,8 @@
  */
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
-import type { CollectionConfig, Quote, ReviewCheck, Tier, TierRule } from './types.js';
+import type { CollectionConfig, MintingRulesAdvice, Quote, ReviewCheck, Tier, TierRule } from './types.js';
+import { ADVISORY_RULE_IDS } from './types.js';
 
 export const STANDARD_MIN_BYTES = 200_000;
 export const STANDARD_MAX_BYTES = 390_000;
@@ -197,4 +198,54 @@ export function estimateTotal(
 /** Block lane ETA: position x ~10 minutes. */
 export function etaMinutesForPosition(position: number | null): number | null {
   return position === null ? null : position * BLOCK_INTERVAL_MINUTES;
+}
+
+// ---------------------------------------------------------------- advisory minting rules
+
+/**
+ * The collection's four "Minting Rules", verbatim from the degent.club site (products/degent/docs/site-spec.md).
+ * Rules 1-3 are checked ADVISORILY by the art review (`ReviewResult.rules`); rule 4 needs no check.
+ */
+export const MINTING_RULES = Object.freeze([
+  { id: 'file', title: 'File Format & Size', text: 'Square JPEG format with a minimum size of 200KB.' },
+  { id: 'design', title: 'Essential Design', text: 'Pepe character wearing a tuxedo with a mandatory bowtie.' },
+  { id: 'framing', title: 'Framing & Text', text: 'Must be framed and include a placard that says “DEGEN”, “DEGENT”, or “REGEN”.' },
+  { id: 'quantity', title: 'Quantity', text: 'Mint as many as you want – create your own mini-collection!' },
+] as const);
+
+/** Every advisory rule `unknown`, with the same note on each. */
+export function unknownRuleAdvice(note = 'not assessed'): MintingRulesAdvice {
+  return {
+    square: 'unknown',
+    pepeInTuxWithBowtie: 'unknown',
+    framedWithPlacard: 'unknown',
+    placardText: null,
+    notes: { square: note, pepeInTuxWithBowtie: note, framedWithPlacard: note },
+  };
+}
+
+/** The square rule, exact from decoded pixel dimensions (null when the header could not be read). */
+export function squareRuleAdvice(width: number | null, height: number | null): Pick<MintingRulesAdvice, 'square'> & { note: string } {
+  if (width === null || height === null) return { square: 'unknown', note: 'image dimensions could not be read' };
+  return width === height
+    ? { square: 'pass', note: `${width}x${height}px is square` }
+    : { square: 'fail', note: `${width}x${height}px is not square` };
+}
+
+/**
+ * Merge advice from several reviewers, earliest first: per rule the first verdict that is not `unknown` wins
+ * (with its note); `placardText` is the first non-null. Put the deterministic reviewer first so its exact
+ * `square` is never overridden by a model's estimate.
+ */
+export function mergeRuleAdvice(...advice: Array<MintingRulesAdvice | undefined>): MintingRulesAdvice | undefined {
+  const present = advice.filter((a): a is MintingRulesAdvice => a !== undefined);
+  if (present.length === 0) return undefined;
+  const out = unknownRuleAdvice();
+  for (const id of ADVISORY_RULE_IDS) {
+    const hit = present.find((a) => a[id] !== 'unknown') ?? present[0]!;
+    out[id] = hit[id];
+    out.notes[id] = hit.notes[id];
+  }
+  out.placardText = present.find((a) => a.placardText !== null)?.placardText ?? null;
+  return out;
 }
