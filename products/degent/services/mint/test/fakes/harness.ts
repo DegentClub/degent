@@ -274,7 +274,11 @@ export async function browserUpload(h: Harness, b: BrowserMint): Promise<Order> 
 }
 
 /** Builds the half-signed reveal exactly as the browser does, then submits it. */
-export async function browserReveal(h: Harness, b: BrowserMint, commitTxid = fakeTxid(1000 + Math.floor(Math.random() * 1e6))) {
+/** Distinct, deterministic commit txids: a random draw could collide between two orders of one test. */
+let commitSeq = 0;
+const nextCommitTxid = () => fakeTxid(2_000_000 + ++commitSeq);
+
+export async function browserReveal(h: Harness, b: BrowserMint, commitTxid = nextCommitTxid()) {
   const quote = b.order.quote!;
   const content = { contentType: b.contentType, body: b.bytes, parentId: h.settings.collection.parentInscriptionId! };
   const commit = commitAddress(schnorr.getPublicKey(b.revealKey), content, NET);
