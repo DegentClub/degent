@@ -81,6 +81,43 @@ describe('RosterChainHolderRegistry', () => {
   });
 });
 
+describe('RosterChainHolderRegistry: bounded upstream fan-out (DGT-SEC-005)', () => {
+  const big = 'bc1p_exchange';
+  const utxos = (n: number) => Array.from({ length: n }, (_, i) => ({ txid: i.toString(16).padStart(64, '0'), vout: 0 }));
+
+  it('refuses an address with more UTXOs than it will inspect, before any ord call', async () => {
+    const { fetch, calls } = fakeChain({ utxos: { [big]: utxos(5_000) }, inscriptions: {}, owner: {} });
+    const reg = new RosterChainHolderRegistry(roster, { esploraUrl: 'https://esplora.test', ordUrl: 'https://ord.test', fetch, maxUtxos: 1_000 });
+    await expect(reg.isHolder(big)).rejects.toMatchObject({ code: 'validation_failed', status: 422 });
+    expect(calls.filter((c) => c.includes('/r/utxo/'))).toHaveLength(0);
+  });
+
+  it('coalesces concurrent lookups of the same Degent into one ord request', async () => {
+    const { fetch, calls } = fakeChain({ utxos: {}, inscriptions: {}, owner: { [id(1)]: 'bc1p_alice' } });
+    const reg = new RosterChainHolderRegistry(roster, { esploraUrl: 'https://esplora.test', ordUrl: 'https://ord.test', fetch });
+    const owners = await Promise.all(Array.from({ length: 50 }, () => reg.holderOf(1)));
+    expect(new Set(owners)).toEqual(new Set(['bc1p_alice']));
+    expect(calls.filter((c) => c.includes('/r/inscription/'))).toHaveLength(1);
+  });
+
+  it('never has more than maxConcurrent ord requests in flight, however many callers', async () => {
+    const many = Array.from({ length: 200 }, (_, i) => ({ n: i + 1, inscriptionId: id(i + 1) }));
+    let inFlight = 0;
+    let peak = 0;
+    const fetch = async (url: string): Promise<Response> => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setImmediate(r));
+      inFlight--;
+      const m = /\/r\/inscription\/(.+)$/.exec(url);
+      return new Response(JSON.stringify({ address: m ? `owner-of-${m[1]}` : null }), { status: 200 });
+    };
+    const reg = new RosterChainHolderRegistry(many, { esploraUrl: 'https://esplora.test', ordUrl: 'https://ord.test', fetch, maxConcurrent: 8 });
+    await Promise.all(many.map((m) => reg.holderOf(m.n)));
+    expect(peak).toBeLessThanOrEqual(8);
+  });
+});
+
 describe('MemoryHolderRegistry', () => {
   it('set / transfer / lookups', async () => {
     const m = new MemoryHolderRegistry();
