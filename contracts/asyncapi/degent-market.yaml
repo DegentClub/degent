@@ -1,0 +1,122 @@
+asyncapi: 3.0.0
+info:
+  title: degent.club marketplace events
+  version: 0.1.0
+  description: |
+    Listing lifecycle events published by `@bsh/degent-market` (products/degent/services/market) on every
+    persisted listing transition: creation (`active`), our own broadcast (`pending`), seller cancel
+    (`cancelled`) and every transition the settlement watcher derives from the chain (`sold`, `invalid`,
+    `expired`, `pending -> active` when a broadcast purchase never appeared). Exactly one event per transition,
+    emitted after the transition is persisted. Delivery is at-least-once: consumers deduplicate on `eventId`.
+
+    Event type == routing key == `degent.market.listing.{status}`. Payloads never contain PSBTs, signatures,
+    challenge messages or keys. This topic is owned by this product (not shared with the platform); consumers
+    must ignore unknown statuses. The status enum equals `LISTING_STATUSES` in `@bsh/degent-market-sdk`
+    (products/degent/services/market/test/contract.test.ts asserts it).
+
+    Transport: in-process bus in dev/tests; RabbitMQ topic exchange `degent.market` in production (persistent
+    messages, `message_id` = eventId, `content_type` = application/json). Bind with e.g.
+    `degent.market.listing.*` or `degent.market.listing.sold`.
+  license: { name: Proprietary, identifier: LicenseRef-Proprietary }
+defaultContentType: application/json
+
+servers:
+  production:
+    host: rabbitmq.internal:5672
+    protocol: amqp
+    protocolVersion: 0.9.1
+    description: Fleet RabbitMQ (exchange `degent.market`, type topic, durable).
+
+channels:
+  listingStatus:
+    address: 'degent.market.listing.{status}'
+    description: One routing key per listing status.
+    parameters:
+      status:
+        description: The status the listing just entered.
+        enum: [active, pending, sold, invalid, expired, cancelled]
+    messages:
+      listingStatusChanged:
+        $ref: '#/components/messages/ListingStatusChanged'
+    bindings:
+      amqp:
+        is: routingKey
+        exchange:
+          name: degent.market
+          type: topic
+          durable: true
+          autoDelete: false
+          vhost: /
+        bindingVersion: 0.3.0
+
+operations:
+  publishListingStatus:
+    action: send
+    channel:
+      $ref: '#/channels/listingStatus'
+    summary: Emitted by the marketplace service on every persisted listing transition.
+    messages:
+      - $ref: '#/channels/listingStatus/messages/listingStatusChanged'
+    bindings:
+      amqp:
+        deliveryMode: 2
+        mandatory: false
+        bindingVersion: 0.3.0
+
+components:
+  messages:
+    ListingStatusChanged:
+      name: ListingStatusChanged
+      title: Listing status changed
+      contentType: application/json
+      correlationId:
+        location: '$message.payload#/inscriptionId'
+      payload:
+        $ref: '#/components/schemas/ListingStatusEvent'
+      examples:
+        - name: sold
+          payload:
+            type: degent.market.listing.sold
+            eventId: 'add1a568533d555dc3ac0a6db5b1ffa5d0f87d36b9b9059e4a8ce6bd7a94bfd3i0:1790000000000:3'
+            inscriptionId: add1a568533d555dc3ac0a6db5b1ffa5d0f87d36b9b9059e4a8ce6bd7a94bfd3i0
+            network: mainnet
+            status: sold
+            previousStatus: pending
+            at: '2026-09-24T12:00:00.000Z'
+            priceSats: 50000
+            sellerAddress: bc1pexampleexampleexampleexampleexampleexampleexampleexampleex
+            reason: outpoint spent by a transaction paying the seller the listed price
+            txid: 9f2c0e3d5b6a79880c1d2e3f405162738495a6b7c8d9e0f1a2b3c4d5e6f70819
+
+  schemas:
+    ListingStatus:
+      type: string
+      enum: [active, pending, sold, invalid, expired, cancelled]
+    ListingStatusEvent:
+      type: object
+      additionalProperties: false
+      required: [type, eventId, inscriptionId, network, status, previousStatus, at, priceSats, sellerAddress]
+      properties:
+        type:
+          type: string
+          pattern: '^degent\.market\.listing\.[a-z_]+$'
+          description: '`degent.market.listing.<status>`; equals the routing key.'
+        eventId:
+          type: string
+          description: '`<inscriptionId>:<listing createdAt epoch ms>:<listing version>`. Idempotency key.'
+        inscriptionId: { type: string, pattern: '^[0-9a-f]{64}i[0-9]+$' }
+        network: { type: string, enum: [mainnet, testnet, signet, regtest] }
+        status: { $ref: '#/components/schemas/ListingStatus' }
+        previousStatus:
+          oneOf:
+            - $ref: '#/components/schemas/ListingStatus'
+            - type: 'null'
+          description: Null only for the creation event (`active`).
+        at: { type: string, format: date-time }
+        priceSats: { type: integer, minimum: 0 }
+        sellerAddress: { type: string }
+        reason: { type: string, description: Human-readable context (never secrets). }
+        txid:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Our broadcast on `pending`; the spending transaction on `sold` and chain-driven `invalid`.

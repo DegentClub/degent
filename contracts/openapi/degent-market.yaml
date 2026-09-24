@@ -1,0 +1,615 @@
+openapi: 3.1.0
+info:
+  title: degent.club marketplace API
+  version: 0.1.0
+  summary: Non-custodial peer-to-peer trading of Degents with PSBT settlement.
+  description: |
+    Implemented by `@bsh/degent-market` (products/degent/services/market); typed client and domain types in
+    `@bsh/degent-market-sdk`. Design: docs/adr/0008-first-party-marketplace-settlement.md and
+    products/degent/services/market/docs/SETTLEMENT.md.
+
+    Listing: `POST /v1/listings/prepare` (the service checks the chain/ord port: outpoint unspent, inscription at
+    that outpoint, held by the seller, and the collection: a roster Degent or a parent-linked child) returns a
+    3-input/3-output template PSBT with the inscription at input #2 and `price -> seller` at output #2. The seller
+    signs input #2 with SIGHASH_SINGLE|ANYONECANPAY (0x83), gets a SIWB `list` challenge
+    (`POST /v1/auth/challenge`, bound to inscription and price), signs it with BIP-322 simple, and
+    `POST /v1/listings` verifies both signatures (the 0x83 Schnorr/ECDSA signature against the reconstructed
+    sighash) and stores the listing. Cancel: a SIWB `cancel` challenge signed by the seller.
+
+    Buying (`/v1/buy/*`) is behind the `BUYS_ENABLED` kill switch (default false: 503 `buys_paused`). The service
+    assembles the real purchase `[dummy, dummy, inscription, payment...] -> [dummy merge, postage, price,
+    royalty?, change?]`, asserts with `@bsh/inscription` (ord's FIFO rule) that the inscription lands in output #1,
+    the buyer's postage output, before returning the PSBT and again on the exact bytes before broadcast.
+
+    There is no endpoint that marks a listing sold: the settlement watcher derives `sold` / `invalid` / `expired`
+    from the chain and publishes `degent.market.listing.{status}` (contracts/asyncapi/degent-market.yaml).
+
+    Conventions: amounts are integer sats as JSON numbers; timestamps ISO 8601 UTC; txids/keys lowercase hex;
+    PSBTs are returned as hex and base64 and accepted as either. Every error is
+    `{ "error": { "code", "message", "details"? } }`. Mutations are POST with JSON bodies; unknown fields are
+    rejected. Browser calls are subject to a CORS allowlist (default deny); POSTs are rate limited per client IP.
+    Responses carry `cache-control: no-store`. The seller's signature and signed PSBT are never returned.
+  license: { name: Proprietary, identifier: LicenseRef-Proprietary }
+servers:
+  - url: https://market.degent.club
+    description: production (mainnet)
+  - url: http://127.0.0.1:8788
+    description: local dev (regtest)
+tags:
+  - name: service
+  - name: listings
+  - name: auth
+  - name: buy
+security: []
+paths:
+  /v1/health:
+    get:
+      tags: [service]
+      operationId: getHealth
+      summary: Liveness plus dependency checks (always 200; see `status`).
+      responses:
+        '200':
+          description: Health report
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+  /v1/config:
+    get:
+      tags: [service]
+      operationId: getConfig
+      summary: Public configuration the front end must show (kill switch, royalty, price window, layout).
+      responses:
+        '200':
+          description: Market configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MarketConfig' }
+  /v1/fees:
+    get:
+      tags: [service]
+      operationId: getFees
+      summary: Fee tiers in sat/vB (economy / normal / fast), never below the network minimum.
+      responses:
+        '200':
+          description: Fee tiers
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeesResponse' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/listings:
+    get:
+      tags: [listings]
+      operationId: listListings
+      summary: Active listings, newest first.
+      responses:
+        '200':
+          description: Active listings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListingsResponse' }
+    post:
+      tags: [listings]
+      operationId: createListing
+      summary: Store a listing after verifying the SIWB `list` challenge and the seller's 0x83 signature.
+      description: |
+        Verifies, in order: body shape; collection membership (403 `not_a_degent`); no open listing (409
+        `already_listed`); the BIP-322 signature on the `list` challenge, whose Request ID binds action,
+        inscription and price, and whose nonce is single-use (401 `auth_failed`); listing validity from the chain
+        (409 `listing_invalid`, `details.reason`); that the signed PSBT's unsigned transaction equals the template
+        the service rebuilds byte-for-byte (400 `bad_psbt`); the signature itself against the reconstructed
+        sighash (400 `bad_seller_signature`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateListingRequest' }
+      responses:
+        '201':
+          description: Listing created (`active`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreateListingResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/listings/{id}:
+    parameters:
+      - $ref: '#/components/parameters/InscriptionId'
+    get:
+      tags: [listings]
+      operationId: getListing
+      summary: Any listing by inscription id, including closed ones.
+      responses:
+        '200':
+          description: Listing
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Listing' }
+        '404': { $ref: '#/components/responses/Error' }
+  /v1/listings/prepare:
+    post:
+      tags: [listings]
+      operationId: prepareListing
+      summary: Check ownership, location and membership; return the template PSBT the seller signs (input #2, 0x83).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PrepareListingRequest' }
+      responses:
+        '200':
+          description: Template PSBT
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrepareListingResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/listings/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/InscriptionId'
+    post:
+      tags: [listings]
+      operationId: cancelListing
+      summary: Cancel an open listing with a seller-signed SIWB `cancel` challenge.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CancelListingRequest' }
+      responses:
+        '200':
+          description: Cancelled listing
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Listing' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /v1/auth/challenge:
+    post:
+      tags: [auth]
+      operationId: authChallenge
+      summary: SIWB challenge for `list` (binds inscription + price) or `cancel` (binds inscription). Single use.
+      description: |
+        The message is a canonical SIWB message (`@bsh/identity`) whose `Request ID` is
+        `list:<inscriptionId>:<priceSats>` or `cancel:<inscriptionId>`. Sign it with BIP-322 simple
+        (P2TR key path or P2WPKH). The nonce is consumed only after the signature verifies.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChallengeRequest' }
+      responses:
+        '200':
+          description: Challenge
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChallengeResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /v1/buy/prepare:
+    post:
+      tags: [buy]
+      operationId: buyPrepare
+      summary: Build the real purchase transaction (or, first, the dummy-UTXO round). 503 while buys are paused.
+      description: |
+        Re-validates the listing, selects the buyer's confirmed, non-inscribed UTXOs (wallet exclusions plus the
+        ord port), picks two padding UTXOs (600-1000 sats) and payment inputs, and assembles the purchase. The
+        seller's signature is verified against this exact transaction and the inscription's FIFO destination is
+        asserted to be output #1 (the buyer's postage) with `@bsh/inscription`. `summary.inputs/outputs` is the
+        full transaction for the buyer to review. Without two padding UTXOs the response is `kind: dummies`: a
+        self-transfer creating them; buy again once it confirms.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BuyPrepareRequest' }
+      responses:
+        '200':
+          description: Buy session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BuyPrepareResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/buy/submit:
+    post:
+      tags: [buy]
+      operationId: buySubmit
+      summary: Verify the wallet-signed PSBT, re-assert the inscription destination, broadcast. 503 while paused.
+      description: |
+        The signed PSBT's unsigned transaction must equal the session's byte-for-byte; only signature material is
+        merged into the service's copy. After finalizing, the FIFO assertion runs again on the exact bytes to be
+        broadcast and the listing is re-validated. Sessions are single-use and expire. On success a `buy`
+        session moves the listing to `pending`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BuySubmitRequest' }
+      responses:
+        '200':
+          description: Broadcast
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BuySubmitResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '410': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '502': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+
+components:
+  parameters:
+    InscriptionId:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/InscriptionIdString' }
+  responses:
+    Error:
+      description: Structured error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Too many requests (see `retry-after`)
+      headers:
+        retry-after: { schema: { type: integer } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    InscriptionIdString:
+      type: string
+      pattern: '^[0-9a-f]{64}i[0-9]{1,6}$'
+    Txid:
+      type: string
+      pattern: '^[0-9a-f]{64}$'
+    Outpoint:
+      type: string
+      pattern: '^[0-9a-f]{64}:[0-9]{1,5}$'
+    Sats:
+      type: integer
+      minimum: 0
+    Network:
+      type: string
+      enum: [mainnet, testnet, signet, regtest]
+    ListingStatus:
+      type: string
+      enum: [active, pending, sold, invalid, expired, cancelled]
+    FeeTier:
+      type: string
+      enum: [economy, normal, fast]
+    ErrorCode:
+      type: string
+      enum:
+        [bad_request, validation_failed, unsupported_media_type, payload_too_large, not_found, conflict,
+         forbidden_origin, rate_limited, internal, not_a_degent, not_owner, not_seller, already_listed,
+         listing_invalid, listing_not_active, listing_expired, own_listing, auth_failed, buys_paused,
+         insufficient_funds, need_dummies, bad_psbt, bad_seller_signature, inscription_misrouted, session_closed,
+         session_expired, upstream_unavailable, broadcast_rejected]
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code: { $ref: '#/components/schemas/ErrorCode' }
+            message: { type: string }
+            details: {}
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, version, network, buysEnabled, checks]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        version: { type: string }
+        network: { $ref: '#/components/schemas/Network' }
+        buysEnabled: { type: boolean }
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: false
+            required: [ok]
+            properties:
+              ok: { type: boolean }
+              detail: { type: string }
+    SettlementLayout:
+      type: object
+      additionalProperties: false
+      required: [dummyCount, inscriptionInput, priceOutput, inscriptionOutput, sellerSighash, minDummyValue]
+      properties:
+        dummyCount: { type: integer, enum: [2] }
+        inscriptionInput: { type: integer, enum: [2] }
+        priceOutput: { type: integer, enum: [2] }
+        inscriptionOutput: { type: integer, enum: [1] }
+        sellerSighash: { type: integer, enum: [131], description: SIGHASH_SINGLE|SIGHASH_ANYONECANPAY }
+        minDummyValue: { type: integer }
+    MarketConfig:
+      type: object
+      additionalProperties: false
+      required: [network, buysEnabled, royaltyBps, treasuryAddress, priceMinSats, priceMaxSats, listingMaxDays, dummyValueSats, layout, explorerTxUrl]
+      properties:
+        network: { $ref: '#/components/schemas/Network' }
+        buysEnabled: { type: boolean, description: 'Kill switch. False: show the paused banner; /v1/buy/* returns 503.' }
+        royaltyBps: { type: integer, minimum: 0, maximum: 5000 }
+        treasuryAddress: { type: [string, 'null'] }
+        priceMinSats: { type: integer }
+        priceMaxSats: { type: integer }
+        listingMaxDays: { type: integer }
+        dummyValueSats: { type: integer }
+        layout: { $ref: '#/components/schemas/SettlementLayout' }
+        explorerTxUrl: { type: string }
+    FeesResponse:
+      type: object
+      additionalProperties: false
+      required: [economy, normal, fast, minimum]
+      properties:
+        economy: { type: number }
+        normal: { type: number }
+        fast: { type: number }
+        minimum: { type: number }
+    DegentRef:
+      type: object
+      additionalProperties: false
+      required: [via, n]
+      properties:
+        via: { type: string, enum: [gallery, child] }
+        n: { type: [integer, 'null'] }
+    Listing:
+      type: object
+      additionalProperties: false
+      required: [inscriptionId, inscriptionNumber, degent, contentType, outputValue, location, satOffset, priceSats, royaltySats,
+                 sellerAddress, status, statusReason, settlementTxid, createdAt, updatedAt, expiresAt]
+      properties:
+        inscriptionId: { $ref: '#/components/schemas/InscriptionIdString' }
+        inscriptionNumber: { type: [integer, 'null'] }
+        degent: { $ref: '#/components/schemas/DegentRef' }
+        contentType: { type: string }
+        outputValue: { $ref: '#/components/schemas/Sats' }
+        location: { $ref: '#/components/schemas/Outpoint' }
+        satOffset: { type: integer, minimum: 0 }
+        priceSats: { $ref: '#/components/schemas/Sats' }
+        royaltySats: { $ref: '#/components/schemas/Sats' }
+        sellerAddress: { type: string }
+        status: { $ref: '#/components/schemas/ListingStatus' }
+        statusReason: { type: [string, 'null'] }
+        settlementTxid:
+          oneOf:
+            - $ref: '#/components/schemas/Txid'
+            - type: 'null'
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+    ListingsResponse:
+      type: object
+      additionalProperties: false
+      required: [items, total]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Listing' } }
+        total: { type: integer }
+    ChallengeRequest:
+      type: object
+      additionalProperties: false
+      required: [action, address, inscriptionId]
+      properties:
+        action: { type: string, enum: [list, cancel] }
+        address: { type: string }
+        inscriptionId: { $ref: '#/components/schemas/InscriptionIdString' }
+        priceSats: { type: integer, description: Required for `list`. }
+    ChallengeResponse:
+      type: object
+      additionalProperties: false
+      required: [message, expiresAt]
+      properties:
+        message: { type: string }
+        expiresAt: { type: string, format: date-time }
+    PrepareListingRequest:
+      type: object
+      additionalProperties: false
+      required: [inscriptionId, sellerAddress, sellerPublicKey, priceSats]
+      properties:
+        inscriptionId: { $ref: '#/components/schemas/InscriptionIdString' }
+        sellerAddress: { type: string }
+        sellerPublicKey: { type: string, pattern: '^0[23][0-9a-f]{64}$' }
+        priceSats: { type: integer }
+    ToSignInput:
+      type: object
+      additionalProperties: false
+      required: [index, address]
+      properties:
+        index: { type: integer }
+        address: { type: string }
+        sighashTypes: { type: array, items: { type: integer } }
+    PrepareListingResponse:
+      type: object
+      additionalProperties: false
+      required: [psbtHex, psbtBase64, signIndex, sighashType, toSignInputs, inscription]
+      properties:
+        psbtHex: { type: string }
+        psbtBase64: { type: string }
+        signIndex: { type: integer, enum: [2] }
+        sighashType: { type: integer, enum: [131] }
+        toSignInputs: { type: array, items: { $ref: '#/components/schemas/ToSignInput' } }
+        inscription:
+          type: object
+          additionalProperties: false
+          required: [outpoint, offset, value, contentType, number]
+          properties:
+            outpoint: { $ref: '#/components/schemas/Outpoint' }
+            offset: { type: integer }
+            value: { $ref: '#/components/schemas/Sats' }
+            contentType: { type: string }
+            number: { type: [integer, 'null'] }
+    CreateListingRequest:
+      type: object
+      additionalProperties: false
+      required: [inscriptionId, sellerAddress, sellerPublicKey, priceSats, signedPsbt, message, signature]
+      properties:
+        inscriptionId: { $ref: '#/components/schemas/InscriptionIdString' }
+        sellerAddress: { type: string }
+        sellerPublicKey: { type: string, pattern: '^0[23][0-9a-f]{64}$' }
+        priceSats: { type: integer }
+        expiresInDays: { type: integer, minimum: 1, description: 'At most LISTING_MAX_DAYS (default and maximum 30).' }
+        signedPsbt: { type: string, description: Seller-signed template PSBT, hex or base64. }
+        message: { type: string, description: The `list` challenge message. }
+        signature: { type: string, description: BIP-322 simple signature (base64). }
+    CreateListingResponse:
+      type: object
+      additionalProperties: false
+      required: [listing]
+      properties:
+        listing: { $ref: '#/components/schemas/Listing' }
+    CancelListingRequest:
+      type: object
+      additionalProperties: false
+      required: [sellerAddress, message, signature]
+      properties:
+        sellerAddress: { type: string }
+        message: { type: string }
+        signature: { type: string }
+    BuyPrepareRequest:
+      type: object
+      additionalProperties: false
+      required: [inscriptionId, buyerAddress, buyerPublicKey]
+      properties:
+        inscriptionId: { $ref: '#/components/schemas/InscriptionIdString' }
+        buyerAddress: { type: string }
+        buyerPublicKey: { type: string, pattern: '^0[23][0-9a-f]{64}$' }
+        feeTier: { $ref: '#/components/schemas/FeeTier' }
+        excludeOutpoints: { type: array, maxItems: 5000, items: { $ref: '#/components/schemas/Outpoint' } }
+    TxInputView:
+      type: object
+      additionalProperties: false
+      required: [index, outpoint, value, address, owner, role, buyerSigns]
+      properties:
+        index: { type: integer }
+        outpoint: { $ref: '#/components/schemas/Outpoint' }
+        value: { $ref: '#/components/schemas/Sats' }
+        address: { type: string }
+        owner: { type: string, enum: [buyer, seller, treasury] }
+        role: { type: string, enum: [dummy, inscription, payment] }
+        buyerSigns: { type: boolean }
+    TxOutputView:
+      type: object
+      additionalProperties: false
+      required: [index, value, address, owner, role]
+      properties:
+        index: { type: integer }
+        value: { $ref: '#/components/schemas/Sats' }
+        address: { type: string }
+        owner: { type: string, enum: [buyer, seller, treasury] }
+        role: { type: string, enum: [dummy_merge, inscription, price, royalty, change, dummy] }
+    BuySummary:
+      type: object
+      additionalProperties: false
+      required: [priceSats, royaltySats, feeSats, feeRate, vsize, changeSats, postageSats, totalBuyerCostSats, inputs, outputs]
+      properties:
+        priceSats: { $ref: '#/components/schemas/Sats' }
+        royaltySats: { $ref: '#/components/schemas/Sats' }
+        feeSats: { $ref: '#/components/schemas/Sats' }
+        feeRate: { type: number }
+        vsize: { type: integer }
+        changeSats: { $ref: '#/components/schemas/Sats' }
+        postageSats: { $ref: '#/components/schemas/Sats' }
+        totalBuyerCostSats: { $ref: '#/components/schemas/Sats' }
+        inputs: { type: array, items: { $ref: '#/components/schemas/TxInputView' } }
+        outputs: { type: array, items: { $ref: '#/components/schemas/TxOutputView' } }
+    DummySummary:
+      type: object
+      additionalProperties: false
+      required: [feeSats, feeRate, changeSats, dummyCount, dummyValueSats, inputs, outputs]
+      properties:
+        feeSats: { $ref: '#/components/schemas/Sats' }
+        feeRate: { type: number }
+        changeSats: { $ref: '#/components/schemas/Sats' }
+        dummyCount: { type: integer }
+        dummyValueSats: { $ref: '#/components/schemas/Sats' }
+        inputs: { type: array, items: { $ref: '#/components/schemas/TxInputView' } }
+        outputs: { type: array, items: { $ref: '#/components/schemas/TxOutputView' } }
+    BuyPrepareResponse:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [kind, sessionId, expiresAt, psbtHex, psbtBase64, toSignInputs, note, summary, inscriptionDestination]
+          properties:
+            kind: { type: string, enum: [buy] }
+            sessionId: { type: string, pattern: '^[0-9a-f]{32}$' }
+            expiresAt: { type: string, format: date-time }
+            psbtHex: { type: string }
+            psbtBase64: { type: string }
+            toSignInputs: { type: array, items: { $ref: '#/components/schemas/ToSignInput' } }
+            note: { type: string }
+            summary: { $ref: '#/components/schemas/BuySummary' }
+            inscriptionDestination:
+              type: object
+              additionalProperties: false
+              required: [vout, offset]
+              properties:
+                vout: { type: integer, enum: [1] }
+                offset: { type: integer, minimum: 0 }
+        - type: object
+          additionalProperties: false
+          required: [kind, sessionId, expiresAt, psbtHex, psbtBase64, toSignInputs, note, summary]
+          properties:
+            kind: { type: string, enum: [dummies] }
+            sessionId: { type: string, pattern: '^[0-9a-f]{32}$' }
+            expiresAt: { type: string, format: date-time }
+            psbtHex: { type: string }
+            psbtBase64: { type: string }
+            toSignInputs: { type: array, items: { $ref: '#/components/schemas/ToSignInput' } }
+            note: { type: string }
+            summary: { $ref: '#/components/schemas/DummySummary' }
+    BuySubmitRequest:
+      type: object
+      additionalProperties: false
+      required: [sessionId, signedPsbt]
+      properties:
+        sessionId: { type: string, pattern: '^[0-9a-f]{32}$' }
+        signedPsbt: { type: string, description: Wallet-signed PSBT, hex or base64. }
+    BuySubmitResponse:
+      type: object
+      additionalProperties: false
+      required: [txid, kind, vsize, feeSats, explorerUrl]
+      properties:
+        txid: { $ref: '#/components/schemas/Txid' }
+        kind: { type: string, enum: [buy, dummies] }
+        vsize: { type: integer }
+        feeSats: { $ref: '#/components/schemas/Sats' }
+        explorerUrl: { type: string }
