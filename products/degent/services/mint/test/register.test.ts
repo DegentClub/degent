@@ -120,7 +120,12 @@ describe('Register API', () => {
     expect(byOwner.items.map((m) => m.n)).toEqual([2]);
     expect(((await api(h, 'GET', '/v1/explorer?q=%234')).body as ExplorerResponse).items.map((m) => m.n)).toEqual([4]);
     expect(((await api(h, 'GET', `/v1/explorer?q=${h.roster[4]!.inscriptionId.slice(0, 8)}`)).body as ExplorerResponse).total).toBe(1);
-    for (const bad of ['limit=0', 'limit=201', 'offset=-1', 'sort=owner', 'order=up', `q=${'x'.repeat(101)}`]) {
+    // tier / size filters (tiny roster: 308,224 .. 312,320 bytes, all Standard)
+    expect(((await api(h, 'GET', '/v1/explorer?tier=standard')).body as ExplorerResponse).total).toBe(5);
+    expect(((await api(h, 'GET', '/v1/explorer?tier=block')).body as ExplorerResponse).total).toBe(0);
+    expect(((await api(h, 'GET', '/v1/explorer?minBytes=310000')).body as ExplorerResponse).items.map((m) => m.n)).toEqual([3, 4, 5]);
+    expect(((await api(h, 'GET', '/v1/explorer?maxBytes=309000&tier=standard')).body as ExplorerResponse).items.map((m) => m.n)).toEqual([1]);
+    for (const bad of ['limit=0', 'limit=201', 'offset=-1', 'sort=owner', 'order=up', `q=${'x'.repeat(101)}`, 'tier=huge', 'minBytes=-1', 'minBytes=5&maxBytes=4']) {
       const r = await api(h, 'GET', `/v1/explorer?${bad}`);
       expect(r.status, bad).toBe(422);
     }

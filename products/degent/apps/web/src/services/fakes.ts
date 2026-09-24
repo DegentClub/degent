@@ -734,7 +734,11 @@ export function createFakeMintApi(
       const order = q.order ?? 'asc';
       const text = (q.q ?? '').trim().toLowerCase();
       const key = (m: RegisterMember) => (sort === 'bytes' ? m.bytes : sort === 'height' ? (m.height ?? m.number ?? m.n) : m.n);
+      const rule = q.tier ? config.tiers.find((t) => t.tier === q.tier) : undefined;
+      const lo = Math.max(q.minBytes ?? 0, rule?.minBytes ?? 0);
+      const hi = Math.min(q.maxBytes ?? Number.MAX_SAFE_INTEGER, rule?.maxBytes ?? Number.MAX_SAFE_INTEGER);
       const filtered = members().filter((m) => {
+        if (m.bytes < lo || m.bytes > hi) return false;
         if (!text) return true;
         if (/^#?\d+$/.test(text)) return m.n === Number(text.replace('#', ''));
         return m.id.startsWith(text) || (m.owner?.toLowerCase().startsWith(text) ?? false);

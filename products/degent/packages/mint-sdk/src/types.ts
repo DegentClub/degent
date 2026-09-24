@@ -416,6 +416,11 @@ export interface ExplorerQuery {
   order?: 'asc' | 'desc';
   /** Matches a Degent number, an inscription id prefix or an owner address prefix. */
   q?: string;
+  /** Members whose byte size falls in that tier's range. */
+  tier?: Tier;
+  /** Inclusive byte-size bounds. */
+  minBytes?: number;
+  maxBytes?: number;
 }
 
 export interface ExplorerResponse {

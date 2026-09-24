@@ -145,7 +145,19 @@ export class RegisterService {
     const order = enumParam(q.order, ['asc', 'desc'] as const, 'asc', 'order');
     const text = typeof q.q === 'string' ? q.q : '';
     if (text.length > 100) throw invalid('q must be at most 100 characters');
-    const all = await this.all();
+    const rawTier: unknown = q.tier;
+    const tier = rawTier === undefined || rawTier === '' ? null : enumParam(rawTier, ['standard', 'block'] as const, 'standard', 'tier');
+    let minBytes = intParam(q.minBytes, 0, 0, Number.MAX_SAFE_INTEGER, 'minBytes');
+    let maxBytes = intParam(q.maxBytes, Number.MAX_SAFE_INTEGER, 0, Number.MAX_SAFE_INTEGER, 'maxBytes');
+    if (maxBytes < minBytes) throw invalid('maxBytes must be at least minBytes');
+    if (tier) {
+      const rule = this.d.settings.collection.tiers.find((t) => t.tier === tier);
+      if (rule) {
+        minBytes = Math.max(minBytes, rule.minBytes);
+        maxBytes = Math.min(maxBytes, rule.maxBytes);
+      }
+    }
+    const all = (await this.all()).filter((m) => m.bytes >= minBytes && m.bytes <= maxBytes);
     // An owner-prefix query needs owners before filtering; anything else only for the page shown.
     const ownerQuery = text.length > 0 && !/^#?\d+$/.test(text) && !/^[0-9a-f]+$/i.test(text);
     const pool = ownerQuery ? await this.withOwners(all) : all;

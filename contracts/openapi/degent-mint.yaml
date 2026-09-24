@@ -415,9 +415,12 @@ paths:
         - { name: sort, in: query, schema: { type: string, enum: [n, bytes, height], default: n } }
         - { name: order, in: query, schema: { type: string, enum: [asc, desc], default: asc } }
         - { name: q, in: query, schema: { type: string, maxLength: 100 }, description: Degent number, inscription id prefix or owner address prefix. }
+        - { name: tier, in: query, schema: { $ref: '#/components/schemas/Tier' }, description: "Members whose byte size falls in that tier's range (`/v1/config` tiers). Gallery members are classified by size too." }
+        - { name: minBytes, in: query, schema: { type: integer, minimum: 0 }, description: Inclusive lower bound on content length. }
+        - { name: maxBytes, in: query, schema: { type: integer, minimum: 0 }, description: Inclusive upper bound on content length (422 when below minBytes). }
       responses:
         '200':
-          description: Page of members
+          description: Page of members (`total` counts the filtered set)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ExplorerResponse' }
