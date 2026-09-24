@@ -12,7 +12,9 @@ and the catalog tool come from `DegentClub/scribbit`, vendored as a git submodul
 | `products/degent/apps/web/` | `@bsh/degent-web`: the mint front end (React + Vite) |
 | `products/degent/services/mint/` | `@bsh/degent-mint`: order state machine, art review, policy signer, lane broadcaster |
 | `products/degent/packages/mint-sdk/` | `@bsh/degent-mint-sdk`: mint rules, domain types, typed API client |
-| `contracts/` | Contracts **this product provides**: `openapi/degent-mint.yaml`, `asyncapi/degent-mint.yaml`. Platform contracts are at `deps/scribbit/contracts/` |
+| `products/degent/services/telegram-gate/` | `@bsh/degent-telegram-gate`: holders-only Telegram gate (SIWB via `@bsh/identity`, Register holder check, invite by DM) |
+| `products/degent/services/x-bot/` | `@bsh/degent-x-bot`: X content engine (approval tiers, content safety, Register-fact drafts, `brain/BRAIN.md`) |
+| `contracts/` | Contracts **this product provides**: `openapi/degent-mint.yaml`, `openapi/degent-telegram-gate.yaml`, `asyncapi/degent-mint.yaml`. Platform contracts are at `deps/scribbit/contracts/` |
 | `deps/scribbit/` | SUBMODULE, read-only here: `platform/*`, `tools/catalog`, platform contracts, platform ADRs. Change it in DegentClub/scribbit, then bump the pin |
 | `catalog/catalog.json` | GENERATED index of every component, platform ones marked `external` (`pnpm catalog`). Query this before grepping |
 | `docs/adr/` | ADR-0002 (mint architecture), ADR-0005 (0x81 reveals, re-signed rescue), ADR-0007 (member approval + the Register). Platform ADRs: `deps/scribbit/docs/adr/`. Numbering is global across the three repos |

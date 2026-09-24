@@ -31,6 +31,8 @@ anything that signs or broadcasts.
 | `degent-web` | `@bsh/degent-web` | app | [`apps/web`](apps/web) | Mint front end: any wallet, create, validate, preview, quote, pay, track, rescue |
 | `degent-mint` | `@bsh/degent-mint` | service | [`services/mint`](services/mint) | Order state machine, automated art review, parent co-signing, lane broadcaster |
 | `degent-mint-sdk` | `@bsh/degent-mint-sdk` | library | [`packages/mint-sdk`](packages/mint-sdk) | Mint rules (tiers, content validation), domain types, typed API client |
+| `degent-telegram-gate` | `@bsh/degent-telegram-gate` | service | [`services/telegram-gate`](services/telegram-gate) | Holders-only Telegram gate: /verify link, SIWB challenge, Register holder check, single-use invite by DM, re-verification |
+| `degent-x-bot` | `@bsh/degent-x-bot` | service | [`services/x-bot`](services/x-bot) | X content engine: approval-tier classifier, content safety, Register-fact drafts behind a review queue |
 
 Platform dependencies: [`@bsh/inscription`](../../deps/scribbit/platform/inscription),
 [`@bsh/wallet-kit`](../../deps/scribbit/platform/wallet-kit) and [`@bsh/events`](../../deps/scribbit/platform/events),

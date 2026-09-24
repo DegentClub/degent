@@ -138,6 +138,7 @@ prints any future delta.
 2. Owner: inscribe the Club parent and the signed Gallery of the 4,112 (`docs/REGISTER.md` §1.1–1.2); set
    `PARENT_INSCRIPTION_ID`, `GALLERY_INSCRIPTION_ID`.
 3. Run `scripts/build-roster.mjs --indexer <club ord>` to fill heights/timestamps (mints-per-week for the Gallery).
-4. Telegram gate service (roadmap p3.6) consuming `GET /v1/register/holder/{address}` and the `/verify` page's
-   `{token, address, message, signature}`.
+4. ~~Telegram gate service (roadmap p3.6) consuming `GET /v1/register/holder/{address}` and the `/verify` page's
+   `{token, address, message, signature}`.~~ Done: `@bsh/degent-telegram-gate`
+   (`contracts/openapi/degent-telegram-gate.yaml`); the page now signs the gate's SIWB challenge (`POST /gate/challenge`).
 5. Register updates: inscribe `register-batch.mjs` output as children of the parent on a cadence (p3.9 → owner).
