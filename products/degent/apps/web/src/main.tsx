@@ -4,6 +4,7 @@ import { App } from './App';
 import { readConfig } from './config';
 import { createServices } from './services';
 import './styles.css';
+import './site.css';
 
 const app = readConfig(import.meta.env as Record<string, string | undefined>, window.location.search);
 const services = createServices(app);

@@ -97,7 +97,7 @@ export function Votes({ order, services, pollMs }: { order: Order; services: Ser
 export function ShareCard({ order, siteUrl, imageUrl }: { order: Order; siteUrl: string; imageUrl: string }) {
   const n = order.degentNumber;
   const title = n !== null ? `Degent #${n}` : 'A new inscription';
-  const link = n !== null ? `${siteUrl}/explorer?q=${n}` : `${siteUrl}/`;
+  const link = n !== null ? `${siteUrl}/collection/${n}` : `${siteUrl}/`;
   const text = n !== null
     ? `Degent #${n} has joined the Decentralized Gentlemen Club — ${formatSize(order.contentLength)} inscribed on Bitcoin, approved by the members. ${link}`
     : `Inscribed on Bitcoin (${formatSize(order.contentLength)}), the non-custodial way. ${link}`;
@@ -114,7 +114,7 @@ export function ShareCard({ order, siteUrl, imageUrl }: { order: Order; siteUrl:
         <div className="row">
           <ExternalLink href={tweet}>Share on X</ExternalLink>
           <a className="link" href={link}>
-            View in the Explorer
+            View in the collection
           </a>
         </div>
       </div>
@@ -156,9 +156,11 @@ export function Timeline({ order, explorerUrl }: { order: Pick<Order, 'status' |
   );
 }
 
-export function Track() {
+export function Track({ orderId: pinnedId, onDone }: { orderId?: string; onDone?: () => void } = {}) {
   const { state, dispatch, services, app, store, vault } = useMint();
-  const orderId = state.order?.id ?? state.recovery?.orderId ?? null;
+  const orderId = pinnedId ?? state.order?.id ?? state.recovery?.orderId ?? null;
+  // The recovery bundle only counts for the order it belongs to (/track/:id may show another order).
+  const recovery = state.recovery && state.recovery.orderId === orderId ? state.recovery : null;
   const [order, setOrder] = useState<Order | null>(state.order);
   const [pollError, setPollError] = useState<string | null>(null);
   const [hash, setHash] = useState<HashCheck>({ state: 'idle' });
@@ -226,7 +228,7 @@ export function Track() {
         {
           orderId,
           orderToken: vault.token(orderId),
-          bundle: state.recovery,
+          bundle: recovery,
           wallet: state.wallet,
           network: app.network,
           passphrase: rescuePassphrase,
@@ -240,7 +242,7 @@ export function Track() {
     }
   };
 
-  const commitTxid = order?.commitOutpoint?.txid ?? state.recovery?.commitTxid ?? state.pay.commitTxid;
+  const commitTxid = order?.commitOutpoint?.txid ?? recovery?.commitTxid ?? state.pay.commitTxid;
 
   return (
     <div className="screen">
@@ -330,7 +332,7 @@ export function Track() {
             Signed here, with <Mono>SIGHASH_DEFAULT</Mono>, over exactly the outpoint, recipient and artwork in your recovery
             bundle. The mint supplies only the artwork bytes (checked against the bundle’s SHA-256); it never sees your key.
           </p>
-          {!state.recovery ? (
+          {!recovery ? (
             <Alert tone="warn" title="No recovery bundle on this device">
               Self-rescue needs the recovery bundle you saved when you paid (it holds your encrypted one-time key). Open this
               page from the device you paid on, or use Resume with your saved bundle.
@@ -370,7 +372,7 @@ export function Track() {
             <Button
               variant="danger"
               busy={rescueState.state === 'busy'}
-              disabled={rescueState.state === 'done' || !state.recovery || rescuePassphrase.length === 0}
+              disabled={rescueState.state === 'done' || !recovery || rescuePassphrase.length === 0}
               onClick={() => void doRescue()}
             >
               {order.status === 'declined' ? 'Reveal without the parent (keep my inscription)' : 'Rescue now (reveal without parent)'}
@@ -427,10 +429,10 @@ export function Track() {
         </Panel>
       ) : null}
 
-      {state.recovery && order && !isTerminal(order.status) ? (
+      {recovery && order && !isTerminal(order.status) ? (
         <details className="panel">
           <summary>Recovery bundle</summary>
-          <CopyBlock label="Recovery bundle (JSON) — keep private" text={recoveryJson(state.recovery)} rows={8} />
+          <CopyBlock label="Recovery bundle (JSON) — keep private" text={recoveryJson(recovery)} rows={8} />
         </details>
       ) : null}
 
@@ -440,6 +442,7 @@ export function Track() {
             onClick={() => {
               if (order.status === 'delivered') clearRecovery(store);
               dispatch({ type: 'RESET' });
+              onDone?.();
             }}
           >
             Mint another Degent

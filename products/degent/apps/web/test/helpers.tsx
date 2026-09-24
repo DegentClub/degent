@@ -103,7 +103,7 @@ export function renderApp(
       services={services}
       store={store}
       vault={vault}
-      path={opts.path ?? '/'}
+      path={opts.path ?? '/mint'}
       {...(opts.search !== undefined ? { search: opts.search } : {})}
       {...(opts.initial ? { initial: opts.initial } : {})}
     />,

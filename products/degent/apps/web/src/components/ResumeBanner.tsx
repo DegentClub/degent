@@ -2,8 +2,10 @@ import { useMint } from '../flow/context';
 import { clearRecovery } from '../lib/recovery';
 import { formatTimestamp, shortHash } from '../lib/format';
 import { Button } from './ui';
+import { navigate } from '../router';
 
-export function ResumeBanner() {
+/** `goTo`: where to continue (Home sends you to /track/<id>; the mint wizard stays put). */
+export function ResumeBanner({ goTo }: { goTo?: (orderId: string) => string } = {}) {
   const { state, dispatch, store } = useMint();
   const b = state.resumeOffer;
   if (!b) return null;
@@ -19,7 +21,14 @@ export function ResumeBanner() {
         </p>
       </div>
       <div className="row">
-        <Button onClick={() => dispatch({ type: 'RESUME', bundle: b })}>Resume tracking</Button>
+        <Button
+          onClick={() => {
+            dispatch({ type: 'RESUME', bundle: b });
+            if (goTo) navigate(goTo(b.orderId));
+          }}
+        >
+          Resume tracking
+        </Button>
         <Button
           variant="ghost"
           onClick={() => {

@@ -8,7 +8,7 @@ import userEvent from '@testing-library/user-event';
 import { voteStatement } from '@bsh/degent-mint-sdk';
 import { preparePayment } from '../src/flow/effects';
 import { flowReducer } from '../src/flow/reducer';
-import { routeFor } from '../src/router';
+import { matchRoute, routeFor } from '../src/router';
 import { gateStatement, readGateToken } from '../src/screens/Verify';
 import { Votes } from '../src/screens/Track';
 import { render } from '@testing-library/react';
@@ -21,21 +21,44 @@ const PASS = 'correct horse battery staple';
 
 describe('router', () => {
   it('maps paths to routes', () => {
-    expect(routeFor('/')).toBe('mint');
-    expect(routeFor('')).toBe('mint');
+    expect(routeFor('/')).toBe('home');
+    expect(routeFor('')).toBe('home');
+    expect(routeFor('/mint')).toBe('mint');
+    expect(routeFor('/mint/')).toBe('mint');
     expect(routeFor('/review')).toBe('review');
     expect(routeFor('/review/')).toBe('review');
     expect(routeFor('/explorer')).toBe('explorer');
     expect(routeFor('/explorer/4113')).toBe('explorer');
     expect(routeFor('/verify')).toBe('verify');
-    expect(routeFor('/anything-else')).toBe('mint');
+    expect(routeFor('/collection')).toBe('collection');
+    expect(routeFor('/comic')).toBe('comic');
+    expect(routeFor('/how-it-works')).toBe('how');
+    expect(routeFor('/club')).toBe('club');
+    expect(routeFor('/manifesto')).toBe('manifesto');
+    expect(routeFor('/about')).toBe('about');
+    expect(matchRoute('/collection/42')).toEqual({ route: 'degent', n: 42 });
+    expect(matchRoute('/collection/10000')).toEqual({ route: 'degent', n: 10000 });
+    expect(routeFor('/collection/0')).toBe('notfound');
+    expect(routeFor('/collection/10001')).toBe('notfound');
+    expect(matchRoute('/track/dgt_4f1c2a9b')).toEqual({ route: 'track', id: 'dgt_4f1c2a9b' });
+    expect(routeFor('/track/not%20an%20id')).toBe('notfound');
+    expect(routeFor('/anything-else')).toBe('notfound');
   });
 
-  it('shows site navigation with the current page marked', async () => {
+  it('shows site navigation in the slide-out menu with the current page marked', async () => {
+    const user = userEvent.setup();
     renderApp(fakes(), { path: '/explorer' });
-    const nav = screen.getByRole('navigation', { name: 'Site' });
-    expect(within(nav).getByRole('link', { name: 'Explorer' })).toHaveAttribute('aria-current', 'page');
-    expect(within(nav).getByRole('link', { name: 'Review' })).toHaveAttribute('href', '/review');
+    const toggle = screen.getByRole('button', { name: 'Open menu' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(toggle);
+    const dialog = screen.getByRole('dialog', { name: 'Site menu' });
+    const nav = within(dialog).getByRole('navigation', { name: 'Site' });
+    expect(within(nav).getByRole('link', { name: 'The Register' })).toHaveAttribute('aria-current', 'page');
+    expect(within(nav).getByRole('link', { name: 'Member review' })).toHaveAttribute('href', '/review');
+    expect(within(dialog).getByRole('link', { name: 'Mint Now!' })).toHaveAttribute('href', '/mint');
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: 'Site menu' })).not.toBeInTheDocument();
+    expect(toggle).toHaveFocus();
     expect(screen.queryByRole('navigation', { name: 'Mint progress' })).not.toBeInTheDocument();
   });
 });

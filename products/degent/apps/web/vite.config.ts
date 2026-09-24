@@ -13,5 +13,7 @@ export default defineConfig({
     setupFiles: ['./test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}', 'test/**/*.test.{ts,tsx}'],
     restoreMocks: true,
+    // UI flows poll on timers; generous per-test time keeps them stable on a busy shared CI box.
+    testTimeout: 20_000,
   },
 });

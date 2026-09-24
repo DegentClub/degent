@@ -7,7 +7,6 @@ import { initialState, type FlowState } from './flow/state';
 import { createKeyVault, type KeyVault } from './flow/keyVault';
 import { browserStore, loadRecovery, type KeyValueStore } from './lib/recovery';
 import { errorText } from './components/ui';
-import { Header } from './components/Header';
 import { ProgressNav } from './components/ProgressNav';
 import { Welcome } from './screens/Welcome';
 import { Connect } from './screens/Connect';
@@ -19,7 +18,16 @@ import { Track } from './screens/Track';
 import { Review } from './screens/Review';
 import { Explorer } from './screens/Explorer';
 import { Verify } from './screens/Verify';
-import { routeFor, usePathname } from './router';
+import { matchRoute, navigate, usePathname } from './router';
+import { SiteDataProvider } from './site/data';
+import { SiteFooter, SiteHeader, SocialRail } from './site/chrome';
+import { Home } from './pages/Home';
+import { Collection } from './pages/Collection';
+import { DegentPage } from './pages/DegentPage';
+import { Comic } from './pages/Comic';
+import { HowItWorks } from './pages/HowItWorks';
+import { Club } from './pages/Club';
+import { About, Manifesto, NotFound } from './pages/TodoCopy';
 
 export interface AppProps {
   app: AppConfig;
@@ -35,7 +43,8 @@ export interface AppProps {
 }
 
 export function App({ app, services, store = browserStore(), vault: vaultProp, initial, path, search }: AppProps) {
-  const route = routeFor(usePathname(path));
+  const match = matchRoute(usePathname(path));
+  const route = match.route;
   const vaultRef = useRef<KeyVault>(vaultProp ?? createKeyVault());
   const [state, dispatch] = useReducer(flowReducer, store, (s) => initial ?? initialState(loadRecovery(s)));
   const mainRef = useRef<HTMLElement>(null);
@@ -61,8 +70,9 @@ export function App({ app, services, store = browserStore(), vault: vaultProp, i
     };
   }, [services]);
 
-  // Move focus to the new step's heading for keyboard and screen-reader users.
+  // Move focus to the new step's or page's heading for keyboard and screen-reader users.
   const firstRender = useRef(true);
+  const where = `${route}|${match.n ?? ''}|${match.id ?? ''}|${state.step}`;
   useEffect(() => {
     if (firstRender.current) {
       firstRender.current = false;
@@ -70,54 +80,70 @@ export function App({ app, services, store = browserStore(), vault: vaultProp, i
     }
     const h = mainRef.current?.querySelector<HTMLElement>('h1');
     h?.focus();
-  }, [state.step]);
+  }, [where]);
+
+  // /track/:id on the device that paid: pick the recovery bundle up automatically.
+  const trackId = route === 'track' ? match.id : undefined;
+  useEffect(() => {
+    if (trackId && state.resumeOffer?.orderId === trackId) dispatch({ type: 'RESUME', bundle: state.resumeOffer });
+  }, [trackId, state.resumeOffer]);
 
   const ctx: MintContextValue = useMemo(
     () => ({ app, services, vault: vaultRef.current, store, state, dispatch }),
     [app, services, store, state],
   );
 
-  return (
-    <MintContext.Provider value={ctx}>
-      <a className="skip" href="#main">
-        Skip to content
-      </a>
-      {services.mode === 'demo' ? (
-        <div className="demo-ribbon" role="note">
-          <strong>DEMO</strong> — simulated wallet, server and chain. No bitcoin moves. Remove <code>?demo=1</code> for
-          the real mint.
+  const mintScreens = (
+    <>
+      {state.error ? (
+        <div className="alert alert--bad" role="alert">
+          <p className="alert__title">Something needs your attention</p>
+          <div className="alert__body">{state.error}</div>
         </div>
       ) : null}
-      <Header route={route} />
-      {route === 'mint' ? <ProgressNav /> : null}
-      <main id="main" ref={mainRef} className="main">
-        {route === 'review' && <Review />}
-        {route === 'explorer' && <Explorer />}
-        {route === 'verify' && <Verify {...(search !== undefined ? { search } : {})} />}
-        {route === 'mint' && state.error ? (
-          <div className="alert alert--bad" role="alert">
-            <p className="alert__title">Something needs your attention</p>
-            <div className="alert__body">{state.error}</div>
+      {state.step === 'welcome' && <Welcome />}
+      {state.step === 'connect' && <Connect />}
+      {state.step === 'create' && <Create />}
+      {state.step === 'validate' && <Validate />}
+      {state.step === 'quote' && <QuoteScreen />}
+      {state.step === 'pay' && <Pay />}
+      {state.step === 'track' && <Track />}
+    </>
+  );
+
+  return (
+    <MintContext.Provider value={ctx}>
+      <SiteDataProvider services={services}>
+        <a className="skip" href="#main">
+          Skip to content
+        </a>
+        {services.mode === 'demo' ? (
+          <div className="demo-ribbon" role="note">
+            <strong>DEMO</strong> — simulated wallet, server and chain. No bitcoin moves. Remove <code>?demo=1</code> for
+            the real mint.
           </div>
         ) : null}
-        {route === 'mint' && state.step === 'welcome' && <Welcome />}
-        {route === 'mint' && state.step === 'connect' && <Connect />}
-        {route === 'mint' && state.step === 'create' && <Create />}
-        {route === 'mint' && state.step === 'validate' && <Validate />}
-        {route === 'mint' && state.step === 'quote' && <QuoteScreen />}
-        {route === 'mint' && state.step === 'pay' && <Pay />}
-        {route === 'mint' && state.step === 'track' && <Track />}
-      </main>
-      <footer className="footer">
-        <p>
-          The Decentralized Gentlemen Club · non-custodial by design: your reveal key never leaves this tab, and the
-          server only ever holds a half-signed transaction that pays <em>you</em>.
-        </p>
-        <p className="muted small">
-          Network: <span className="mono">{app.network}</span>
-          {services.mode === 'demo' ? ' · demo mode' : ''}
-        </p>
-      </footer>
+        <SiteHeader route={route} />
+        {route === 'mint' ? <ProgressNav /> : null}
+        <main id="main" ref={mainRef} className={`main main--${route}`}>
+          {route === 'home' && <Home />}
+          {route === 'collection' && <Collection />}
+          {route === 'degent' && match.n !== undefined && <DegentPage n={match.n} />}
+          {route === 'comic' && <Comic />}
+          {route === 'how' && <HowItWorks />}
+          {route === 'club' && <Club />}
+          {route === 'manifesto' && <Manifesto />}
+          {route === 'about' && <About />}
+          {route === 'notfound' && <NotFound />}
+          {route === 'review' && <Review />}
+          {route === 'explorer' && <Explorer />}
+          {route === 'verify' && <Verify {...(search !== undefined ? { search } : {})} />}
+          {route === 'track' && match.id !== undefined && <Track orderId={match.id} onDone={() => navigate('/mint')} />}
+          {route === 'mint' && mintScreens}
+        </main>
+        <SocialRail />
+        <SiteFooter />
+      </SiteDataProvider>
     </MintContext.Provider>
   );
 }

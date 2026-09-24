@@ -28,13 +28,19 @@ describe('config', () => {
 });
 
 describe('demo mode: the whole flow, end to end, through the UI', () => {
-  it('welcome → connect → create → validate → quote → pay → track (delivered, hash match)', async () => {
+  it('home → welcome → connect → create (Atelier) → validate → quote → pay → track (delivered) → the collection', async () => {
     const user = userEvent.setup();
     const log: string[] = [];
     const services = fakes({ log });
-    const { store } = renderApp(services, { app: testApp() });
+    const { store } = renderApp(services, { app: testApp(), path: '/' });
+
+    // 0 · Home: the certified numbers, then in through the front door
+    expect(screen.getByRole('heading', { level: 1, name: 'Decentralized Gentlemen Club' })).toBeInTheDocument();
+    expect(await screen.findByTestId('stat-minted')).toHaveTextContent('4,112');
+    await user.click(within(screen.getByRole('main')).getAllByRole('link', { name: 'Mint Now' })[0]!);
 
     // 1 · Welcome
+    expect(await screen.findByRole('heading', { level: 1, name: /Mint a Degent/ })).toBeInTheDocument();
     expect(screen.getByText('DEMO')).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 2, name: 'Standard Degent' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 2, name: 'Block Degent' })).toBeInTheDocument();
@@ -116,7 +122,7 @@ describe('demo mode: the whole flow, end to end, through the UI', () => {
     const card = screen.getByTestId('share-card');
     expect(within(card).getByRole('heading', { name: 'Degent #4113' })).toBeInTheDocument();
     expect(within(card).getByRole('link', { name: /Share on X/ })).toHaveAttribute('href', expect.stringContaining('twitter.com/intent/tweet'));
-    expect(within(card).getByRole('link', { name: 'View in the Explorer' })).toHaveAttribute('href', 'https://degent.club/explorer?q=4113');
+    expect(within(card).getByRole('link', { name: 'View in the collection' })).toHaveAttribute('href', 'https://degent.club/collection/4113');
     const order = [...services.apiOrders.values()][0]!;
     expect(order.timeline.map((e) => e.status)).toEqual([
       'awaiting_content', 'reviewing', 'approved', 'awaiting_payment', 'paid', 'confirming', 'member_review', 'queued', 'revealing', 'revealed', 'confirmed', 'verified', 'delivered',
@@ -129,5 +135,16 @@ describe('demo mode: the whole flow, end to end, through the UI', () => {
     expect(at('chain.broadcast')).toBeGreaterThan(at('wallet.signPsbt'));
     // The token never leaked into the call log.
     expect(log.join(' ')).not.toContain(bundle.orderToken);
-  }, 20_000);
+
+    // 8 · The new member hangs in the collection, with its on-chain details.
+    await user.click(screen.getByRole('button', { name: 'Open menu' }));
+    await user.click(within(screen.getByRole('dialog', { name: 'Site menu' })).getByRole('link', { name: 'The Collection' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'The Collection' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('showing')).toHaveTextContent('Showing 1–20 of 4,113'));
+    await user.selectOptions(screen.getByLabelText('Sort'), 'n:desc');
+    await user.click(await screen.findByRole('button', { name: 'Open Degent #4113' }));
+    const box = screen.getByRole('dialog', { name: 'DEGENT #4113' });
+    expect(within(box).getByText(order.inscriptionId!)).toBeInTheDocument();
+    expect(within(box).getByText('Child of the club parent · the Register')).toBeInTheDocument();
+  }, 40_000);
 });
