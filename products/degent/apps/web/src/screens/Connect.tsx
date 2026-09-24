@@ -130,9 +130,15 @@ export function Connect() {
             <Button variant="ghost" onClick={() => dispatch({ type: 'BACK' })}>
               Back
             </Button>
-            <Button disabled={legacy} onClick={() => dispatch({ type: 'GO', step: 'create' })}>
-              Continue to Create
-            </Button>
+            {state.handoff && state.artwork ? (
+              <Button disabled={legacy} onClick={() => dispatch({ type: 'GO', step: 'validate' })}>
+                Continue to Validate
+              </Button>
+            ) : (
+              <Button disabled={legacy} onClick={() => dispatch({ type: 'GO', step: 'create' })}>
+                Continue to Create
+              </Button>
+            )}
           </div>
         </Panel>
       ) : (

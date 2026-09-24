@@ -19,6 +19,14 @@ export function testApp(over: Partial<AppConfig> = {}): AppConfig {
     ordContentUrl: 'https://ord.test',
     pollIntervalMs: 10,
     demo: true,
+    certifyUrl: '',
+    atelierUrl: '',
+    newsletterUrl: '',
+    comicInscriptionId: '',
+    copyReady: new Set(),
+    marketplaceUrl: 'https://magiceden.io/ordinals/marketplace/degentclub',
+    social: { x: 'https://x.com/degentclub', telegram: 'https://t.me/+cneroYQ-0VpmM2Ix', instagram: '' },
+    collectionSlug: 'degents',
     ...over,
   };
 }

@@ -74,7 +74,14 @@ export interface MintApi {
 
 // ---------------------------------------------------------------- wallet
 
-export type WalletId = 'unisat' | 'xverse' | 'leather' | 'okx' | 'magiceden';
+export type WalletId = 'unisat' | 'xverse' | 'leather' | 'okx' | 'magiceden' | 'xcp' | 'horizon';
+export type MessageSignatureType = 'bip322-simple' | 'ecdsa';
+
+/** What a wallet can do (from @bsh/wallet-kit `CAPABILITIES`). */
+export interface WalletCapabilities {
+  broadcast: boolean;
+  bip322: boolean;
+}
 export type AddressType = 'p2tr' | 'p2wpkh' | 'p2sh-p2wpkh' | 'p2pkh' | 'unknown';
 
 export interface WalletAccount {
@@ -110,6 +117,9 @@ export interface WalletSession {
   payment: WalletAccount;
   signPsbt(psbtBase64: string, req: SignPsbtRequest): Promise<SignPsbtResult>;
   pushTx?(hex: string): Promise<string>;
+  /** Sign a message (Sign in with Bitcoin). BIP-322 simple where supported; ECDSA / BIP-137 on Horizon. */
+  signMessage?(message: string, address: string, type?: MessageSignatureType): Promise<string>;
+  capabilities?: WalletCapabilities;
   disconnect(): Promise<void>;
 }
 

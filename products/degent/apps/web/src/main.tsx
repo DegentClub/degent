@@ -1,16 +1,19 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { App } from './App';
+import { Site } from './site/Site';
 import { readConfig } from './config';
 import { createServices } from './services';
+import { createSiteServices } from './site/services';
 import './styles.css';
+import './site/site.css';
 
 const app = readConfig(import.meta.env as Record<string, string | undefined>, window.location.search);
-const services = createServices(app);
-document.documentElement.dataset.mode = services.mode;
+const mint = createServices(app);
+const site = createSiteServices(app);
+document.documentElement.dataset.mode = mint.mode;
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App app={app} services={services} />
+    <Site app={app} site={site} mint={mint} />
   </StrictMode>,
 );

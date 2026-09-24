@@ -1,10 +1,15 @@
 /**
- * Real-browser e2e for the mint front end (`pnpm --filter @bsh/degent-web e2e`).
+ * Real-browser e2e for degent.club (`pnpm --filter @bsh/degent-web e2e`).
  *
  * Builds nothing itself: run after `vite build` (the script does both via package.json). Serves
- * `vite preview` on a free port, drives the `?demo=1` flow through every screen in headless
- * Chromium at 1280 px and 400 px, fails on any console error / page error / horizontal overflow,
- * and saves full-page screenshots to docs/screenshots/<width>-<nn>-<screen>.png.
+ * `vite preview` on a free port and, in headless Chromium at 1280 px and 400 px with `?demo=1`:
+ *  1. renders every site page (home, collection, lightbox deep link, atelier, comic, manifesto,
+ *     about, how-it-works, blog, blog post, club, 404) plus the open menu, and drives the Atelier
+ *     (generate → finalize → "Mint this" → Validate with the same SHA-256), the lightbox (next,
+ *     Escape) and the Club sign-in; screenshots: docs/screenshots/site-<width>-<name>.png;
+ *  2. drives the mint at /mint through all eight screens; screenshots:
+ *     docs/screenshots/<width>-<nn>-<screen>.png.
+ * Fails on any console error, page error or horizontal page overflow.
  *
  * Browser: playwright-core (no bundled browsers). Set CHROMIUM_PATH, else /opt/pw-browsers/chromium
  * (a file, or a directory searched for chrome / headless_shell).
@@ -105,7 +110,7 @@ async function runViewport(browser, url, width) {
   };
   const h1 = (re) => page.getByRole('heading', { level: 1, name: re }).waitFor({ timeout: 15_000 });
 
-  await page.goto(`${url}/?demo=1`);
+  await page.goto(`${url}/mint?demo=1`);
   await page.getByText('DEMO', { exact: true }).waitFor();
   await page.getByText('3 waiting').waitFor();
   for (const t of ['Standard Degent', 'Large Degent', 'Full Block Degent']) await page.getByRole('heading', { level: 2, name: t }).waitFor();
@@ -164,6 +169,155 @@ async function runViewport(browser, url, width) {
   return saved;
 }
 
+
+async function newPage(browser, url, width) {
+  const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1, reducedMotion: 'reduce' });
+  await context.route(/fonts\.googleapis\.com/, (r) => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+  await context.route(/fonts\.gstatic\.com/, (r) => r.abort());
+  // Demo mode must not touch the network: fail on any request that is not the preview server.
+  const external = [];
+  await context.route(/^https?:\/\//, (r) => {
+    const u = r.request().url();
+    if (u.startsWith(url) || /fonts\.(googleapis|gstatic)\.com/.test(u)) return r.fallback();
+    external.push(u);
+    return r.abort();
+  });
+  const page = await context.newPage();
+  const problems = [];
+  page.on('console', (m) => {
+    if (m.type() === 'error') problems.push(`console.error: ${m.text()}`);
+  });
+  page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
+  return { context, page, problems, external };
+}
+
+async function fullShot(page, width, file) {
+  await page.evaluate(() => document.fonts?.ready);
+  await page.waitForTimeout(150);
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  check(overflow <= 0, `${width}px ${file}: horizontal overflow of ${overflow}px`);
+  const height = await page.evaluate(() => Math.max(document.documentElement.scrollHeight, window.innerHeight));
+  await page.setViewportSize({ width, height });
+  await page.waitForTimeout(100);
+  await page.screenshot({ path: join(shots, file) });
+  await page.setViewportSize({ width, height: 900 });
+}
+
+/** Viewport-only shot (dialogs and fixed layers: the menu, the lightbox). */
+async function viewShot(page, width, file) {
+  await page.waitForTimeout(150);
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  check(overflow <= 0, `${width}px ${file}: horizontal overflow of ${overflow}px`);
+  await page.screenshot({ path: join(shots, file) });
+}
+
+const SITE_PAGES = [
+  ['home', '/', /The Decentralized/],
+  ['collection', '/collection', /The Collection/],
+  ['atelier', '/atelier', /Dress your gentleman/],
+  ['comic', '/comic', /This is Gentlemen- The Comic/],
+  ['manifesto', '/manifesto', /Manifesto/],
+  ['about', '/about', /About/],
+  ['how-it-works', '/how-it-works', /Minting Rules/],
+  ['blog', '/blog', /Degent Chronicles/],
+  ['blog-post', '/blog/go-big-or-go-home', /Go Big or Go Home/],
+  ['club', '/club', /The Club/],
+  ['404', '/no-such-room', /members only/],
+];
+
+async function runSite(browser, url, width) {
+  const { context, page, problems, external } = await newPage(browser, url, width);
+  const saved = [];
+  const h1 = (re) => page.getByRole('heading', { level: 1, name: re }).first().waitFor({ timeout: 15_000 });
+  const shot = async (name, view = false) => {
+    const file = `site-${width}-${name}.png`;
+    await (view ? viewShot : fullShot)(page, width, file);
+    saved.push(join(shots, file));
+  };
+
+  for (const [name, path, re] of SITE_PAGES) {
+    await page.goto(`${url}${path}?demo=1`);
+    await h1(re);
+    await page.getByTestId(width >= 1100 ? 'meter-minted' : 'strip-meter-minted').waitFor();
+    if (name === 'home' || name === 'collection') await page.locator('.frame__caption').first().waitFor();
+    // lazy images: scroll through once so every visible frame has decoded before the shot
+    await page.evaluate(async () => {
+      for (let y = 0; y < document.documentElement.scrollHeight; y += 700) {
+        window.scrollTo(0, y);
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      window.scrollTo(0, 0);
+    });
+    await shot(name);
+  }
+  const minted = await page.getByTestId(width >= 1100 ? 'meter-minted' : 'strip-meter-minted').textContent();
+  check(/^4,112 \/ 10K$/.test(minted.trim()), `meter shows "${minted}" (bundled manifest expected in demo)`);
+  check(!(await page.content()).includes('4,027'), 'the hardcoded live-site count 4,027 must never render');
+
+  // Menu
+  await page.goto(`${url}/?demo=1`);
+  await h1(/The Decentralized/);
+  await page.getByRole('button', { name: 'Open menu' }).click();
+  await page.getByRole('dialog', { name: 'Site menu' }).waitFor();
+  await shot('menu', true);
+  await page.keyboard.press('Escape');
+
+  // Lightbox via deep link, then next + Escape
+  await page.goto(`${url}/collection/5?demo=1`);
+  const box = page.getByTestId('lightbox');
+  await box.waitFor();
+  await page.locator('[data-testid="lb-facts"][data-status="ok"]').waitFor({ timeout: 10_000 });
+  const fit = await page.evaluate(() => {
+    const p = document.querySelector('.lightbox__panel');
+    const r = p.getBoundingClientRect();
+    return { right: r.right, left: r.left, vw: document.documentElement.clientWidth, inner: p.scrollWidth - p.clientWidth };
+  });
+  check(fit.left >= 0 && fit.right <= fit.vw + 0.5 && fit.inner <= 0, `${width}px lightbox does not fit the viewport: ${JSON.stringify(fit)}`);
+  check((await page.title()).startsWith('Degent #5'), `per-item title, got "${await page.title()}"`);
+  await shot('lightbox', true);
+  await box.getByRole('button', { name: 'Next Degent' }).click();
+  await box.getByRole('heading', { name: 'DEGENT #6' }).waitFor();
+  check(new URL(page.url()).pathname === '/collection/6', 'next updates the deep link');
+  await page.keyboard.press('Escape');
+  check(new URL(page.url()).pathname === '/collection', 'Escape closes the lightbox');
+
+  // Atelier: generate → finalize → Mint this → Validate with the same SHA-256
+  await page.goto(`${url}/atelier?demo=1`);
+  await h1(/Dress your gentleman/);
+  await page.getByLabel('Your brief').fill('DJ at a rooftop party');
+  await page.getByRole('button', { name: 'noir' }).click();
+  await page.getByRole('button', { name: /^Generate/ }).click();
+  await page.getByTestId('candidates').waitFor({ timeout: 20_000 });
+  await page.getByRole('button', { name: 'Finalize selected' }).click();
+  await page.getByTestId('final').waitFor({ timeout: 20_000 });
+  const preview = page.getByRole('img', { name: 'Preview rendered from the exact bytes to be minted' });
+  check(await preview.evaluate((img) => img.complete && img.naturalWidth === 1024), 'finalised JPEG did not decode at 1024 px');
+  const sha = (await page.getByTestId('final-sha').textContent()).trim();
+  await shot('atelier-final');
+  await page.getByRole('button', { name: /Mint this/ }).click();
+  await h1(/Present your credentials/);
+  await page.getByRole('button', { name: 'Connect UniSat' }).click();
+  await page.getByRole('button', { name: 'Continue to Validate' }).click();
+  await h1(/inspection/);
+  const facts = (await page.getByTestId('handoff-facts').textContent()) ?? '';
+  check(facts.includes(sha), 'Validate shows the same SHA-256 the Atelier finalised');
+  await page.getByRole('button', { name: 'Submit for review' }).click();
+  await page.getByText('Approved', { exact: true }).waitFor({ timeout: 15_000 });
+  await shot('atelier-handoff-validate');
+
+  // Club sign-in
+  await page.goto(`${url}/club?demo=1`);
+  await h1(/The Club/);
+  await page.getByRole('button', { name: 'Sign in with UniSat' }).click();
+  await page.getByTestId('owned').waitFor({ timeout: 15_000 });
+  await shot('club-signed-in');
+
+  await context.close();
+  check(external.length === 0, `${width}px: demo mode made network requests:\n  ${external.join('\n  ')}`);
+  check(problems.length === 0, `${width}px: browser problems:\n  ${problems.join('\n  ')}`);
+  return saved;
+}
+
 const port = await freePort();
 const { child, url } = await startPreview(port);
 let browser;
@@ -171,8 +325,11 @@ let failed = false;
 try {
   browser = await chromium.launch({ executablePath: findChromium(), headless: true, args: ['--no-sandbox'] });
   for (const width of [1280, 400]) {
+    const site = await runSite(browser, url, width);
+    console.log(`${width}px site: ${site.length} renders OK, no console errors, no network, no horizontal overflow`);
+    for (const f of site) console.log(`  ${f.slice(root.length + 1)}`);
     const saved = await runViewport(browser, url, width);
-    console.log(`${width}px: ${saved.length} screens OK, no console errors, no horizontal overflow`);
+    console.log(`${width}px mint: ${saved.length} screens OK, no console errors, no horizontal overflow`);
     for (const f of saved) console.log(`  ${f.slice(root.length + 1)}`);
   }
 } catch (e) {

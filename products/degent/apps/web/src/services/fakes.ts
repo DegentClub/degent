@@ -484,7 +484,14 @@ export const WALLET_CATALOG: ReadonlyArray<Omit<WalletOption, 'installed'>> = [
   { id: 'leather', name: 'Leather', installUrl: 'https://leather.io/install-extension' },
   { id: 'okx', name: 'OKX Wallet', installUrl: 'https://www.okx.com/web3' },
   { id: 'magiceden', name: 'Magic Eden', installUrl: 'https://wallet.magiceden.io/download' },
+  { id: 'xcp', name: 'XCP Wallet', installUrl: 'https://chromewebstore.google.com/detail/xcp-wallet/nicpjdbehgcjbjfjkobcidnfmfpijohg' },
+  { id: 'horizon', name: 'Horizon Wallet', installUrl: 'https://chromewebstore.google.com/detail/horizon-wallet/bnmgkjlaommgappfckljlelgahnbngme' },
 ];
+
+/** Mirrors @bsh/wallet-kit `CAPABILITIES`: Horizon signs ECDSA only and cannot relay. */
+export function fakeCapabilities(id: WalletId): { broadcast: boolean; bip322: boolean } {
+  return id === 'horizon' ? { broadcast: false, bip322: false } : { broadcast: true, bip322: true };
+}
 
 export interface FakeWalletOptions {
   installed?: WalletId[];
@@ -534,6 +541,23 @@ export function createFakeWallets(log: CallLog = [], opts: FakeWalletOptions = {
           for (const { index } of req.inputsToSign) tx.signIdx(payPriv, index);
           if (req.finalize) tx.finalize();
           return { psbtBase64: base64.encode(tx.toPSBT()) };
+        },
+        capabilities: fakeCapabilities(id),
+        async signMessage(message, address, type) {
+          log.push(`wallet.signMessage:${type ?? 'default'}`);
+          if (opts.rejectSign) throw new Error('User rejected the request.');
+          const caps = fakeCapabilities(id);
+          const kind = type ?? (caps.bip322 ? 'bip322-simple' : 'ecdsa');
+          if (kind === 'bip322-simple' && !caps.bip322) throw new Error(`${entry.name} cannot sign BIP-322 messages`);
+          // Simulated signatures (demo/tests): real Schnorr / ECDSA over sha256(message), NOT the BIP-322 or
+          // BIP-137 encodings. Verification belongs to the Blockspace ID service (POST /siwb/verify).
+          const digest = sha256(enc.encode(message));
+          if (kind === 'ecdsa') {
+            if (address !== paymentAddress) throw new Error('ECDSA signing uses the payment address');
+            return base64.encode(secp256k1.sign(digest, payPriv, { prehash: false, format: 'recovered' }));
+          }
+          if (address !== session.ordinals.address) throw new Error('unknown address');
+          return base64.encode(schnorr.sign(digest, ordPriv));
         },
         async disconnect() {
           log.push('wallet.disconnect');

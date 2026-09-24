@@ -7,6 +7,8 @@ export default defineConfig({
   build: {
     target: 'es2022',
     sourcemap: true,
+    // The bundled collection snapshot (~530 KB of public on-chain data) is its own lazy chunk.
+    chunkSizeWarningLimit: 700,
   },
   test: {
     environment: 'jsdom',

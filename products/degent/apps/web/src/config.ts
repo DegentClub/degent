@@ -9,7 +9,24 @@ export interface AppConfig {
   ordContentUrl: string;
   pollIntervalMs: number;
   demo: boolean;
+  /** block.space certification API base (`GET /v1/collections/degents`). Empty = not configured. */
+  certifyUrl: string;
+  /** Atelier service base (`contracts/openapi/degent-atelier.yaml`). Empty = not configured. */
+  atelierUrl: string;
+  /** Newsletter subscription endpoint (POST JSON { name, email }). Empty = not configured. */
+  newsletterUrl: string;
+  /** Inscription id of the on-chain comic. Empty = placeholder. */
+  comicInscriptionId: string;
+  /** Pages whose final copy has shipped (`VITE_COPY_READY=manifesto,about`); others are TODO(copy). */
+  copyReady: ReadonlySet<CopyPage>;
+  /** Magic Eden collection page (the Buy button). */
+  marketplaceUrl: string;
+  social: { x: string; telegram: string; instagram: string };
+  /** Collection slug used on block.space and Magic Eden. */
+  collectionSlug: string;
 }
+
+export type CopyPage = 'manifesto' | 'about';
 
 const NETWORKS: readonly Network[] = ['mainnet', 'testnet', 'signet', 'regtest'];
 
@@ -37,6 +54,26 @@ export interface EnvLike {
   VITE_EXPLORER_URL?: string;
   VITE_ORD_URL?: string;
   VITE_POLL_MS?: string;
+  VITE_CERTIFY_URL?: string;
+  VITE_ATELIER_URL?: string;
+  VITE_NEWSLETTER_URL?: string;
+  VITE_COMIC_INSCRIPTION_ID?: string;
+  VITE_COPY_READY?: string;
+  VITE_MARKETPLACE_URL?: string;
+  VITE_X_URL?: string;
+  VITE_TELEGRAM_URL?: string;
+  VITE_INSTAGRAM_URL?: string;
+}
+
+const INSCRIPTION_ID = /^[0-9a-f]{64}i\d+$/;
+
+function parseCopyReady(v: string | undefined): Set<CopyPage> {
+  const out = new Set<CopyPage>();
+  for (const part of (v ?? '').split(',')) {
+    const p = part.trim().toLowerCase();
+    if (p === 'manifesto' || p === 'about') out.add(p);
+  }
+  return out;
 }
 
 export function readConfig(env: EnvLike, search: string): AppConfig {
@@ -53,5 +90,18 @@ export function readConfig(env: EnvLike, search: string): AppConfig {
     ordContentUrl: trimSlash(env.VITE_ORD_URL ?? 'https://ordinals.com'),
     pollIntervalMs: Number.isFinite(poll) && poll > 0 ? poll : demo ? 1200 : 5000,
     demo,
+    certifyUrl: trimSlash(env.VITE_CERTIFY_URL ?? ''),
+    atelierUrl: trimSlash(env.VITE_ATELIER_URL ?? ''),
+    newsletterUrl: (env.VITE_NEWSLETTER_URL ?? '').trim(),
+    comicInscriptionId: INSCRIPTION_ID.test(env.VITE_COMIC_INSCRIPTION_ID ?? '') ? env.VITE_COMIC_INSCRIPTION_ID! : '',
+    copyReady: parseCopyReady(env.VITE_COPY_READY),
+    marketplaceUrl: env.VITE_MARKETPLACE_URL ?? 'https://magiceden.io/ordinals/marketplace/degentclub',
+    social: {
+      x: env.VITE_X_URL ?? 'https://x.com/degentclub',
+      telegram: env.VITE_TELEGRAM_URL ?? 'https://t.me/+cneroYQ-0VpmM2Ix',
+      // No verified handle in the spec capture: shown only when configured.
+      instagram: env.VITE_INSTAGRAM_URL ?? '',
+    },
+    collectionSlug: 'degents',
   };
 }

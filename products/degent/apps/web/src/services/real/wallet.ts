@@ -1,4 +1,4 @@
-/** Real WalletService: delegates to @bsh/wallet-kit (UniSat, Xverse, Leather, OKX, Magic Eden). */
+/** Real WalletService: delegates to @bsh/wallet-kit (UniSat, Xverse, Leather, OKX, Magic Eden, XCP Wallet, Horizon). */
 import { ADAPTERS, createWalletKit, type ConnectedWallet, type WalletKit } from '@bsh/wallet-kit';
 import type { Network } from '@bsh/degent-mint-sdk';
 import type { WalletService, WalletSession } from '../types';
@@ -11,6 +11,8 @@ function toSession(w: ConnectedWallet, name: string): WalletSession {
     ordinals: { address: w.ordinals.address, publicKey: w.ordinals.publicKey, addressType: w.ordinals.addressType },
     payment: { address: w.payment.address, publicKey: w.payment.publicKey, addressType: w.payment.addressType },
     signPsbt: (psbt, req) => w.signPsbt(psbt, req),
+    signMessage: (message, address, type) => w.signMessage(message, address, type),
+    capabilities: { broadcast: w.capabilities.broadcast, bip322: w.capabilities.bip322 },
     disconnect: () => w.disconnect(),
   };
   if (w.pushTx) session.pushTx = (hex) => w.pushTx!(hex);

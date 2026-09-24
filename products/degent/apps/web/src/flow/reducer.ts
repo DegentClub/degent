@@ -6,7 +6,7 @@ import type { Order, ServiceConfig, Tier } from '@bsh/degent-mint-sdk';
 import type { FeeSnapshot, QueueSnapshot, WalletSession } from '../services/types';
 import type { RecoveryBundle } from '../lib/recovery';
 import { isLegacy, type FundingPsbt } from '../lib/funding';
-import { initialPay, initialState, STEPS, type Artwork, type FlowState, type PayPhase, type Step } from './state';
+import { initialPay, initialState, STEPS, type Artwork, type FlowState, type HandoffInfo, type PayPhase, type Step } from './state';
 
 export type FlowAction =
   | { type: 'CONFIG_LOADED'; config: ServiceConfig }
@@ -18,6 +18,7 @@ export type FlowAction =
   | { type: 'TIER_SELECTED'; tier: Tier }
   | { type: 'ARTWORK_READY'; artwork: Artwork }
   | { type: 'ARTWORK_CLEARED' }
+  | { type: 'HANDOFF'; artwork: Artwork; tier: Tier; handoff: HandoffInfo }
   | { type: 'BRIEF_TOGGLED'; id: string; checked: boolean }
   | { type: 'ORDER_UPDATED'; order: Order }
   | { type: 'FEE_RATE_SET'; feeRate: number }
@@ -57,14 +58,28 @@ export function canEnter(s: FlowState, step: Step): boolean {
   }
 }
 
+/** True once a payment may have been signed or broadcast: nothing may replace the art or the order then. */
+export function moneyMayHaveMoved(s: FlowState): boolean {
+  return s.step === 'track' || s.recovery !== null || (s.pay.phase !== 'idle' && s.pay.phase !== 'error');
+}
+
+/** Where a handoff lands: Validate when possible, else Connect (no wallet yet), else Welcome (config loading). */
+function handoffStep(s: FlowState): Step {
+  if (canEnter(s, 'validate')) return 'validate';
+  if (s.config !== null) return 'connect';
+  return 'welcome';
+}
+
 function clearOrder(s: FlowState): FlowState {
   return { ...s, order: null, commitCheck: 'unchecked', localCommitAddress: null, quoteExpired: false, pay: initialPay };
 }
 
 export function flowReducer(s: FlowState, a: FlowAction): FlowState {
   switch (a.type) {
-    case 'CONFIG_LOADED':
-      return { ...s, config: a.config };
+    case 'CONFIG_LOADED': {
+      const next = { ...s, config: a.config };
+      return next.handoff && next.artwork && next.step === 'welcome' ? { ...next, step: handoffStep(next) } : next;
+    }
     case 'SNAPSHOT_LOADED':
       return { ...s, fees: a.fees ?? s.fees, queue: a.queue ?? s.queue };
     case 'GO':
@@ -85,9 +100,14 @@ export function flowReducer(s: FlowState, a: FlowAction): FlowState {
     case 'TIER_SELECTED':
       return s.tier === a.tier ? s : { ...clearOrder(s), tier: a.tier };
     case 'ARTWORK_READY':
-      return { ...clearOrder(s), artwork: a.artwork };
+      return { ...clearOrder(s), artwork: a.artwork, handoff: null };
     case 'ARTWORK_CLEARED':
-      return { ...clearOrder(s), artwork: null };
+      return { ...clearOrder(s), artwork: null, handoff: null };
+    case 'HANDOFF': {
+      if (moneyMayHaveMoved(s)) return s;
+      const next: FlowState = { ...clearOrder(s), artwork: a.artwork, tier: a.tier, handoff: a.handoff, error: null };
+      return { ...next, step: handoffStep(next) };
+    }
     case 'BRIEF_TOGGLED':
       return { ...s, briefAck: { ...s.briefAck, [a.id]: a.checked } };
     case 'ORDER_UPDATED': {

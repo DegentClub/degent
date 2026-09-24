@@ -74,6 +74,15 @@ export function Validate() {
         lede="First the collection rules run here, on your exact bytes. Then the bytes go to the mint for an automated art review. Nothing is payable until the art is approved."
       />
 
+      {state.handoff ? (
+        <Alert tone="info" title={state.handoff.source === 'atelier' ? 'Art from the Atelier' : 'Your own art'}>
+          <span data-testid="handoff-facts">
+            {state.handoff.label} · {formatBytesExact(art.size)} · SHA-256 <span className="mono mono--wrap">{art.sha256}</span>
+          </span>
+          . These exact bytes are what gets reviewed, quoted and inscribed.
+        </Alert>
+      ) : null}
+
       <Panel title="Collection rules (checked in your browser)">
         <CheckList checks={checks} label="Local rule checks" />
         <p className="small muted">

@@ -50,6 +50,17 @@ export interface PayState {
   recoverySavedLocally: boolean;
 }
 
+/**
+ * Art handed to the mint from elsewhere on the site (the Atelier or "Bring your own art"). The
+ * bytes in `artwork` are exactly the bytes the handoff produced; the mint skips Create and lands on
+ * Validate (after Connect when no wallet is connected yet).
+ */
+export interface HandoffInfo {
+  source: 'atelier' | 'upload';
+  /** Human label, e.g. the brief or the file name. */
+  label: string;
+}
+
 export type CommitCheck = 'unchecked' | 'match' | 'mismatch';
 
 export interface FlowState {
@@ -61,6 +72,7 @@ export interface FlowState {
   wallet: WalletSession | null;
   tier: Tier;
   artwork: Artwork | null;
+  handoff: HandoffInfo | null;
   briefAck: Record<string, boolean>;
   order: Order | null;
   feeRate: number | null;
@@ -90,6 +102,7 @@ export function initialState(resumeOffer: RecoveryBundle | null = null): FlowSta
     wallet: null,
     tier: 'standard',
     artwork: null,
+    handoff: null,
     briefAck: {},
     order: null,
     feeRate: null,

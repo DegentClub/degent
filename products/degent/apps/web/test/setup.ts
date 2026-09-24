@@ -15,3 +15,6 @@ afterEach(() => {
 let n = 0;
 URL.createObjectURL = () => `blob:test/${++n}`;
 URL.revokeObjectURL = () => undefined;
+
+// jsdom does not implement scrolling.
+window.scrollTo = (() => undefined) as typeof window.scrollTo;
