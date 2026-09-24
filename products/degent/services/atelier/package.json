@@ -1,0 +1,29 @@
+{
+  "name": "@bsh/degent-atelier",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p .",
+    "dev": "ATELIER_MODE=${ATELIER_MODE:-fake} tsx watch src/main.ts",
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
+    "@bsh/edge": "workspace:*",
+    "@hono/node-server": "^2.1.1",
+    "@noble/hashes": "^2.4.0",
+    "hono": "^4.13.8",
+    "sharp": "^0.34.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5",
+    "vitest": "^5.0.1",
+    "yaml": "^2.9.1"
+  }
+}

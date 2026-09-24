@@ -1,0 +1,464 @@
+openapi: 3.1.0
+info:
+  title: degent.club Atelier API
+  version: 0.1.0
+  summary: Generate a Degent that meets the collection rules by construction, then hand the exact bytes to the mint.
+  description: |
+    Implemented by `@bsh/degent-atelier` (products/degent/services/atelier). Replaces the old flow where
+    people made their art in ChatGPT or Canva and hoped it passed review.
+
+    Flow: `POST /v1/sessions` (anonymous bearer token) -> `POST /v1/generate` (async job) -> poll
+    `GET /v1/jobs/{id}` until `done` -> pick a candidate -> `POST /v1/candidates/{id}/finalize`
+    (frame + placard + tier-sized JPEG) -> `GET /v1/content/{sha256}` for the exact bytes, which the mint
+    front end PUTs unchanged to the mint (`PUT /v1/orders/{id}/content` in `degent-mint.yaml`).
+    People who bring their own art use `POST /v1/upload` instead, with or without the frame.
+
+    Collection rules produced by construction: square JPEG; Pepe in a tuxedo with a bow tie (prompt
+    scaffold plus optional vision review); a gold frame with a placard saying `DEGEN`, `DEGENT` or `REGEN`
+    (drawn by the service, never by the model); size inside the chosen tier.
+
+    Tiers (`Tier`) are by CONTENT BYTES and match `degent-mint.yaml`: `standard` 200,000-400,000,
+    `large` 400,001-3,499,999, `fullblock` 3,500,000-3,900,000.
+
+    Conventions: every error is `{ "error": { "code", "message", "requestId", "details"? } }`. Browser
+    calls are subject to a CORS allowlist (default deny). Requests are rate limited per client IP, and
+    authenticated mutating calls also per session (`RateLimit-*` headers; 429 carries `Retry-After`).
+    Each session has a daily image quota; the service has a global daily provider cost cap (503
+    `cost_cap_reached` when spent). Provider errors are never passed through verbatim.
+  license: { name: Proprietary, identifier: LicenseRef-Proprietary }
+servers:
+  - url: https://atelier.degent.club
+    description: production
+  - url: http://127.0.0.1:8788
+    description: local dev (fake provider unless a key is set)
+tags:
+  - name: service
+  - name: sessions
+  - name: generation
+  - name: content
+security: []
+paths:
+  /v1/health:
+    get:
+      tags: [service]
+      operationId: getHealth
+      summary: Liveness, provider mode (fake or live), queue depth and today's spend against the cap. Always 200.
+      responses:
+        '200':
+          description: Health report
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+  /v1/config:
+    get:
+      tags: [service]
+      operationId: getConfig
+      summary: Tiers, placard words and limits the front end should show.
+      responses:
+        '200':
+          description: Configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConfigResponse' }
+  /v1/sessions:
+    post:
+      tags: [sessions]
+      operationId: createSession
+      summary: Create an anonymous session. The token is shown once; only its SHA-256 is stored.
+      description: Rate limited per client IP, and at most `SESSIONS_PER_IP_PER_DAY` sessions per IP per UTC day.
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionResponse' }
+        '429': { $ref: '#/components/responses/Error' }
+  /v1/generate:
+    post:
+      tags: [generation]
+      operationId: generate
+      summary: Queue a generation job (asynchronous). The quota and cost cap are checked and the cost reserved before queueing.
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenerateRequest' }
+      responses:
+        '202':
+          description: Job queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerateAccepted' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/jobs/{id}:
+    get:
+      tags: [generation]
+      operationId: getJob
+      summary: Job status and, once `done`, its candidates. Only the session that created the job can read it.
+      security: [{ session: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /v1/candidates/{id}/preview:
+    get:
+      tags: [generation]
+      operationId: getCandidatePreview
+      summary: 512 px JPEG preview of a candidate (unframed; NOT the bytes to mint). Addressed by an unguessable id, so usable in <img>.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Preview JPEG
+          content:
+            image/jpeg:
+              schema: { type: string, contentMediaType: image/jpeg }
+        '404': { $ref: '#/components/responses/Error' }
+  /v1/candidates/{id}/finalize:
+    post:
+      tags: [generation]
+      operationId: finalizeCandidate
+      summary: Frame the candidate, add the placard and encode a JPEG inside the tier's byte range. Deterministic for the same input.
+      security: [{ session: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FinalizeRequest' }
+      responses:
+        '200':
+          description: Finalised, stored under its SHA-256
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinalizeResponse' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422':
+          description: Invalid request, the tier range cannot be reached from this source (`range_unreachable`), or the output failed review (`review_rejected`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /v1/upload:
+    post:
+      tags: [generation]
+      operationId: upload
+      summary: Bring your own art (<= 8 MiB). Runs the same compositor (frame optional) and review.
+      description: |
+        Either `application/octet-stream` (or `image/*`) with `tier`, `placard`, `frame` as query parameters,
+        or `multipart/form-data` with a `file` part and the same fields. `frame` defaults to `true`, and then
+        `placard` is required. With `frame=false`, an upload that is already a square JPEG inside the tier is
+        stored byte-for-byte (`transformed: false`); otherwise it is cropped to a square and re-encoded to fit the tier.
+      security: [{ session: [] }]
+      parameters:
+        - { name: tier, in: query, required: false, schema: { $ref: '#/components/schemas/Tier' } }
+        - { name: placard, in: query, required: false, schema: { $ref: '#/components/schemas/Placard' } }
+        - { name: frame, in: query, required: false, schema: { type: string, enum: ['true', 'false', '1', '0'] } }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, contentMediaType: application/octet-stream, maxLength: 8388608 }
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, tier]
+              properties:
+                file: { type: string, contentMediaType: application/octet-stream }
+                tier: { $ref: '#/components/schemas/Tier' }
+                placard: { $ref: '#/components/schemas/Placard' }
+                frame: { type: string, enum: ['true', 'false', '1', '0'] }
+      responses:
+        '200':
+          description: Processed and stored under its SHA-256
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /v1/content/{sha256}:
+    get:
+      tags: [content]
+      operationId: getContent
+      summary: The exact finalised bytes, content addressed (immutable). PUT them to the mint unchanged.
+      parameters:
+        - name: sha256
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[0-9a-f]{64}$' }
+      responses:
+        '200':
+          description: JPEG bytes whose SHA-256 equals the path parameter
+          headers:
+            ETag: { schema: { type: string } }
+            Content-Length: { schema: { type: integer } }
+          content:
+            image/jpeg:
+              schema: { type: string, contentMediaType: image/jpeg }
+        '404': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    session:
+      type: http
+      scheme: bearer
+      description: Token returned by `POST /v1/sessions` (`atl_...`).
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z0-9_-]{8,64}$' }
+  responses:
+    Error:
+      description: Structured error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Tier:
+      type: string
+      enum: [standard, large, fullblock]
+    Placard:
+      type: string
+      enum: [DEGEN, DEGENT, REGEN]
+    ErrorCode:
+      type: string
+      description: Service codes plus the ones @bsh/edge emits (rate_limited, payload_too_large, bad_request, cors_origin_denied, not_found, internal_error, method_not_allowed).
+      enum:
+        - validation_failed
+        - unauthorized
+        - not_found
+        - quota_exceeded
+        - cost_cap_reached
+        - job_failed
+        - unsupported_media_type
+        - payload_too_large
+        - range_unreachable
+        - provider_unavailable
+        - review_rejected
+        - rate_limited
+        - bad_request
+        - cors_origin_denied
+        - method_not_allowed
+        - internal_error
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, requestId]
+          properties:
+            code: { $ref: '#/components/schemas/ErrorCode' }
+            message: { type: string }
+            requestId: { type: [string, 'null'] }
+            details: {}
+    Check:
+      type: object
+      additionalProperties: false
+      required: [id, ok, detail]
+      properties:
+        id: { type: string }
+        ok: { type: boolean }
+        detail: { type: string }
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, provider, queueDepth, spentTodayCents, dailyCostCapCents, checks]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        provider:
+          type: object
+          additionalProperties: false
+          required: [name, mode]
+          properties:
+            name: { type: string, description: 'e.g. fake, openai:gpt-image-1, http:stability' }
+            mode: { type: string, enum: [fake, live], description: '`fake` = no provider key configured; candidates are procedural placeholders.' }
+        queueDepth: { type: integer, minimum: 0 }
+        spentTodayCents: { type: integer, minimum: 0 }
+        dailyCostCapCents: { type: integer, minimum: 0 }
+        checks: { type: array, items: { $ref: '#/components/schemas/Check' } }
+    TierRange:
+      type: object
+      additionalProperties: false
+      required: [tier, label, minBytes, maxBytes]
+      properties:
+        tier: { $ref: '#/components/schemas/Tier' }
+        label: { type: string }
+        minBytes: { type: integer }
+        maxBytes: { type: integer }
+    ConfigResponse:
+      type: object
+      additionalProperties: false
+      required: [tiers, placards, maxVariations, maxUploadBytes, sessionDailyImages]
+      properties:
+        tiers: { type: array, items: { $ref: '#/components/schemas/TierRange' } }
+        placards: { type: array, items: { $ref: '#/components/schemas/Placard' } }
+        maxVariations: { type: integer }
+        maxUploadBytes: { type: integer }
+        sessionDailyImages: { type: integer }
+    Quota:
+      type: object
+      additionalProperties: false
+      required: [dailyImages, usedToday]
+      properties:
+        dailyImages: { type: integer, minimum: 0 }
+        usedToday: { type: integer, minimum: 0 }
+    SessionResponse:
+      type: object
+      additionalProperties: false
+      required: [sessionId, token, expiresAt, quota]
+      properties:
+        sessionId: { type: string }
+        token: { type: string, pattern: '^atl_[A-Za-z0-9_-]{40,50}$', description: 'Shown once. Send as `Authorization: Bearer <token>`.' }
+        expiresAt: { type: string, format: date-time }
+        quota: { $ref: '#/components/schemas/Quota' }
+    GenerateRequest:
+      type: object
+      additionalProperties: false
+      required: [brief, placard, tier]
+      properties:
+        brief: { type: string, minLength: 3, maxLength: 200, description: 'Short style brief, e.g. "DJ at a rooftop party", "pharaoh". Links and banned terms are refused.' }
+        palette: { type: [string, 'null'], maxLength: 80 }
+        mood: { type: [string, 'null'], maxLength: 60 }
+        placard: { $ref: '#/components/schemas/Placard' }
+        tier: { $ref: '#/components/schemas/Tier' }
+        variations: { type: integer, minimum: 1, maximum: 4, default: 1 }
+        seed: { type: integer, minimum: 0, maximum: 4294967295, description: Determinism hint; honoured by some providers only. }
+    GenerateAccepted:
+      type: object
+      additionalProperties: false
+      required: [jobId, status, statusUrl, quota]
+      properties:
+        jobId: { type: string }
+        status: { type: string, enum: [queued] }
+        statusUrl: { type: string }
+        quota: { $ref: '#/components/schemas/Quota' }
+    ReviewCheck:
+      type: object
+      additionalProperties: false
+      required: [id, passed, detail]
+      properties:
+        id: { type: string }
+        passed: { type: boolean }
+        detail: { type: string }
+    ReviewResult:
+      type: object
+      additionalProperties: false
+      required: [approved, reasons, checks]
+      properties:
+        approved: { type: boolean }
+        reasons: { type: array, items: { type: string } }
+        checks: { type: array, items: { $ref: '#/components/schemas/ReviewCheck' } }
+    Candidate:
+      type: object
+      additionalProperties: false
+      required: [id, previewUrl, width, height, providerRef, review]
+      properties:
+        id: { type: string }
+        previewUrl: { type: string }
+        width: { type: integer }
+        height: { type: integer }
+        providerRef: { type: string }
+        review:
+          description: Vision review of the raw candidate when configured, else null.
+          oneOf:
+            - { $ref: '#/components/schemas/ReviewResult' }
+            - { type: 'null' }
+    Job:
+      type: object
+      additionalProperties: false
+      required: [id, status, tier, placard, brief, variations, provider, createdAt, startedAt, finishedAt, error, candidates]
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [queued, running, done, failed] }
+        tier: { $ref: '#/components/schemas/Tier' }
+        placard: { $ref: '#/components/schemas/Placard' }
+        brief: { type: string }
+        variations: { type: integer }
+        provider: { type: string }
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: [string, 'null'], format: date-time }
+        finishedAt: { type: [string, 'null'], format: date-time }
+        error:
+          oneOf:
+            - type: 'null'
+            - type: object
+              additionalProperties: false
+              required: [code, message]
+              properties:
+                code: { type: string, enum: [provider_unavailable, job_failed] }
+                message: { type: string }
+        candidates: { type: array, items: { $ref: '#/components/schemas/Candidate' } }
+    FinalizeRequest:
+      type: object
+      additionalProperties: false
+      required: [tier, placard]
+      properties:
+        tier: { $ref: '#/components/schemas/Tier' }
+        placard: { $ref: '#/components/schemas/Placard' }
+    Encoding:
+      type: object
+      additionalProperties: false
+      required: [quality, canvas, grain, attempts]
+      description: How the byte range was hit (JPEG quality, canvas edge in px, grain amplitude, encoder attempts).
+      properties:
+        quality: { type: integer, minimum: 1, maximum: 100 }
+        canvas: { type: integer }
+        grain: { type: integer, minimum: 0 }
+        attempts: { type: integer, minimum: 1 }
+    FinalizeResponse:
+      type: object
+      additionalProperties: false
+      required: [candidateId, tier, placard, contentSha256, contentLength, contentType, width, height, encoding, review, downloadUrl]
+      properties:
+        candidateId: { type: string }
+        tier: { $ref: '#/components/schemas/Tier' }
+        placard: { $ref: '#/components/schemas/Placard' }
+        contentSha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        contentLength: { type: integer }
+        contentType: { type: string, enum: [image/jpeg] }
+        width: { type: integer }
+        height: { type: integer }
+        encoding: { $ref: '#/components/schemas/Encoding' }
+        review: { $ref: '#/components/schemas/ReviewResult' }
+        downloadUrl: { type: string }
+    UploadResponse:
+      type: object
+      additionalProperties: false
+      required: [uploadId, framed, transformed, tier, placard, contentSha256, contentLength, contentType, width, height, review, downloadUrl]
+      properties:
+        uploadId: { type: string }
+        framed: { type: boolean }
+        transformed: { type: boolean, description: False when the upload was already compliant and stored byte-for-byte. }
+        tier: { $ref: '#/components/schemas/Tier' }
+        placard: { oneOf: [{ $ref: '#/components/schemas/Placard' }, { type: 'null' }] }
+        contentSha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        contentLength: { type: integer }
+        contentType: { type: string, enum: [image/jpeg] }
+        width: { type: integer }
+        height: { type: integer }
+        review: { $ref: '#/components/schemas/ReviewResult' }
+        downloadUrl: { type: string }

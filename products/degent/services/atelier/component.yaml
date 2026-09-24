@@ -1,0 +1,17 @@
+name: degent-atelier
+package: "@bsh/degent-atelier"
+kind: service
+product: degent
+owner: team-degent
+summary: The Atelier - generates Degents that meet the minting rules by construction (prompt scaffold, gold frame + placard, tier-sized JPEG) and hands the exact bytes to the mint.
+lifecycle: experimental
+depends_on: ["@bsh/edge"]
+provides: [contracts/openapi/degent-atelier.yaml]
+consumes: [contracts/openapi/degent-mint.yaml]
+stores: ["sqlite:degent_atelier"]
+secrets: ["services/degent-atelier/openai-api-key", "services/degent-atelier/http-provider-api-key", "services/degent-atelier/vision-review-api-key"]
+env_schema: ./env.schema.json
+slo: { availability: "99.5", p95_ms: 500 }
+runbook: ./RUNBOOK.md
+docs: ./README.md
+commands: { dev: dev, test: test, typecheck: typecheck }
