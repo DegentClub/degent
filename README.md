@@ -1,5 +1,14 @@
 # degent.club: own
 
+<!-- Three doors. TODO(domain): confirm blockspace.dev (portal) and scribb.it before launch. -->
+**Learn** [blockspace.dev](https://blockspace.dev) · **Build** [block.space](https://block.space) · **Mint** [scribb.it](https://scribb.it) · [degent.club](https://degent.club)
+
+[![CI](https://github.com/DegentClub/degent/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/DegentClub/degent/actions/workflows/ci.yml)
+[![Licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](LICENSE)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/DegentClub/degent/badge)](https://scorecard.dev/viewer/?uri=github.com/DegentClub/degent)
+<!-- TODO(npm): replace with https://img.shields.io/npm/v/@bsh/<package> badges once packages are published. -->
+[![npm: not yet published](https://img.shields.io/badge/npm-not%20yet%20published-lightgrey.svg)](#licence)
+
 **degent.club** is the Decentralized Gentlemen Club: a collection of 4,112 inscriptions and the automated,
 non-custodial mint that lets anyone add a Degent, up to a block-sized one, from the website with no human in the
 loop. This repository holds the product; the shared platform comes from
@@ -74,3 +83,19 @@ that imports follow `depends_on`; `.github/CODEOWNERS` is generated from manifes
 [ADR-0001](https://github.com/DegentClub/scribbit/blob/claude/wizardly-hypatia-5l6s56/docs/adr/0001-monorepo-structure.md),
 [ADR-0003](https://github.com/DegentClub/scribbit/blob/claude/wizardly-hypatia-5l6s56/docs/adr/0003-machine-readable-catalog.md),
 [ADR-0004](https://github.com/DegentClub/scribbit/blob/claude/wizardly-hypatia-5l6s56/docs/adr/0004-repo-split.md).
+
+## Licence
+
+- **Code:** [Apache License 2.0](LICENSE). Copyright 2026 Blockspace Holdings and contributors; attributions in
+  [NOTICE](NOTICE). Every package declares `"license": "Apache-2.0"`.
+- **Documentation and specifications** (`docs/`, prose Markdown): [CC BY 4.0](LICENSE-docs).
+- **Names and logos** (Blockspace Holdings, block.space, scribb.it, degent.club) are trademarks and are not licensed;
+  see [TRADEMARKS.md](TRADEMARKS.md).
+- **Not licensed (all rights reserved):** the Degent artwork, the comic, the collection's images, the
+  "degent.club" / "Decentralized Gentlemen Club" names and logo, and the gold frame and placard design. See
+  [ART-AND-TRADEMARKS.md](ART-AND-TRADEMARKS.md).
+- **The platform submodule** (`deps/scribbit`) carries its own LICENSE and NOTICE (Apache-2.0).
+- **Forks** of third-party projects that we maintain elsewhere keep their upstream licences.
+
+Contributions are accepted under the same licences with a DCO sign-off: see [CONTRIBUTING.md](CONTRIBUTING.md).
+Security issues: [SECURITY.md](SECURITY.md). Help: [SUPPORT.md](SUPPORT.md). Governance: [GOVERNANCE.md](GOVERNANCE.md).

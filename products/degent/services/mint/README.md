@@ -13,6 +13,20 @@ Contracts: [`contracts/openapi/degent-mint.yaml`](../../../../contracts/openapi/
 types and the typed client: [`@bsh/degent-mint-sdk`](../../packages/mint-sdk/README.md). All weight, fee,
 commit-address and PSBT maths: `@bsh/inscription`.
 
+## Quickstart
+
+Regtest, in memory, no chain needed:
+
+```bash
+pnpm install
+pnpm --filter @bsh/degent-mint dev             # NETWORK=regtest, http://127.0.0.1:8787
+curl -s localhost:8787/v1/health               # {"status":"degraded","network":"regtest",...}: no chain or parent yet
+curl -s localhost:8787/v1/config               # tiers, content types, limits
+```
+
+`degraded` is expected until a chain backend and the parent UTXO are configured; "Run locally" below wires a local
+regtest esplora and ord. Clients use `@bsh/degent-mint-sdk`'s `createMintClient`.
+
 ## Architecture (ports and adapters)
 
 ```mermaid

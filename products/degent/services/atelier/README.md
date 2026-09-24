@@ -9,6 +9,19 @@ Contract: [`contracts/openapi/degent-atelier.yaml`](../../../../contracts/openap
 Consumer handoff: the bytes from `GET /v1/content/{sha256}` are PUT unchanged to the mint
 (`PUT /v1/orders/{id}/content` in [`degent-mint.yaml`](../../../../contracts/openapi/degent-mint.yaml)).
 
+## Quickstart
+
+Fake mode needs no provider key and generates procedural placeholder art:
+
+```bash
+pnpm install
+pnpm --filter @bsh/degent-atelier dev          # http://127.0.0.1:8788, in-memory
+curl -s localhost:8788/v1/health               # {"status":"ok","provider":{"name":"fake","mode":"fake"},...}
+curl -s -XPOST localhost:8788/v1/sessions      # {"sessionId":...,"token":"atl_...",...}
+```
+
+Then follow "Run locally" below to generate, finalize and download a Degent's exact bytes.
+
 ## The rules and who guarantees each
 
 | Minting Rule (site spec) | How the Atelier guarantees it |

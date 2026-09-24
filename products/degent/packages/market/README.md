@@ -7,6 +7,40 @@ party ever holds another party's key, and nothing here suppresses wallet warning
 Pure TypeScript on `@scure/btc-signer` 2.x and `@noble/curves` 2.x; runs in the browser and Node.
 Design context: [ADR-0005](../../../../docs/adr/0005-strict-reveal-and-tiers.md) §5.
 
+## Quickstart
+
+From another package in this repository: add `"@bsh/degent-market": "workspace:*"` to `dependencies` and `degent-market` to `depends_on` in your `component.yaml`. (Not yet published to npm.)
+
+```ts
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { p2tr } from '@scure/btc-signer';
+import { buildSellerListing, inscriptionDestination, verifyListing } from '@bsh/degent-market';
+
+// Why the layout matters: ordinal sats move first-in, first-out.
+const audited = inscriptionDestination(
+  [{ value: 546, inscriptionOffset: 0 }, { value: 60_000 }],            // [inscription, buyer payment]
+  [{ value: 50_546 }, { value: 546 }, { value: 9_000 }], 454,            // [seller payment, buyer, change]
+);
+const padded = inscriptionDestination(
+  [{ value: 600 }, { value: 600 }, { value: 546, inscriptionOffset: 0 }, { value: 60_000 }], // [pad, pad, inscription, payment]
+  [{ value: 1_200 }, { value: 546 }, { value: 50_000 }, { value: 9_000 }], 1_000,          // [padding, buyer, seller, change]
+);
+console.log(audited, padded); // output 0 (the seller keeps it!) vs output 1 (the buyer receives it)
+
+// Seller: sign one input (SIGHASH_SINGLE|ANYONECANPAY) over the inscription UTXO; anyone can verify the listing.
+const sellerKey = schnorr.utils.randomSecretKey(); // stays in the seller's wallet in real use
+const listing = buildSellerListing({
+  network: 'signet',
+  inscription: { txid: 'ab'.repeat(32), vout: 0, value: 546n, script: p2tr(schnorr.getPublicKey(sellerKey)).script },
+  sellerPrivkey: sellerKey,
+  sellerReceiveAddress: 'tb1pqqqqp399et2xygdj5xreqhjjvcmzhxw4aywxecjdzew6hylgvsesf3hn0c',
+  priceSats: 50_000n,
+});
+console.log(verifyListing(listing)); // { ok: true }; buyers then call buildPurchase(...) and finalizePurchase(...)
+```
+
+Runs as is with `tsx` (Node 22); the comments show its output.
+
 ## The audited bug, and the fix
 
 Ordinal theory assigns sats **first-in, first-out**: the input sats are concatenated in input order

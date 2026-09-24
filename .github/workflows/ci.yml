@@ -22,14 +22,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           fetch-depth: 0 # full history so "...[origin/main]" can diff against the base
           submodules: recursive # deps/scribbit: the platform + catalog tool at the pinned commit
 
-      - uses: pnpm/action-setup@v4 # version comes from package.json "packageManager"
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0; pnpm version comes from package.json "packageManager"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
@@ -46,7 +47,17 @@ jobs:
         run: pnpm catalog --check
 
       - name: CODEOWNERS is up to date
-        run: pnpm --filter @bsh/catalog-tool run codeowners --check
+        run: pnpm --filter @bsh/catalog-tool run codeowners --check --org DegentClub
+
+      - name: Open-source readiness (licence, community files, security workflows, package READMEs)
+        # `readiness` ships with the catalog tool in DegentClub/scribbit. Until deps/scribbit is bumped to a commit
+        # that has it, this step warns instead of failing; after the bump it is a hard gate.
+        run: |
+          if grep -q '"readiness"' deps/scribbit/tools/catalog/package.json; then
+            pnpm --filter @bsh/catalog-tool run readiness
+          else
+            echo "::warning::deps/scribbit predates the catalog tool's readiness command; bump the pin to enable this gate"
+          fi
 
       - name: No breaking OpenAPI changes (oasdiff)
         if: github.event_name == 'pull_request'

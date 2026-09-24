@@ -9,6 +9,34 @@ Design: [ADR-0002](../../../../docs/adr/0002-degent-mint-architecture.md), amend
 Pure TypeScript, no Node APIs: runs in the browser and in Node 22. Only dependency: `@noble/hashes`.
 Transaction, weight and fee maths are **not** here; they live in `@bsh/inscription`.
 
+## Quickstart
+
+From another package in this repository: add `"@bsh/degent-mint-sdk": "workspace:*"` to `dependencies` and `degent-mint-sdk` to `depends_on` in your `component.yaml`. (Not yet published to npm.)
+
+```ts
+import { ApiError, createMintClient, formatSats, laneForWeight, tierForSize, validateContentMeta } from '@bsh/degent-mint-sdk';
+
+// The same rules the service enforces, computed before anything is uploaded.
+console.log(tierForSize(250_000)?.tier, laneForWeight(403_285), formatSats(2_000_546)); // standard block 2,000,546 sats
+const v = validateContentMeta({ contentType: 'image/webp', contentLength: 250_000, width: 1024, height: 1024, tier: 'standard' });
+console.log(v.ok, v.reasons); // true []
+
+// Typed client for contracts/openapi/degent-mint.yaml (fetch is injectable; here a stub answers /v1/health).
+const mint = createMintClient({
+  baseUrl: 'https://mint.degent.club',
+  fetch: async () => Response.json({ status: 'ok', network: 'signet', version: '0.1.0', time: new Date().toISOString(), checks: {} }),
+});
+try {
+  console.log((await mint.health()).status); // 'ok'
+} catch (e) {
+  if (e instanceof ApiError) console.log(e.status, e.code); // non-2xx and network failures
+  else throw e;
+}
+```
+
+Runs as is with `tsx` (Node 22); the comments show its output. Without the stub `fetch`, the client talks to the real service (`pnpm --filter @bsh/degent-mint dev`
+serves it on :8787).
+
 ## Rules (`rules.ts`)
 
 Tiers are a product decision on **content bytes**; lanes are transport, decided by **reveal weight**

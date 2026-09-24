@@ -1,0 +1,25 @@
+degent (DegentClub/degent): degent.club
+Copyright 2026 Blockspace Holdings and contributors
+
+This product's source code is licensed under the Apache License, Version 2.0
+(see LICENSE). Documentation and specifications (docs/ and prose Markdown) are
+licensed under Creative Commons Attribution 4.0 International (see
+LICENSE-docs).
+
+EXCLUDED MATERIAL (all rights reserved): the Degent artwork, the comic, the
+collection's images, the "degent.club" and "Decentralized Gentlemen Club"
+names and logo, and the gold frame and placard design are NOT licensed under
+either licence, even where they appear in, or are produced by, files in this
+repository. See ART-AND-TRADEMARKS.md and TRADEMARKS.md.
+
+-------------------------------------------------------------------------------
+Third-party and vendored material
+-------------------------------------------------------------------------------
+
+deps/scribbit (DegentClub/scribbit)
+  Git submodule, not part of this repository's tree. It carries its own
+  LICENSE and NOTICE (Apache-2.0, Copyright 2026 Blockspace Holdings and
+  contributors, including portions derived from BitcoinCounters/counters.fun).
+
+Dependencies installed by the package manager (node_modules) are not
+distributed in this repository and keep their own licences.
