@@ -5,6 +5,8 @@ the marketplace front end; see [`../../docs/site-spec.md`](../../docs/site-spec.
 collection gallery, the Atelier, the comic, the blog, the club, and the automated, non-custodial **mint at
 `/mint`** (ADR-0002, amended by [ADR-0005](../../../../docs/adr/0005-strict-reveal-and-tiers.md)).
 
+## Quickstart
+
 ```bash
 pnpm --filter @bsh/degent-web dev        # http://localhost:5173  (add ?demo=1: no network, everything simulated)
 pnpm --filter @bsh/degent-web test       # vitest + testing-library (jsdom)

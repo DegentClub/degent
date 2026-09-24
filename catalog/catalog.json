@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-24T01:14:33.165Z",
+  "generatedAt": "2026-09-24T01:23:57.033Z",
   "schema": "schemas/component.schema.json",
   "components": [
     {
@@ -23,6 +23,7 @@
         "boundaries": "tsx src/cli.ts boundaries",
         "catalog": "tsx src/cli.ts catalog",
         "codeowners": "tsx src/cli.ts codeowners",
+        "readiness": "tsx src/cli.ts readiness",
         "test": "vitest run",
         "typecheck": "tsc --noEmit -p .",
         "validate": "tsx src/cli.ts validate"
@@ -33,7 +34,7 @@
       "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "9077f8185adcd7713fdba0bb63d266865c88c6e9",
         "root": "deps/scribbit"
       }
     },
@@ -276,7 +277,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "9077f8185adcd7713fdba0bb63d266865c88c6e9",
         "root": "deps/scribbit"
       }
     },
@@ -313,7 +314,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "9077f8185adcd7713fdba0bb63d266865c88c6e9",
         "root": "deps/scribbit"
       }
     },
@@ -346,7 +347,7 @@
       "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "9077f8185adcd7713fdba0bb63d266865c88c6e9",
         "root": "deps/scribbit"
       }
     },
@@ -379,7 +380,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "9077f8185adcd7713fdba0bb63d266865c88c6e9",
         "root": "deps/scribbit"
       }
     },
@@ -440,7 +441,7 @@
       "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "9077f8185adcd7713fdba0bb63d266865c88c6e9",
         "root": "deps/scribbit"
       }
     },
@@ -472,7 +473,7 @@
       "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "9077f8185adcd7713fdba0bb63d266865c88c6e9",
         "root": "deps/scribbit"
       }
     },
@@ -525,7 +526,7 @@
       "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "9077f8185adcd7713fdba0bb63d266865c88c6e9",
         "root": "deps/scribbit"
       }
     },
@@ -560,7 +561,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "9077f8185adcd7713fdba0bb63d266865c88c6e9",
         "root": "deps/scribbit"
       }
     }
