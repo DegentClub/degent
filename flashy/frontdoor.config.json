@@ -1,0 +1,68 @@
+{
+  "property": "degent-club",
+  "org": "blockspace-holdings",
+  "voice": "What do you want to make, mint or build with the Club?",
+  "lanes": [
+    {
+      "id": "integrate",
+      "question": "What are you building on the mint or the Studio, and what is missing?"
+    },
+    {
+      "id": "partnership",
+      "question": "What would you bring to the Club, and what do you need from the house?"
+    },
+    {
+      "id": "machine",
+      "question": "Who delegated this authority, and can the chain be verified?",
+      "minRung": 1
+    },
+    {
+      "id": "general"
+    }
+  ],
+  "rungs": [
+    {
+      "n": 0,
+      "id": "open",
+      "name": "Open",
+      "did": "You sent a message",
+      "detail": "The ordinary form. No account, no artifact, no integration.",
+      "cost": "Two minutes",
+      "owed": "We read everything. We do not promise a reply, and we say so here rather than letting silence say it for us.",
+      "sla": "No SLA — and we say so"
+    },
+    {
+      "n": 1,
+      "id": "identified",
+      "name": "Identified",
+      "did": "You published a charter",
+      "detail": "An AAO charter at your own domain, at /flashyos.roles.json. You paste a domain; we fetch and verify it.",
+      "cost": "About twenty minutes",
+      "owed": "A reply within five business days from a named person, not an alias. Your charter is read before the meeting, so the meeting starts further along.",
+      "sla": "Five business days · a named human"
+    },
+    {
+      "n": 2,
+      "id": "connected",
+      "name": "Connected",
+      "did": "You are in the mesh",
+      "detail": "A directory fragment we can merge, and keys we can verify: an Ed25519 key your documents are signed with, and a BIP340 key bound to it.",
+      "cost": "An afternoon",
+      "owed": "A call, and your record in our directory: we cite your fragment and you can cite ours.",
+      "sla": "A call · a directory entry"
+    },
+    {
+      "n": 3,
+      "id": "integrated",
+      "name": "Integrated",
+      "did": "Your agent minted a Degent, or your artists hang in the Studio",
+      "detail": "An order your agent placed through the mint or the scribb.it gateway, paid from its own wallet and delivered; or an artist of yours approved and minted in the Open Studio. Running, not announced.",
+      "cost": "Real engineering",
+      "owed": "Diligence begins. You are in the pipeline with a decision date rather than a maybe, and a no comes with the reason in writing.",
+      "sla": "Diligence · a decision date · a reasoned no"
+    }
+  ],
+  "endpoint": "https://degent.club/frontdoor",
+  "ladder": "https://degent.club/engage/",
+  "updated": "2026-09-24"
+}

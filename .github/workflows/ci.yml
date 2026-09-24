@@ -42,6 +42,17 @@ jobs:
       - name: Enforce import boundaries
         run: pnpm lint:boundaries
 
+      # flashy/public/** (the FlashyOS well-known files this repo publishes) is generated from
+      # flashy/charter.json, frontdoor.config.json and directory.config.json by @bsh/mesh (from the
+      # pinned platform). A diff after re-emitting means someone edited the output instead of its source.
+      - name: FlashyOS well-known files are generated from their sources
+        run: |
+          pnpm mesh:emit
+          git diff --exit-code -- flashy/
+
+      - name: FlashyOS well-known files conform
+        run: pnpm mesh:check
+
       - name: Catalog is up to date
         run: pnpm catalog --check
 

@@ -41,6 +41,7 @@ deps/scribbit/                     SUBMODULE: the platform (platform/*), catalog
 catalog/                           GENERATED catalog.json + CATALOG.md (platform components listed as external)
 docs/adr/                          ADR-0002 (mint architecture); platform ADRs are in deps/scribbit/docs/adr/
 docs/open-studio-plan.md           the Open Studio engineering plan (approved milestone)
+flashy/                            degent.club's FlashyOS charter, front door and directory (generated well-known files in flashy/public)
 roadmap.json                       machine-readable plan status; `pnpm roadmap:check` validates it
 schemas/component.schema.json      copy of the platform's manifest schema (refresh on pin bumps)
 ```

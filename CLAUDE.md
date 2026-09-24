@@ -17,6 +17,7 @@ and the catalog tool come from `DegentClub/scribbit`, vendored as a git submodul
 | `catalog/catalog.json` | GENERATED index of every component, platform ones marked `external` (`pnpm catalog`). Query this before grepping |
 | `docs/adr/` | ADR-0002 (mint architecture). Platform ADRs: `deps/scribbit/docs/adr/`. Numbering is global across the three repos |
 | `docs/open-studio-plan.md` | The Open Studio engineering plan (approved milestone): phases, contracts, code paths, tests, exit criteria |
+| `flashy/` | degent.club's FlashyOS AAO accountability files: charter, front door and directory sources, generated well-known files (`pnpm mesh:emit`, `pnpm mesh:check`; platform ADR-0010) |
 | `roadmap.json` | Machine-readable status of every plan item, validated by `pnpm roadmap:check` (schema in `schemas/roadmap.schema.json`) |
 | `schemas/component.schema.json` | Copy of the platform's manifest schema; refresh it when bumping the pin |
 

@@ -1,0 +1,126 @@
+{
+  "x-comment": [
+    "The AAO 0.1 charter of degent.club, the Decentralized Gentlemen Club. Source of truth for",
+    "flashy/public/flashyos.roles.json and flashy/public/.well-known/flashyos-charter.json -",
+    "regenerate with `pnpm mesh:emit`, validate with `pnpm mesh:check`. Rules: @bsh/mesh from the",
+    "pinned platform (deps/scribbit/platform/mesh), mirroring FlashyLabs' check-charter.mjs.",
+    "",
+    "Degent Club is a members' club. The Club is a place; membership is earned by making (an artist",
+    "hangs a Degent by the house rules, any member can mint it); the house keeps the rules and the",
+    "seal (the rules are code, the seal is the parent inscription co-signed by the policy signer;",
+    "nobody holds anyone else's keys or money).",
+    "",
+    "accountableTo is a PLACEHOLDER that validates: it must become a real, named human's address",
+    "before this charter is published on degent.club (see deps/scribbit/platform/mesh/README.md).",
+    "",
+    "parent-custody is the only role that signs anything, and it signs one input of one shape",
+    "(ADR-0002 section 3, ADR-0005): hence CRITICAL. The growth and revenue families are empty",
+    "on purpose; an empty family is honest."
+  ],
+  "aao": "0.1",
+  "name": "degent.club",
+  "slug": "degent-club",
+  "description": "The Decentralized Gentlemen Club: an inscribed members' club on Bitcoin, its Open Studio for artists and its automated, non-custodial mint.",
+  "accountableTo": "accountable@degent.club",
+  "escalation": "parent-custody",
+  "repositories": [
+    {
+      "name": "degent",
+      "url": "github.com/DegentClub/degent",
+      "holds": [
+        "mint",
+        "studio",
+        "atelier",
+        "market",
+        "sdk",
+        "web",
+        "contracts",
+        "adr"
+      ],
+      "default": true
+    }
+  ],
+  "roles": [
+    {
+      "name": "parent-custody",
+      "family": "risk",
+      "purpose": "Co-signs the collection parent only for a reveal that returns the parent intact and pays the child to the recorded recipient, and refuses everything else.",
+      "measure": "Reveals co-signed that violated the parent policy, over reveals co-signed",
+      "capabilities": [
+        "cosign",
+        "refuse"
+      ],
+      "humanApprovalAtOrAbove": "CRITICAL",
+      "worksIn": [
+        "degent"
+      ]
+    },
+    {
+      "name": "mint-operation",
+      "family": "operations",
+      "purpose": "Moves each paid order from commit to delivered: leases the parent, broadcasts through the lane its weight requires, verifies the content on chain, and offers rescue when anything stalls.",
+      "measure": "Paid orders delivered or rescuable, over paid orders",
+      "capabilities": [
+        "lease",
+        "broadcast",
+        "verify",
+        "rescue"
+      ],
+      "humanApprovalAtOrAbove": "HIGH",
+      "worksIn": [
+        "degent"
+      ]
+    },
+    {
+      "name": "art-review",
+      "family": "product",
+      "purpose": "Decides whether a submission is a Degent by the published house rules, with reasons an artist can act on, and hands anything uncertain to a person.",
+      "measure": "False approvals in the published review corpus",
+      "capabilities": [
+        "review",
+        "reject",
+        "explain"
+      ],
+      "humanApprovalAtOrAbove": "MEDIUM",
+      "worksIn": [
+        "degent"
+      ]
+    },
+    {
+      "name": "pricing",
+      "family": "finance",
+      "purpose": "Quotes every mint exactly: network cost, the club fee and the artist's royalty, fixed at quote time and paid by the minter inside their own funding transaction.",
+      "measure": "Quotes whose outputs match the funding transaction the minter signed",
+      "capabilities": [
+        "quote",
+        "price"
+      ],
+      "humanApprovalAtOrAbove": "HIGH",
+      "worksIn": [
+        "degent"
+      ]
+    },
+    {
+      "name": "artist-relations",
+      "family": "support",
+      "purpose": "Answers artists: sign-in, payout proof, review appeals and royalty questions, and tells them when their work is minted.",
+      "measure": "Artist appeals answered by a person within five business days",
+      "capabilities": [
+        "notify",
+        "answer",
+        "appeal"
+      ],
+      "humanApprovalAtOrAbove": "LOW",
+      "worksIn": [
+        "degent"
+      ]
+    }
+  ],
+  "x-bitcoin": {
+    "comment": "Blockspace extension, not part of aao 0.1.",
+    "network": "mainnet",
+    "signing": "bip340",
+    "collection": "parent-linked children; reveals SIGHASH_ALL|ANYONECANPAY (ADR-0005)",
+    "royalty": "10% of the mint price, an output of the minter's funding transaction (ADR-0007)"
+  }
+}

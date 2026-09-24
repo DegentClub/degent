@@ -1,0 +1,205 @@
+{
+  "directory": "0.1",
+  "source": "repo/degent",
+  "generated": "2026-09-24",
+  "nodes": [
+    {
+      "asserted": "2026-09-24",
+      "assertedBy": "person/bsh-accountable",
+      "expires": "2027-09-24",
+      "visibility": "public",
+      "id": "agent/degent-club-art-review",
+      "kind": "Agent",
+      "name": "art-review",
+      "description": "Decides whether a submission is a Degent by the published house rules, with reasons an artist can act on, and hands anything uncertain to a person."
+    },
+    {
+      "asserted": "2026-09-24",
+      "assertedBy": "person/bsh-accountable",
+      "expires": "2027-09-24",
+      "visibility": "public",
+      "id": "agent/degent-club-artist-relations",
+      "kind": "Agent",
+      "name": "artist-relations",
+      "description": "Answers artists: sign-in, payout proof, review appeals and royalty questions, and tells them when their work is minted."
+    },
+    {
+      "asserted": "2026-09-24",
+      "assertedBy": "person/bsh-accountable",
+      "expires": "2027-09-24",
+      "visibility": "public",
+      "id": "agent/degent-club-mint-operation",
+      "kind": "Agent",
+      "name": "mint-operation",
+      "description": "Moves each paid order from commit to delivered: leases the parent, broadcasts through the lane its weight requires, verifies the content on chain, and offers rescue when anything stalls."
+    },
+    {
+      "asserted": "2026-09-24",
+      "assertedBy": "person/bsh-accountable",
+      "expires": "2027-09-24",
+      "visibility": "public",
+      "id": "agent/degent-club-parent-custody",
+      "kind": "Agent",
+      "name": "parent-custody",
+      "description": "Co-signs the collection parent only for a reveal that returns the parent intact and pays the child to the recorded recipient, and refuses everything else."
+    },
+    {
+      "asserted": "2026-09-24",
+      "assertedBy": "person/bsh-accountable",
+      "expires": "2027-09-24",
+      "visibility": "public",
+      "id": "agent/degent-club-pricing",
+      "kind": "Agent",
+      "name": "pricing",
+      "description": "Quotes every mint exactly: network cost, the club fee and the artist's royalty, fixed at quote time and paid by the minter inside their own funding transaction."
+    },
+    {
+      "asserted": "2026-09-24",
+      "assertedBy": "person/bsh-accountable",
+      "expires": "2027-09-24",
+      "visibility": "public",
+      "id": "org/degent-club",
+      "kind": "Organization",
+      "name": "degent.club",
+      "description": "The Decentralized Gentlemen Club: an inscribed members' club on Bitcoin, its Open Studio for artists and its automated, non-custodial mint.",
+      "platform": "bitcoin",
+      "vertical": "degent"
+    },
+    {
+      "asserted": "2026-09-24",
+      "assertedBy": "person/bsh-accountable",
+      "expires": "2027-09-24",
+      "visibility": "public",
+      "id": "prop/degent.club",
+      "kind": "Property",
+      "name": "degent.club",
+      "url": "https://degent.club",
+      "tenure": "freehold",
+      "platform": "bitcoin",
+      "vertical": "degent"
+    },
+    {
+      "asserted": "2026-09-24",
+      "assertedBy": "person/bsh-accountable",
+      "expires": "2027-09-24",
+      "visibility": "public",
+      "id": "src/degent-club-aao-0-1",
+      "kind": "Source",
+      "name": "aao/0.1 — degent-club",
+      "url": "https://degent.club/.well-known/flashyos-charter.json",
+      "description": "The aao/0.1 surface this organisation serves."
+    }
+  ],
+  "edges": [
+    {
+      "asserted": "2026-09-24",
+      "assertedBy": "person/bsh-accountable",
+      "expires": "2027-09-24",
+      "visibility": "public",
+      "type": "declares",
+      "from": "org/degent-club",
+      "to": "agent/degent-club-art-review",
+      "role": "art-review",
+      "scope": [
+        "review",
+        "reject",
+        "explain"
+      ]
+    },
+    {
+      "asserted": "2026-09-24",
+      "assertedBy": "person/bsh-accountable",
+      "expires": "2027-09-24",
+      "visibility": "public",
+      "type": "declares",
+      "from": "org/degent-club",
+      "to": "agent/degent-club-artist-relations",
+      "role": "artist-relations",
+      "scope": [
+        "notify",
+        "answer",
+        "appeal"
+      ]
+    },
+    {
+      "asserted": "2026-09-24",
+      "assertedBy": "person/bsh-accountable",
+      "expires": "2027-09-24",
+      "visibility": "public",
+      "type": "declares",
+      "from": "org/degent-club",
+      "to": "agent/degent-club-mint-operation",
+      "role": "mint-operation",
+      "scope": [
+        "lease",
+        "broadcast",
+        "verify",
+        "rescue"
+      ]
+    },
+    {
+      "asserted": "2026-09-24",
+      "assertedBy": "person/bsh-accountable",
+      "expires": "2027-09-24",
+      "visibility": "public",
+      "type": "declares",
+      "from": "org/degent-club",
+      "to": "agent/degent-club-parent-custody",
+      "role": "parent-custody",
+      "scope": [
+        "cosign",
+        "refuse"
+      ]
+    },
+    {
+      "asserted": "2026-09-24",
+      "assertedBy": "person/bsh-accountable",
+      "expires": "2027-09-24",
+      "visibility": "public",
+      "type": "declares",
+      "from": "org/degent-club",
+      "to": "agent/degent-club-pricing",
+      "role": "pricing",
+      "scope": [
+        "quote",
+        "price"
+      ]
+    },
+    {
+      "asserted": "2026-09-24",
+      "assertedBy": "person/bsh-accountable",
+      "expires": "2027-09-24",
+      "visibility": "public",
+      "type": "declares",
+      "from": "org/degent-club",
+      "to": "src/degent-club-aao-0-1"
+    },
+    {
+      "asserted": "2026-09-24",
+      "assertedBy": "person/bsh-accountable",
+      "expires": "2027-09-24",
+      "visibility": "public",
+      "type": "operates",
+      "from": "org/degent-club",
+      "to": "prop/degent.club"
+    },
+    {
+      "asserted": "2026-09-24",
+      "assertedBy": "person/bsh-accountable",
+      "expires": "2027-09-24",
+      "visibility": "public",
+      "type": "accountableFor",
+      "from": "person/bsh-accountable",
+      "to": "org/degent-club"
+    },
+    {
+      "asserted": "2026-09-24",
+      "assertedBy": "person/bsh-accountable",
+      "expires": "2027-09-24",
+      "visibility": "public",
+      "type": "cites",
+      "from": "src/degent-club-aao-0-1",
+      "to": "std/aao-0-1"
+    }
+  ]
+}

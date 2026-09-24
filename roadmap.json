@@ -97,7 +97,7 @@
           "id": "p1.5",
           "repo": "degent",
           "title": "Web app shows the format advice and the five rules from the SDK data",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "p1.1",
             "p1.2"
@@ -160,7 +160,7 @@
           "id": "p2.8",
           "repo": "degent",
           "title": "Web: artist sign-in, upload, status, gallery page",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "p2.1",
             "p2.4"
@@ -191,46 +191,50 @@
           "id": "p3.3",
           "repo": "platform",
           "title": "collection.minted gains artist, artworkId, edition, royalty (minor bump)",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "p3.1"
-          ]
+          ],
+          "verify": "pnpm --filter @bsh/events test"
         },
         {
           "id": "p3.4",
           "repo": "degent",
-          "title": "Pin bump to the platform commit carrying p3.1-p3.3",
-          "status": "todo",
+          "title": "Pin bump to the platform commit carrying p3.1-p3.3 (09bd9d7: ledger 1.2 observations, collection.minted 1.1.0)",
+          "status": "done",
           "depends_on": [
             "p3.1",
             "p3.2",
             "p3.3"
-          ]
+          ],
+          "verify": "pnpm check"
         },
         {
           "id": "p3.5",
           "repo": "degent",
           "title": "Contract: CreateOrderRequest.artworkId, Quote/Order royalty fields, ServiceConfig bps, new error codes, royalty.paid channel",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "p2.1"
           ],
-          "doc": "docs/open-studio-plan.md"
+          "doc": "docs/open-studio-plan.md",
+          "verify": "pnpm --filter @bsh/degent-mint test -- contract"
         },
         {
           "id": "p3.6",
           "repo": "degent",
           "title": "Orders from artworkId: content from the studio, review skipped, edition reserved at quote",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "p3.5"
-          ]
+          ],
+          "verify": "pnpm --filter @bsh/degent-mint test -- artwork-orders"
         },
         {
           "id": "p3.7",
           "repo": "degent",
           "title": "Funding PSBT outputs [commit, artist, club, change]; post-sign check covers scripts and values; dust raise",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "p3.5"
           ],
@@ -240,37 +244,39 @@
           "id": "p3.8",
           "repo": "degent",
           "title": "Worker verifies artist and club outputs by script; assigns edition; emits royalty.paid; posts to the studio",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "p3.6"
           ],
-          "verify": "pnpm --filter @bsh/degent-mint test -- worker"
+          "verify": "pnpm --filter @bsh/degent-mint test -- royalty-worker"
         },
         {
           "id": "p3.9",
           "repo": "degent",
           "title": "Attribution metadata in the envelope; collection.minted emitted with royalty fields",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "p3.4",
             "p3.6"
-          ]
+          ],
+          "verify": "pnpm --filter @bsh/degent-mint test -- artwork-e2e"
         },
         {
           "id": "p3.10",
           "repo": "degent",
-          "title": "Ledger recording: order with payee line items, psbt intent, payouts, receipt",
-          "status": "todo",
+          "title": "Ledger recording: order with payee line items, psbt intent, funding observation, payouts, receipt",
+          "status": "done",
           "depends_on": [
             "p3.4",
             "p3.8"
-          ]
+          ],
+          "verify": "pnpm --filter @bsh/degent-mint test -- royalty-worker"
         },
         {
           "id": "p3.11",
           "repo": "degent",
           "title": "Web: gallery entry to mint, four quote lines, artist paid on Track, recovery bundle carries artworkId and edition",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "p3.7"
           ]

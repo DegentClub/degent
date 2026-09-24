@@ -13,7 +13,9 @@
     "validate": "pnpm --filter @bsh/catalog-tool run validate",
     "lint:boundaries": "pnpm --filter @bsh/catalog-tool run boundaries",
     "check": "pnpm validate && pnpm lint:boundaries && pnpm roadmap:check && pnpm typecheck && pnpm test",
-    "roadmap:check": "node scripts/check-roadmap.mjs"
+    "roadmap:check": "node scripts/check-roadmap.mjs",
+    "mesh:check": "node deps/scribbit/platform/mesh/bin/mesh.mjs check flashy",
+    "mesh:emit": "node deps/scribbit/platform/mesh/bin/mesh.mjs emit flashy"
   },
   "devDependencies": {
     "typescript": "^5",
