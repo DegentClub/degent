@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: degent.club mint API
-  version: 0.1.0
+  version: 0.2.0
   summary: Non-custodial, parent-linked inscription minting for the Decentralized Gentlemen Club.
   description: |
     Implemented by `@bsh/degent-mint` (products/degent/services/mint); typed client and domain types in
@@ -9,12 +9,14 @@ info:
 
     Flow (Design -> Mint -> Confirm -> Approve, ADR-0007): `POST /v1/orders` (indicative quote + one-time
     `orderToken`) -> `PUT /v1/orders/{id}/content` (raw bytes; automated review; binding quote + commit address)
-    -> `POST /v1/orders/{id}/reveal` (half-signed reveal, verified and stored encrypted) -> user funds the
+    -> `POST /v1/orders/{id}/reveal` (half-signed reveal, SIGHASH_ALL|ANYONECANPAY over [parent return, child],
+    ADR-0005; verified and stored encrypted) -> user funds the
     commit (`paid` -> `confirming`) -> commit confirmed (`member_review`) -> existing members vote
     (`POST /v1/orders/{id}/votes`, holder session from `/v1/auth/*`) -> approval quorum assigns the Degent
     number and queues the parent-linked reveal -> `GET /v1/orders/{id}` to track. A decline quorum
-    (`declined`) or a lapsed review SLA (`rescue_available`) offers `GET /v1/orders/{id}/rescue`: a
-    parent-less reveal the user can broadcast (the inscription lands, it is just not a Degent).
+    (`declined`) or a lapsed review SLA (`rescue_available`) offers `GET /v1/orders/{id}/rescue`: the parameters
+    (incl. the content bytes) from which the browser re-signs a parent-less `[commit] -> [child]` reveal with its
+    ephemeral key K_e (the inscription lands, it is just not a Degent). K_e never reaches the service.
 
     The Register (`/v1/register*`, `/v1/explorer`, `/v1/stats`) is the public, read-only membership roster:
     the 4,112 Gallery members plus every approved, delivered child of the parent.
@@ -133,7 +135,9 @@ paths:
       operationId: uploadContent
       summary: Upload the exact bytes to inscribe; runs automated review; returns the binding quote.
       description: |
-        Requires status `awaiting_content`. Rejected with 422 `content_mismatch` when the length or SHA-256
+        Requires status `awaiting_content`. The binding quote carries `parentReturnAddress` and `parentValueSats`,
+        which the browser signs as output 0 of the reveal (ADR-0005); when the service does not know its parent UTXO
+        yet the upload is refused with 503 `upstream_unavailable` before review. Rejected with 422 `content_mismatch` when the length or SHA-256
         differs from the declaration. Review re-checks the real bytes (magic-byte type, header dimensions,
         size) and optionally a vision model. On approval the order becomes `approved` with a binding quote
         (`binding: true`, `commitAddress` set, new `expiresAt`); on rejection it becomes `rejected` (still
@@ -170,12 +174,13 @@ paths:
     post:
       tags: [orders]
       operationId: submitReveal
-      summary: Submit the half-signed reveal (SIGHASH_SINGLE|ANYONECANPAY) before funding the commit.
+      summary: Submit the half-signed reveal (SIGHASH_ALL|ANYONECANPAY, 0x81) before funding the commit.
       description: |
-        Requires status `approved` and an unexpired quote. Verified with `@bsh/inscription.verifyHalfSignedReveal`
-        against the stored content, recipient, postage, commit outpoint and commit value, and proven
-        rescuable. Stored encrypted (AES-256-GCM) outside the order row; never returned or emitted.
-        Order becomes `awaiting_payment`.
+        Requires status `approved` and an unexpired quote. `[commit] -> [parent return, child]`, the commit input
+        signed with 0x81 (ADR-0005). Verified with `@bsh/inscription.verifyHalfSignedReveal` (0x81) against the
+        stored content, recipient, postage, commit outpoint and commit value, and the quote's `parentReturnAddress`
+        and `parentValueSats` (output 0). 0x83 reveals are refused (422 `reveal_invalid`). Stored encrypted
+        (AES-256-GCM) outside the order row; never returned or emitted. Order becomes `awaiting_payment`.
       security:
         - orderToken: []
       requestBody:
@@ -204,12 +209,16 @@ paths:
     get:
       tags: [orders]
       operationId: getRescue
-      summary: Parent-less self-rescue reveal ([commit] -> [child]) once the order is `rescue_available`.
+      summary: Parameters for the parent-less self-rescue ([commit] -> [child]) once `rescue_available` or `declined`.
+      description: |
+        Returns everything `@bsh/inscription.buildResignedRescue` needs except the ephemeral key K_e, which only the
+        user's recovery bundle holds (encrypted): the browser re-signs the rescue with K_e (SIGHASH_DEFAULT) and
+        broadcasts it (ADR-0005). No transaction is returned; the service cannot build one.
       security:
         - orderToken: []
       responses:
         '200':
-          description: Raw rescue transaction, ready to broadcast
+          description: Rescue parameters, including the exact content bytes
           content:
             application/json:
               schema: { $ref: '#/components/schemas/RescueResponse' }
@@ -217,7 +226,7 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '409':
-          description: Not `rescue_available` (code `rescue_unavailable`, `details.status` = current status)
+          description: Not `rescue_available` or `declined` (code `rescue_unavailable`, `details.status` = current status)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -554,7 +563,8 @@ components:
       type: object
       additionalProperties: false
       required: [tier, lane, feeRate, revealWeight, revealVsize, revealFeeSats, postageSats, serviceFeeSats,
-                 commitValueSats, totalSats, commitAddress, binding, expiresAt, queuePosition, etaMinutes]
+                 commitValueSats, totalSats, commitAddress, binding, expiresAt, queuePosition, etaMinutes,
+                 parentReturnAddress, parentValueSats]
       properties:
         tier: { $ref: '#/components/schemas/Tier' }
         lane: { $ref: '#/components/schemas/Lane' }
@@ -571,6 +581,15 @@ components:
         expiresAt: { $ref: '#/components/schemas/Timestamp' }
         queuePosition: { type: [integer, 'null'] }
         etaMinutes: { type: [integer, 'null'] }
+        parentReturnAddress:
+          type: string
+          description: Output 0 of the reveal (the collection address holding the parent). Signed by the browser (0x81).
+        parentValueSats:
+          type: [integer, 'null']
+          minimum: 1
+          description: |
+            Exact value of output 0 (= the parent UTXO's value, constant across reveals). Signed by the browser (0x81).
+            Always set on the binding quote; null on an indicative quote while the service does not know its parent UTXO.
     ReviewCheck:
       type: object
       additionalProperties: false
@@ -647,17 +666,34 @@ components:
       properties:
         commitTxid: { type: string, pattern: '^[0-9a-fA-F]{64}$', description: Txid of the (unsigned) funding tx. }
         commitVout: { type: integer, minimum: 0, maximum: 4294967295 }
-        halfSignedRevealPsbt: { type: string, contentEncoding: base64, description: '[commit] -> [child] PSBT, input signed with 0x83. Max request body 8 MiB.' }
+        halfSignedRevealPsbt: { type: string, contentEncoding: base64, description: '[commit] -> [parent return, child] PSBT, commit input signed with SIGHASH_ALL|ANYONECANPAY (0x81). Max request body 8 MiB.' }
         commitAddress: { type: string, description: Optional browser-computed commit address; must equal the quote's. }
     RescueResponse:
       type: object
       additionalProperties: false
-      required: [orderId, txid, hex, weight]
+      description: |
+        Inputs of `buildResignedRescue` except K_e. The browser must check `sha256(content) == contentSha256` and that
+        its decrypted K_e matches `revealPubkey` before signing. `weight`/`vsize`/`feeSats` describe the re-signed
+        rescue exactly (`estimateResignedRescueWeight`); `feeSats` = commitValue - postage (no change output).
+      required: [orderId, network, method, commitOutpoint, commitValueSats, recipientAddress, postageSats, contentType,
+                 contentSha256, contentBase64, parentInscriptionId, revealPubkey, feeRate, weight, vsize, feeSats]
       properties:
         orderId: { type: string }
-        txid: { $ref: '#/components/schemas/Txid' }
-        hex: { type: string, pattern: '^[0-9a-f]+$' }
+        network: { $ref: '#/components/schemas/Network' }
+        method: { type: string, enum: [resign], description: 'Re-sign [commit] -> [child] with K_e (SIGHASH_DEFAULT), ADR-0005.' }
+        commitOutpoint: { $ref: '#/components/schemas/Outpoint' }
+        commitValueSats: { $ref: '#/components/schemas/Sats' }
+        recipientAddress: { type: string }
+        postageSats: { $ref: '#/components/schemas/Sats' }
+        contentType: { type: string }
+        contentSha256: { $ref: '#/components/schemas/Hex32' }
+        contentBase64: { type: string, contentEncoding: base64, description: The exact inscribed bytes. }
+        parentInscriptionId: { type: [string, 'null'], description: Parent id in the envelope (tag 3); part of the commit address. }
+        revealPubkey: { $ref: '#/components/schemas/Hex32' }
+        feeRate: { type: number, description: 'Quoted sat/vB; the rescue pays at least this (it is lighter than the parent reveal).' }
         weight: { type: integer }
+        vsize: { type: integer }
+        feeSats: { $ref: '#/components/schemas/Sats' }
     HealthResponse:
       type: object
       additionalProperties: false
