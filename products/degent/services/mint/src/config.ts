@@ -2,14 +2,26 @@
  * Environment -> typed config. Mirrors env.schema.json. Fails fast with every problem listed,
  * and refuses unsafe combinations (mainnet with the in-memory dev signer, dev defaults off regtest).
  */
+import { readFileSync } from 'node:fs';
 import type { CollectionConfig, Network } from '@bsh/degent-mint-sdk';
 import { DEFAULT_APPROVAL_QUORUM, DEFAULT_CONFIG, DEFAULT_DECLINE_QUORUM, DEFAULT_REVIEW_SLA_SECONDS, GALLERY_SIZE, MAX_UPLOAD_BYTES } from '@bsh/degent-mint-sdk';
 import { DEFAULT_POLICY } from './domain/policy.js';
 import { addressKind } from './domain/address.js';
 import type { MintSettings } from './application/settings.js';
 
+/**
+ * Secrets that may be supplied as a file instead of a value: `<NAME>_FILE=/path` (Docker secrets, systemd
+ * LoadCredential, SOPS-rendered files). Setting both `<NAME>` and `<NAME>_FILE` is an error. Must equal the
+ * `x-secret` variables of env.schema.json except PARENT_KEY_FILE (already a file); test/config.test.ts checks.
+ */
+export const SECRET_FILE_VARS = ['LIBRE_RPC_PASS', 'SLIPSTREAM_API_KEY', 'REVEAL_ENCRYPTION_KEY', 'ART_REVIEW_API_KEY', 'SESSION_KEY'] as const;
+
+/** Which loops this process runs: the HTTP API, the worker, or both (default; single-process dev). */
+export type MintRole = 'all' | 'api' | 'worker';
+
 export interface MintConfig {
   settings: MintSettings;
+  role: MintRole;
   port: number;
   host: string;
   databasePath: string | null; // null => in-memory store (regtest only)
@@ -45,8 +57,22 @@ export class ConfigError extends Error {
 
 const NETWORKS: Network[] = ['mainnet', 'testnet', 'signet', 'regtest'];
 
-export function loadConfig(env: Record<string, string | undefined>, version = '0.1.0'): MintConfig {
+export function loadConfig(rawEnv: Record<string, string | undefined>, version = '0.1.0'): MintConfig {
   const problems: string[] = [];
+  const env: Record<string, string | undefined> = { ...rawEnv };
+  for (const k of SECRET_FILE_VARS) {
+    const file = rawEnv[`${k}_FILE`]?.trim();
+    if (!file) continue;
+    if (rawEnv[k]?.trim()) {
+      problems.push(`set ${k} or ${k}_FILE, not both`);
+      continue;
+    }
+    try {
+      env[k] = readFileSync(file, 'utf8').trim();
+    } catch {
+      problems.push(`${k}_FILE: cannot read ${file}`);
+    }
+  }
   const str = (k: string): string | null => {
     const v = env[k]?.trim();
     return v ? v : null;
@@ -94,6 +120,12 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
     if (v === null && !dev) problems.push(`${k} is required on ${net}`);
     return v;
   };
+
+  const roleRaw = str('MINT_ROLE') ?? 'all';
+  if (roleRaw !== 'all' && roleRaw !== 'api' && roleRaw !== 'worker') problems.push('MINT_ROLE must be "all", "api" or "worker"');
+  const role: MintRole = roleRaw === 'api' || roleRaw === 'worker' ? roleRaw : 'all';
+  if (role !== 'all' && dev && (!str('DATABASE_PATH') || !str('CONTENT_DIR')))
+    problems.push('MINT_ROLE=api|worker needs a shared DATABASE_PATH and CONTENT_DIR (in-memory stores are per process)');
 
   const databasePath = need('DATABASE_PATH');
   const contentDir = need('CONTENT_DIR');
@@ -187,6 +219,7 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
   const ordPublicUrl = url('ORD_PUBLIC_URL', ordUrl ?? 'https://ordinals.com');
 
   const out: MintConfig = {
+    role,
     settings: {
       network: net,
       version,

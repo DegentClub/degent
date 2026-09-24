@@ -182,7 +182,15 @@ See [`env.schema.json`](./env.schema.json) for every variable. Essentials:
 | `ART_REVIEW_API_KEY` | enables the Claude vision review (`claude-opus-5`); unset = rules only |
 | `SERVICE_FEE_ADDRESS`, `SERVICE_FEE_SATS_*` | optional service fee, paid in the funding tx |
 
-Config errors are listed all at once and the process exits non-zero.
+| `MINT_ROLE` | `all` (default), `api` or `worker`; also the first argument of `node dist/main.mjs`. Split roles share one sqlite file and content dir on one host; run exactly one worker |
+| `<SECRET>_FILE` | every secret above (`REVEAL_ENCRYPTION_KEY`, `SESSION_KEY`, `LIBRE_RPC_PASS`, `SLIPSTREAM_API_KEY`, `ART_REVIEW_API_KEY`) can be given as a file path instead (Docker secrets, systemd credentials); not both |
+
+Config errors are listed all at once and the process exits non-zero. The worker logs an `order status snapshot`
+line (counts and oldest age per non-terminal status, parent known) every minute for alerting.
+
+Production build: `pnpm --filter @bsh/degent-mint build` bundles `src/main.ts` and every workspace dependency
+into `dist/main.mjs` (esbuild; workspace packages export TypeScript, which Node cannot run from `node_modules`).
+Container images, compose files, NixOS modules and the rehearsal harness: [`docs/DEPLOY.md`](../../../../docs/DEPLOY.md).
 
 ## Run locally
 
