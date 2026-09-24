@@ -22,6 +22,8 @@ export type MintRole = 'all' | 'api' | 'worker';
 export interface MintConfig {
   settings: MintSettings;
   role: MintRole;
+  /** Mainnet without LIBRE_RPC_URL / SLIPSTREAM_URL: the block tier is not offered (standard lane only). */
+  blockTierWithdrawn: boolean;
   port: number;
   host: string;
   databasePath: string | null; // null => in-memory store (regtest only)
@@ -53,6 +55,12 @@ export class ConfigError extends Error {
     super(`invalid configuration:\n  - ${problems.join('\n  - ')}`);
     this.name = 'ConfigError';
   }
+}
+
+/** The collection tiers the service offers; the block tier only when a block-lane broadcaster exists (or off mainnet). */
+export function offeredTiers(blockTierWithdrawn: boolean): CollectionConfig['tiers'] {
+  const tiers = structuredClone(DEFAULT_CONFIG.tiers);
+  return blockTierWithdrawn ? tiers.filter((t) => t.lane !== 'block') : tiers;
 }
 
 const NETWORKS: Network[] = ['mainnet', 'testnet', 'signet', 'regtest'];
@@ -138,8 +146,9 @@ export function loadConfig(rawEnv: Record<string, string | undefined>, version =
   const libre = libreUrl ? { url: libreUrl, user: str('LIBRE_RPC_USER') ?? '', password: str('LIBRE_RPC_PASS') ?? '' } : null;
   const slipUrl = url('SLIPSTREAM_URL', null);
   const slipstream = slipUrl ? { url: slipUrl, apiKey: str('SLIPSTREAM_API_KEY') } : null;
-  if (net === 'mainnet' && !libre && !slipstream)
-    problems.push('mainnet needs a block-lane broadcaster: set LIBRE_RPC_URL and/or SLIPSTREAM_URL');
+  // Mainnet never falls back to esplora for non-standard Block Degent reveals: without Libre Relay or Slipstream
+  // the block tier is withdrawn (standard lane only; /v1/config stops offering it, block orders fail validation).
+  const blockTierWithdrawn = net === 'mainnet' && !libre && !slipstream;
 
   const parentInscriptionId = str('PARENT_INSCRIPTION_ID');
   if (parentInscriptionId && !/^[0-9a-f]{64}i\d+$/.test(parentInscriptionId))
@@ -220,11 +229,13 @@ export function loadConfig(rawEnv: Record<string, string | undefined>, version =
 
   const out: MintConfig = {
     role,
+    blockTierWithdrawn,
     settings: {
       network: net,
       version,
       collection: {
         ...structuredClone(DEFAULT_CONFIG),
+        tiers: offeredTiers(blockTierWithdrawn),
         network: net,
         parentInscriptionId,
         minFeeRate,

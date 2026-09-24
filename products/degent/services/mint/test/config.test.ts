@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { p2tr } from '@scure/btc-signer';
 import { networkParams } from '@bsh/inscription';
-import { ConfigError, loadConfig, SECRET_FILE_VARS } from '../src/config.js';
+import { ConfigError, loadConfig, offeredTiers, SECRET_FILE_VARS } from '../src/config.js';
 import { buildRuntime } from '../src/wiring.js';
 import { silentLogger } from '../src/application/logger.js';
 import schema from '../env.schema.json' with { type: 'json' };
@@ -87,10 +87,20 @@ describe('loadConfig', () => {
     expect(p).toContain('PARENT_KEY_FILE is dev-only and not accepted on mainnet');
   });
 
-  it('mainnet requires a block-lane broadcaster and a mainnet collection address', () => {
+  it('mainnet requires a mainnet collection address', () => {
     const p = problems({ ...testnetEnv, NETWORK: 'mainnet' });
-    expect(p.join('\n')).toContain('LIBRE_RPC_URL');
     expect(p.join('\n')).toContain('COLLECTION_ADDRESS must be a taproot address on mainnet');
+  });
+
+  it('mainnet without Libre Relay / Slipstream withdraws the block tier (standard lane only); test networks keep it', () => {
+    // A full mainnet config is still refused until the KMS signer exists, so the rule is checked in parts.
+    expect(loadConfig(testnetEnv).settings.collection.tiers.map((t) => t.tier)).toEqual(['standard', 'block']);
+    expect(loadConfig(testnetEnv).blockTierWithdrawn).toBe(false);
+    expect(offeredTiers(true).map((t) => t.tier)).toEqual(['standard']);
+    expect(offeredTiers(false).map((t) => t.tier)).toEqual(['standard', 'block']);
+    const p = problems({ ...testnetEnv, NETWORK: 'mainnet', COLLECTION_ADDRESS: addr('mainnet') });
+    expect(p.join('\n')).not.toContain('LIBRE_RPC_URL');
+    expect(problems({ ...testnetEnv, NETWORK: 'mainnet', COLLECTION_ADDRESS: addr('mainnet'), SLIPSTREAM_URL: 'https://slipstream.example' }).join('\n')).not.toContain('LIBRE_RPC_URL');
   });
 
   it('validates formats', () => {
