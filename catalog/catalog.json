@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-24T01:28:16.426Z",
+  "generatedAt": "2026-09-24T02:12:53.248Z",
   "schema": "schemas/component.schema.json",
   "components": [
     {
@@ -120,7 +120,7 @@
       "kind": "service",
       "product": "degent",
       "owner": "team-degent",
-      "summary": "Automated degent.club mint service - order state machine, art review, parent co-signing policy signer, lane broadcaster.",
+      "summary": "Automated degent.club mint service - order state machine, art review, policy signer, lane broadcaster; Open Studio artwork orders with the artist royalty verified in the funding tx.",
       "lifecycle": "beta",
       "depends_on": [
         "@bsh/inscription",
@@ -133,7 +133,10 @@
       ],
       "consumes": [
         "events:block.indexed.{network}",
-        "deps/scribbit/contracts/asyncapi/platform-events.yaml#/channels/degentMintOrderStatus"
+        "deps/scribbit/contracts/asyncapi/platform-events.yaml#/channels/degentMintOrderStatus",
+        "deps/scribbit/contracts/asyncapi/platform-events.yaml#/channels/collectionMinted",
+        "contracts/openapi/degent-studio.yaml",
+        "deps/scribbit/contracts/openapi/ledger.yaml"
       ],
       "stores": [
         "sqlite:degent_mint"
@@ -143,7 +146,9 @@
         "services/degent-mint/art-review-api-key",
         "services/degent-mint/reveal-encryption-key",
         "services/degent-mint/libre-rpc-pass",
-        "services/degent-mint/slipstream-api-key"
+        "services/degent-mint/slipstream-api-key",
+        "services/degent-mint/studio-api-key",
+        "services/degent-mint/ledger-api-key"
       ],
       "env_schema": "./env.schema.json",
       "slo": {
@@ -328,7 +333,9 @@
       },
       "dependents": [
         "degent-atelier",
-        "degent-studio"
+        "degent-studio",
+        "ledger",
+        "signer"
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
@@ -365,6 +372,7 @@
       "dependents": [
         "degent-mint",
         "degent-studio",
+        "ledger",
         "notify"
       ],
       "external": {
@@ -442,6 +450,97 @@
       }
     },
     {
+      "name": "ledger",
+      "package": "@bsh/ledger",
+      "kind": "service",
+      "product": "platform",
+      "owner": "team-platform",
+      "summary": "Shared order/payment ledger for every product - on-chain (xpub watch-only), Lightning + BTC via BTCPay, cards via a Stripe-shaped provider; receipts, refunds, events.",
+      "lifecycle": "beta",
+      "depends_on": [
+        "@bsh/edge",
+        "@bsh/events"
+      ],
+      "provides": [
+        "deps/scribbit/contracts/openapi/ledger.yaml",
+        "deps/scribbit/contracts/asyncapi/ledger.yaml"
+      ],
+      "stores": [
+        "sqlite:ledger",
+        "memory:ledger-api-keys",
+        "memory:ledger-rate-limits"
+      ],
+      "secrets": [
+        "services/ledger/api-keys",
+        "services/ledger/xpub",
+        "services/ledger/btcpay/api-key",
+        "services/ledger/btcpay/webhook-secret",
+        "services/ledger/card/secret-key",
+        "services/ledger/card/webhook-secret"
+      ],
+      "env_schema": "./env.schema.json",
+      "slo": {
+        "availability": "99.9",
+        "p95_ms": 250
+      },
+      "runbook": "./RUNBOOK.md",
+      "docs": "./README.md",
+      "commands": {
+        "dev": "dev",
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "deps/scribbit/platform/ledger",
+      "version": "0.1.0",
+      "scripts": {
+        "dev": "tsx watch src/main.ts",
+        "start": "tsx src/main.ts",
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "env_schema": "deps/scribbit/platform/ledger/env.schema.json",
+        "runbook": "deps/scribbit/platform/ledger/RUNBOOK.md",
+        "docs": "deps/scribbit/platform/ledger/README.md"
+      },
+      "dependents": [],
+      "external": {
+        "repo": "https://github.com/DegentClub/scribbit.git",
+        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "root": "deps/scribbit"
+      }
+    },
+    {
+      "name": "mesh",
+      "package": "@bsh/mesh",
+      "kind": "library",
+      "product": "platform",
+      "owner": "team-platform",
+      "summary": "FlashyOS AAO accountability formats (charter, frontdoor, directory, shipped, checkpoint) and signed invoice/receipt money documents.",
+      "lifecycle": "experimental",
+      "depends_on": [],
+      "docs": "./README.md",
+      "commands": {
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "deps/scribbit/platform/mesh",
+      "version": "0.1.0",
+      "scripts": {
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "docs": "deps/scribbit/platform/mesh/README.md"
+      },
+      "dependents": [],
+      "external": {
+        "repo": "https://github.com/DegentClub/scribbit.git",
+        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "root": "deps/scribbit"
+      }
+    },
+    {
       "name": "notify",
       "package": "@bsh/notify",
       "kind": "library",
@@ -474,6 +573,59 @@
       }
     },
     {
+      "name": "signer",
+      "package": "@bsh/signer",
+      "kind": "service",
+      "product": "platform",
+      "owner": "team-platform",
+      "summary": "Remote, policy-constrained BIP340 signing service (taproot key-path PSBT inputs, purpose-gated attestations) so product services never hold keys.",
+      "lifecycle": "experimental",
+      "depends_on": [
+        "@bsh/edge"
+      ],
+      "provides": [
+        "deps/scribbit/contracts/openapi/signer.yaml"
+      ],
+      "stores": [
+        "memory:signer-audit"
+      ],
+      "secrets": [
+        "services/signer/keys/*",
+        "services/signer/api-key-hashes"
+      ],
+      "env_schema": "./env.schema.json",
+      "slo": {
+        "availability": "99.9",
+        "p95_ms": 100
+      },
+      "runbook": "./RUNBOOK.md",
+      "docs": "./README.md",
+      "commands": {
+        "dev": "dev",
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "deps/scribbit/platform/signer",
+      "version": "0.1.0",
+      "scripts": {
+        "dev": "tsx watch src/main.ts",
+        "start": "tsx src/main.ts",
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "env_schema": "deps/scribbit/platform/signer/env.schema.json",
+        "runbook": "deps/scribbit/platform/signer/RUNBOOK.md",
+        "docs": "deps/scribbit/platform/signer/README.md"
+      },
+      "dependents": [],
+      "external": {
+        "repo": "https://github.com/DegentClub/scribbit.git",
+        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "root": "deps/scribbit"
+      }
+    },
+    {
       "name": "wallet-kit",
       "package": "@bsh/wallet-kit",
       "kind": "library",
@@ -490,6 +642,9 @@
       "path": "deps/scribbit/platform/wallet-kit",
       "version": "0.1.0",
       "scripts": {
+        "conformance": "tsx conformance/build.ts && vitest run --config conformance/vitest.config.ts",
+        "conformance:build": "tsx conformance/build.ts",
+        "conformance:serve": "tsx conformance/build.ts && tsx conformance/serve.ts",
         "test": "vitest run",
         "typecheck": "tsc --noEmit -p ."
       },
@@ -539,14 +694,18 @@
         "events",
         "identity",
         "inscription",
+        "ledger",
+        "mesh",
         "notify",
+        "signer",
         "wallet-kit"
       ],
       "owners": [
         "team-platform"
       ],
       "kinds": {
-        "library": 6
+        "library": 7,
+        "service": 2
       }
     },
     "scribbit": {
@@ -616,7 +775,9 @@
       "providers": [
         "degent-studio"
       ],
-      "consumers": []
+      "consumers": [
+        "degent-mint"
+      ]
     },
     {
       "path": "contracts/schemas/degent-rules.json",
@@ -630,6 +791,15 @@
       ]
     },
     {
+      "path": "deps/scribbit/contracts/asyncapi/ledger.yaml",
+      "kind": "asyncapi",
+      "exists": true,
+      "providers": [
+        "ledger"
+      ],
+      "consumers": []
+    },
+    {
       "path": "deps/scribbit/contracts/asyncapi/platform-events.yaml",
       "kind": "asyncapi",
       "exists": true,
@@ -639,6 +809,26 @@
       "consumers": [
         "degent-mint"
       ]
+    },
+    {
+      "path": "deps/scribbit/contracts/openapi/ledger.yaml",
+      "kind": "openapi",
+      "exists": true,
+      "providers": [
+        "ledger"
+      ],
+      "consumers": [
+        "degent-mint"
+      ]
+    },
+    {
+      "path": "deps/scribbit/contracts/openapi/signer.yaml",
+      "kind": "openapi",
+      "exists": true,
+      "providers": [
+        "signer"
+      ],
+      "consumers": []
     },
     {
       "path": "events:block.indexed.{network}",
@@ -658,7 +848,22 @@
     },
     {
       "from": "degent-mint",
+      "to": "contracts/openapi/degent-studio.yaml",
+      "type": "consumes"
+    },
+    {
+      "from": "degent-mint",
       "to": "deps/scribbit/contracts/asyncapi/platform-events.yaml",
+      "type": "consumes"
+    },
+    {
+      "from": "degent-mint",
+      "to": "deps/scribbit/contracts/asyncapi/platform-events.yaml",
+      "type": "consumes"
+    },
+    {
+      "from": "degent-mint",
+      "to": "deps/scribbit/contracts/openapi/ledger.yaml",
       "type": "consumes"
     },
     {
@@ -732,8 +937,23 @@
       "type": "depends_on"
     },
     {
+      "from": "ledger",
+      "to": "edge",
+      "type": "depends_on"
+    },
+    {
+      "from": "ledger",
+      "to": "events",
+      "type": "depends_on"
+    },
+    {
       "from": "notify",
       "to": "events",
+      "type": "depends_on"
+    },
+    {
+      "from": "signer",
+      "to": "edge",
       "type": "depends_on"
     },
     {
@@ -774,6 +994,21 @@
     {
       "from": "events",
       "to": "deps/scribbit/contracts/asyncapi/platform-events.yaml",
+      "type": "provides"
+    },
+    {
+      "from": "ledger",
+      "to": "deps/scribbit/contracts/asyncapi/ledger.yaml",
+      "type": "provides"
+    },
+    {
+      "from": "ledger",
+      "to": "deps/scribbit/contracts/openapi/ledger.yaml",
+      "type": "provides"
+    },
+    {
+      "from": "signer",
+      "to": "deps/scribbit/contracts/openapi/signer.yaml",
       "type": "provides"
     }
   ]

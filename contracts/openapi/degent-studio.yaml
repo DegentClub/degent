@@ -403,6 +403,31 @@ paths:
         '415': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/RateLimited' }
+  /v1/internal/artists/{address}/payout:
+    get:
+      tags: [internal]
+      operationId: getArtistPayout
+      summary: The artist's proven payout address, for the mint service (API key scope `studio:internal`).
+      description: |
+        The public profile does not carry the payout address. The mint needs it to quote the artist royalty
+        (output [1] of the minter's funding PSBT, ADR-0007), so it reads it here with an internal key.
+        `payoutAddress` is null until the artist has proven one with a BIP-322 signature.
+      security:
+        - apiKey: [studio:internal]
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The artist's payout facts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtistPayout' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
   /v1/internal/royalties:
     post:
       tags: [internal]
@@ -637,6 +662,14 @@ components:
           properties:
             address: { type: string, minLength: 14, maxLength: 90 }
             signature: { type: string, maxLength: 4096, description: BIP-322 simple signature (base64) over the payout message. }
+    ArtistPayout:
+      type: object
+      additionalProperties: false
+      required: [address, payoutAddress, payoutVerifiedAt]
+      properties:
+        address: { type: string, description: The artist's signed-in address. }
+        payoutAddress: { type: [string, 'null'], description: Segwit (P2WPKH) or taproot (P2TR) address proven by BIP-322. }
+        payoutVerifiedAt: { oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }] }
     PublicArtist:
       type: object
       additionalProperties: false

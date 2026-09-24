@@ -255,28 +255,115 @@ export interface TotalEstimate {
   postageSats: number;
   commitValueSats: number;
   serviceFeeSats: number;
+  /** Open Studio artwork orders: club fee (0 on plain orders). */
+  clubFeeSats: number;
+  /** Open Studio artwork orders: artist royalty (0 on plain orders). */
+  artistRoyaltySats: number;
   /** Estimated fee of the user's funding transaction (0 when not provided). */
   fundingFeeSats: number;
   totalSats: number;
 }
 
 /**
- * What the user pays in total: commit output (reveal fee + postage) + service fee + funding tx fee.
- * The funding fee depends on the user's wallet UTXOs, so it is an optional estimate.
+ * What the user pays in total: commit output (reveal fee + postage) + service fee (plain orders) or club fee
+ * + artist royalty (artwork orders, plan §3.1) + funding tx fee. The funding fee depends on the user's
+ * wallet UTXOs, so it is an optional estimate.
  */
 export function estimateTotal(
-  quote: Pick<Quote, 'revealFeeSats' | 'postageSats' | 'serviceFeeSats' | 'commitValueSats'>,
+  quote: Pick<Quote, 'revealFeeSats' | 'postageSats' | 'serviceFeeSats' | 'commitValueSats' | 'clubFeeSats' | 'artistRoyaltySats'>,
   funding?: { vsize: number; feeRate: number },
 ): TotalEstimate {
   const fundingFeeSats = funding ? Math.ceil(funding.vsize * funding.feeRate) : 0;
   const commitValueSats = quote.commitValueSats;
+  const clubFeeSats = quote.clubFeeSats ?? 0;
+  const artistRoyaltySats = quote.artistRoyaltySats ?? 0;
   return {
     revealFeeSats: quote.revealFeeSats,
     postageSats: quote.postageSats,
     commitValueSats,
     serviceFeeSats: quote.serviceFeeSats,
+    clubFeeSats,
+    artistRoyaltySats,
     fundingFeeSats,
-    totalSats: commitValueSats + quote.serviceFeeSats + fundingFeeSats,
+    totalSats: commitValueSats + quote.serviceFeeSats + clubFeeSats + artistRoyaltySats + fundingFeeSats,
+  };
+}
+
+// ----------------------------------------------------------------------------- Open Studio royalty split
+
+/**
+ * Dust limits (sats) of the payout script types the studio accepts (ADR-0007 §3): the smallest output
+ * value Bitcoin Core relays for a P2TR / P2WPKH output at the default 3 sat/vB dust fee rate.
+ */
+export const DUST_LIMIT_SATS: Readonly<Record<PayoutScriptType, number>> = Object.freeze({ p2tr: 330, p2wpkh: 294 });
+export type PayoutScriptType = 'p2tr' | 'p2wpkh';
+
+/** Plan defaults (board decisions 2 and 3): royalty 10% of the mint price, club fee 10% of the network cost. */
+export const DEFAULT_ROYALTY_BPS = 1000;
+export const DEFAULT_CLUB_FEE_BPS = 1000;
+export const BPS_DENOMINATOR = 10_000;
+
+export interface RoyaltySplitInput {
+  /** Network cost of the reveal: reveal fee + postage (the commit output). */
+  commitValueSats: number;
+  /** Club fee for the tier, basis points of `commitValueSats`. */
+  clubFeeBps: number;
+  /** Artist royalty, basis points of the mint price. */
+  royaltyBps: number;
+  /** Script type of the artist's payout address: decides the dust floor. */
+  payoutScriptType: PayoutScriptType;
+}
+
+export interface RoyaltySplit {
+  commitValueSats: number;
+  /** floor(commitValueSats x clubFeeBps / 10,000). */
+  clubFeeSats: number;
+  /** commitValueSats + clubFeeSats. */
+  mintPriceSats: number;
+  /** floor(mintPriceSats x royaltyBps / 10,000) before the dust floor. */
+  royaltyBeforeDustSats: number;
+  /** The royalty actually paid: the raw royalty, raised to the dust limit when it was below it (0 when royaltyBps is 0). */
+  artistRoyaltySats: number;
+  dustLimitSats: number;
+  raisedToDust: boolean;
+  /** commitValueSats + clubFeeSats + artistRoyaltySats (funding fee excluded). */
+  totalSats: number;
+}
+
+function assertBps(v: number, name: string): void {
+  if (!Number.isInteger(v) || v < 0 || v > BPS_DENOMINATOR) throw new RangeError(`${name} must be an integer in 0..${BPS_DENOMINATOR}, got ${v}`);
+}
+
+/**
+ * The Open Studio money split (plan vocabulary; ADR-0007 §5), integer maths only:
+ *   clubFee   = floor(commitValue x clubFeeBps / 10,000)
+ *   mintPrice = commitValue + clubFee
+ *   royalty   = floor(mintPrice x royaltyBps / 10,000), raised to the payout script's dust limit when
+ *               positive-but-below-dust (an output below dust would not relay); 0 when royaltyBps is 0
+ *   total     = commitValue + clubFee + royalty
+ * Pure and deterministic: the browser and the service compute the same numbers from the same quote.
+ */
+export function computeRoyaltySplit(input: RoyaltySplitInput): RoyaltySplit {
+  const { commitValueSats, clubFeeBps, royaltyBps, payoutScriptType } = input;
+  if (!Number.isSafeInteger(commitValueSats) || commitValueSats < 0) throw new RangeError(`commitValueSats must be a non-negative integer, got ${commitValueSats}`);
+  assertBps(clubFeeBps, 'clubFeeBps');
+  assertBps(royaltyBps, 'royaltyBps');
+  const dustLimitSats = DUST_LIMIT_SATS[payoutScriptType];
+  if (dustLimitSats === undefined) throw new RangeError(`unknown payout script type ${String(payoutScriptType)}`);
+  const clubFeeSats = Math.floor((commitValueSats * clubFeeBps) / BPS_DENOMINATOR);
+  const mintPriceSats = commitValueSats + clubFeeSats;
+  const royaltyBeforeDustSats = Math.floor((mintPriceSats * royaltyBps) / BPS_DENOMINATOR);
+  const raisedToDust = royaltyBps > 0 && royaltyBeforeDustSats < dustLimitSats;
+  const artistRoyaltySats = royaltyBps === 0 ? 0 : raisedToDust ? dustLimitSats : royaltyBeforeDustSats;
+  return {
+    commitValueSats,
+    clubFeeSats,
+    mintPriceSats,
+    royaltyBeforeDustSats,
+    artistRoyaltySats,
+    dustLimitSats,
+    raisedToDust,
+    totalSats: commitValueSats + clubFeeSats + artistRoyaltySats,
   };
 }
 

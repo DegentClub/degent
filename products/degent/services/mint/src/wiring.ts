@@ -24,10 +24,16 @@ import { StoreParentUtxoProvider } from './adapters/store-parent-utxo.js';
 import { CompositeArtReview, RulesArtReview } from './adapters/rules-art-review.js';
 import { ClaudeArtReview } from './adapters/claude-art-review.js';
 import { MemoryEventBus, systemClock } from './adapters/system.js';
+import { MetaEditionStore } from './adapters/edition-store.js';
+import { HttpStudioClient, MemoryStudioClient } from './adapters/studio-client.js';
+import { HttpLedgerClient, MemoryLedgerClient } from './adapters/ledger-client.js';
 import type { Broadcaster } from './ports/broadcaster.js';
 import type { ChainPort } from './ports/chain.js';
+import type { EditionStore } from './ports/edition-store.js';
+import type { LedgerClient } from './ports/ledger-client.js';
 import type { OrderStore } from './ports/order-store.js';
 import type { SecretBlobStore } from './ports/reveal-vault.js';
+import type { StudioClient } from './ports/studio-client.js';
 
 export interface Runtime {
   app: Hono;
@@ -37,6 +43,10 @@ export interface Runtime {
   chain: ChainPort;
   events: MemoryEventBus;
   signer: InMemoryPolicySigner;
+  /** Open Studio wiring: HTTP clients when configured, in-memory fakes on regtest, undefined otherwise. */
+  studio: StudioClient | undefined;
+  ledger: LedgerClient | undefined;
+  editions: EditionStore;
   close(): void;
 }
 
@@ -95,7 +105,21 @@ export function buildRuntime(cfg: MintConfig, log: Logger = jsonLogger()): Runti
 
   const events = new MemoryEventBus();
   const parents = new StoreParentUtxoProvider(store);
-  const orders = new OrderService({ settings, store, content, reveals, review, events, clock: systemClock, chain, fees });
+
+  // Open Studio (ADR-0007, plan §3): the studio feeds artwork orders, the ledger records them (never blocking).
+  const editions = new MetaEditionStore(store);
+  let studio: StudioClient | undefined;
+  if (cfg.studio) studio = new HttpStudioClient({ studioUrl: cfg.studio.url, apiKey: cfg.studio.apiKey });
+  else if (net === 'regtest') {
+    studio = new MemoryStudioClient();
+    log.info('artwork orders use an empty in-memory studio (regtest dev only); set STUDIO_URL for a real one', {});
+  } else log.info('artwork orders disabled (no STUDIO_URL)', {});
+  let ledger: LedgerClient | undefined;
+  if (cfg.ledger) ledger = new HttpLedgerClient({ ledgerUrl: cfg.ledger.url, apiKey: cfg.ledger.apiKey, product: 'degent' });
+  else if (net === 'regtest') ledger = new MemoryLedgerClient();
+  else log.info('ledger recording disabled (no LEDGER_URL)', {});
+
+  const orders = new OrderService({ settings, store, content, reveals, review, events, clock: systemClock, chain, fees, editions, studio, ledger, log });
   const app = createApp({
     orders,
     fees,
@@ -108,7 +132,7 @@ export function buildRuntime(cfg: MintConfig, log: Logger = jsonLogger()): Runti
     log,
   });
   const worker = new MintWorker({ orders, store, content, reveals, chain, parents, signer, broadcasters, clock: systemClock, log });
-  return { app, worker, orders, parents, chain, events, signer, close: () => store.close?.() };
+  return { app, worker, orders, parents, chain, events, signer, studio, ledger, editions, close: () => store.close?.() };
 }
 
 /** Seed the parent location from PARENT_OUTPOINT when the store has none yet. */

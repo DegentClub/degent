@@ -89,6 +89,16 @@ export interface ServiceConfig extends CollectionConfig {
   parentValueSats: number;
   serviceFeeAddress: string | null;
   maxUploadBytes: number;
+  /**
+   * Open Studio (ADR-0007, plan §3.1): artist royalty in basis points of the mint price
+   * (`commitValueSats + clubFeeSats`), paid as an output of the minter's funding transaction to the
+   * artist's proven payout address. Default 1000 (10%). Absent on services without a studio.
+   */
+  royaltyBps?: number;
+  /** Open Studio: club fee per tier in basis points of `commitValueSats`, paid to `serviceFeeAddress`. Default 1000. */
+  clubFeeBps?: Record<Tier, number>;
+  /** Base URL of the Artist Studio the mint takes artworks from; null when artwork orders are disabled. */
+  studioUrl?: string | null;
 }
 
 export interface CreateOrderRequest {
@@ -99,6 +109,12 @@ export interface CreateOrderRequest {
   recipientAddress: string; // ordinals (taproot) address receiving the child
   revealPubkey: string; // 32-byte x-only hex, ephemeral, generated in the browser
   feeRate: number; // sat/vB
+  /**
+   * Open Studio: mint an approved studio artwork. `contentType`, `contentLength` and `contentSha256` must
+   * equal the artwork record's (the service takes the facts and the bytes from the studio); the upload step
+   * is skipped and the order is returned already `approved` with a binding quote (plan §3.1).
+   */
+  artworkId?: string;
 }
 
 export interface Quote {
@@ -121,6 +137,20 @@ export interface Quote {
   /** Block lane only: the 1-based block slot this order would be revealed in (ADR-0005 §4). */
   queuePosition: number | null;
   etaMinutes: number | null;
+  // ---- Open Studio artwork orders (ADR-0007 §5, plan §3.1). Absent on plain orders. ----
+  /** Club fee: floor(commitValueSats x clubFeeBps / 10,000) for the tier; output [2] of the funding tx to serviceFeeAddress. Replaces the flat serviceFeeSats (0 on artwork orders). */
+  clubFeeSats?: number;
+  /** Artist royalty: floor(mintPriceSats x royaltyBps / 10,000), raised to the dust limit of the payout script type; output [1] of the funding tx. */
+  artistRoyaltySats?: number;
+  /** The artist's proven payout address (from the studio); the royalty output's destination. */
+  artistAddress?: string;
+  artworkId?: string;
+  /** commitValueSats + clubFeeSats: the base of the royalty. */
+  mintPriceSats?: number;
+  /** The edition number reserved for this order until `expiresAt`; the browser signs the reveal's attribution metadata with it (plan §3.4). */
+  edition?: number;
+  /** True when the royalty was below the payout script's dust limit and was raised to it (plan §3.2). */
+  royaltyRaisedToDust?: boolean;
 }
 
 export interface ReviewCheck {
@@ -153,6 +183,13 @@ export interface QueueInfo {
   etaMinutes: number | null;
 }
 
+/** The artist royalty output as found in the minter's funding transaction (plan §3.3). */
+export interface RoyaltyPaid {
+  txid: string;
+  vout: number;
+  sats: number;
+}
+
 export interface Order {
   id: string;
   network: Network;
@@ -175,6 +212,15 @@ export interface Order {
   timeline: OrderEvent[];
   createdAt: string;
   updatedAt: string;
+  // ---- Open Studio artwork orders (plan §3.1). Absent on plain orders. ----
+  artworkId?: string;
+  artistAddress?: string;
+  artistRoyaltySats?: number;
+  clubFeeSats?: number;
+  /** Assigned when the order reaches `paid` (the reservation made at quote time becomes the edition). */
+  edition?: number;
+  /** The verified royalty output of the funding transaction; null until `paid`. */
+  royaltyPaid?: RoyaltyPaid | null;
 }
 
 /**
@@ -230,6 +276,10 @@ export interface RescueInputs {
   rescueFeeRate: number;
   /** The service's current standard-lane estimate, so the UI can say whether the rescue is competitive. */
   suggestedFeeRate: number;
+  // ---- Open Studio artwork orders: the attribution the envelope was built with (plan §3.4, §3.6). ----
+  artworkId?: string;
+  artistAddress?: string;
+  edition?: number;
 }
 
 export interface HealthResponse {
@@ -285,7 +335,10 @@ export type ApiErrorCode =
   | 'review_unavailable'
   | 'queue_full'
   | 'upstream_unavailable'
-  | 'internal';
+  | 'internal'
+  | 'artwork_not_found'
+  | 'artwork_not_mintable'
+  | 'artist_payout_missing';
 
 export interface ApiErrorBody {
   error: { code: ApiErrorCode | string; message: string; details?: unknown };
@@ -304,4 +357,25 @@ export interface OrderStatusEvent {
   detail?: string;
   txid?: string;
   inscriptionId?: string;
+}
+
+/**
+ * Payload of `degent.mint.royalty.paid` (contracts/asyncapi/degent-mint.yaml): the artist royalty output
+ * of the minter's funding transaction was verified by script and value. Emitted once per artwork order,
+ * after the funding transaction is final (confirmed, or unconfirmed and not RBF-signalling).
+ */
+export interface RoyaltyPaidEvent {
+  type: 'degent.mint.royalty.paid';
+  /** `<orderId>:royalty`. Idempotency key. */
+  eventId: string;
+  orderId: string;
+  network: Network;
+  artworkId: string;
+  /** The artist's payout address (the output's destination). */
+  artist: string;
+  sats: number;
+  txid: string;
+  vout: number;
+  at: string;
+  edition?: number;
 }

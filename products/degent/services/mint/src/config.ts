@@ -3,7 +3,7 @@
  * and refuses unsafe combinations (mainnet with the in-memory dev signer, dev defaults off regtest).
  */
 import type { CollectionConfig, Network } from '@bsh/degent-mint-sdk';
-import { DEFAULT_CONFIG, MAX_UPLOAD_BYTES } from '@bsh/degent-mint-sdk';
+import { DEFAULT_CLUB_FEE_BPS, DEFAULT_CONFIG, DEFAULT_ROYALTY_BPS, MAX_UPLOAD_BYTES } from '@bsh/degent-mint-sdk';
 import { DEFAULT_POLICY } from './domain/policy.js';
 import { addressKind } from './domain/address.js';
 import type { MintSettings } from './application/settings.js';
@@ -28,6 +28,10 @@ export interface MintConfig {
   workerIntervalMs: number;
   rateLimitPerMinute: number;
   trustProxy: boolean;
+  /** Open Studio: the Artist Studio (artwork orders). null => disabled (regtest wires an in-memory fake). */
+  studio: { url: string; apiKey: string | null } | null;
+  /** Open Studio: the platform ledger (plan §3.5). null => not recorded (regtest wires an in-memory fake). */
+  ledger: { url: string; apiKey: string | null } | null;
 }
 
 export class ConfigError extends Error {
@@ -145,6 +149,22 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
   if ((feeStd > 0 || feeLarge > 0 || feeFull > 0) && !serviceFeeAddress) problems.push('SERVICE_FEE_ADDRESS is required when a service fee is set');
   if (serviceFeeAddress && addressKind(serviceFeeAddress, net) === null) problems.push(`SERVICE_FEE_ADDRESS is not a ${net} address`);
 
+  // Open Studio (ADR-0007, plan §3): studio, ledger, royalty and club fee in basis points.
+  const studioUrl = url('STUDIO_URL', null);
+  const studioApiKey = str('STUDIO_API_KEY');
+  if (studioUrl && !studioApiKey && !dev) problems.push('STUDIO_API_KEY (scope studio:internal) is required when STUDIO_URL is set');
+  const ledgerUrl = url('LEDGER_URL', null);
+  const ledgerApiKey = str('LEDGER_API_KEY');
+  if (ledgerUrl && !ledgerApiKey && !dev) problems.push('LEDGER_API_KEY (scope ledger) is required when LEDGER_URL is set');
+  const royaltyBps = int('ROYALTY_BPS', DEFAULT_ROYALTY_BPS, 0, 10_000);
+  const clubFeeBps = {
+    standard: int('CLUB_FEE_BPS_STANDARD', DEFAULT_CLUB_FEE_BPS, 0, 10_000),
+    large: int('CLUB_FEE_BPS_LARGE', DEFAULT_CLUB_FEE_BPS, 0, 10_000),
+    fullblock: int('CLUB_FEE_BPS_FULLBLOCK', DEFAULT_CLUB_FEE_BPS, 0, 10_000),
+  };
+  if (studioUrl && (clubFeeBps.standard > 0 || clubFeeBps.large > 0 || clubFeeBps.fullblock > 0) && !serviceFeeAddress)
+    problems.push('SERVICE_FEE_ADDRESS is required for artwork orders when a club fee is set (CLUB_FEE_BPS_*)');
+
   const corsOrigins = (str('CORS_ORIGINS') ?? '')
     .split(',')
     .map((x) => x.trim())
@@ -190,6 +210,9 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
           block: { ...DEFAULT_POLICY.bands.block, minFeeRate },
         },
       },
+      royaltyBps,
+      clubFeeBps,
+      studioUrl,
     },
     port: int('PORT', 8787, 1, 65_535),
     host: str('HOST') ?? '127.0.0.1',
@@ -209,6 +232,8 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
     workerIntervalMs: int('WORKER_INTERVAL_MS', 15_000, 1_000, 600_000),
     rateLimitPerMinute: int('RATE_LIMIT_PER_MINUTE', 60, 1, 100_000),
     trustProxy: str('TRUST_PROXY') === 'true',
+    studio: studioUrl ? { url: studioUrl, apiKey: studioApiKey } : null,
+    ledger: ledgerUrl ? { url: ledgerUrl, apiKey: ledgerApiKey } : null,
   };
   if (problems.length) throw new ConfigError(problems);
   return out;

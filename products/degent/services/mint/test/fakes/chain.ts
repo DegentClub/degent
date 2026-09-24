@@ -10,6 +10,8 @@ export interface FakeTx {
   vout: Array<{ value: bigint; scriptHex: string }>;
   blockHeight: number | null;
   raw?: string;
+  /** BIP125 signalling (only meaningful while unconfirmed). */
+  rbf?: boolean;
 }
 
 export class FakeChain implements ChainPort {
@@ -84,6 +86,7 @@ export class FakeChain implements ChainPort {
       vout: t.vout.map((o) => ({ ...o, address: this.address(o.scriptHex) })),
       confirmed: t.blockHeight !== null,
       blockHeight: t.blockHeight,
+      rbfSignalled: t.blockHeight === null && t.rbf === true,
     };
   }
 

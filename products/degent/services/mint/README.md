@@ -126,6 +126,70 @@ Policy signer (ADR §3), stricter in one respect: the parent return must equal t
 postage, the lane fee band and that the fee rate matches the quote. A refusal moves the order straight to
 `rescue_available`.
 
+## Artwork orders and royalties (Open Studio, ADR-0007, plan §3)
+
+A member mints a studio artwork with `POST /v1/orders` carrying `artworkId` (the web app copies the artwork
+record's `contentType`, `contentLength` and `contentSha256`). The service:
+
+1. **Takes the facts and the bytes from the studio** (`StudioClient`: `GET /v1/artworks/{id}`, the artist's
+   profile for the proven payout address, `GET /v1/artworks/{id}/content`) and refuses what plan §3.1 says
+   to refuse: 404 `artwork_not_found`; 409 `artwork_not_mintable` unless the artwork is `approved`; 409
+   `artist_payout_missing` without a P2WPKH / P2TR payout address; 422 `content_mismatch` when the declared
+   facts differ from the record. The review happened at submission (ADR-0007 §4), so the upload step is
+   skipped: the order is created and walked `awaiting_content -> reviewing -> approved` (timeline detail
+   `artwork <id> reviewed at submission`) and returned `approved` with a **binding** quote.
+2. **Reserves the edition** (`EditionStore`, per artwork, in the order store's meta) for the quote's TTL. The
+   reservation becomes `Order.edition` at `paid`; an expired one is released and may go to a later order; a
+   late payer re-claims its quoted number while it is still free, otherwise the order is offered self-rescue
+   (its reveal was signed with a number that is no longer its own).
+3. **Quotes the split** (`@bsh/degent-mint-sdk.computeRoyaltySplit`): `clubFeeSats = floor(commitValue x
+   CLUB_FEE_BPS_<TIER> / 10000)` (replaces the flat service fee, which is 0 on artwork orders),
+   `mintPriceSats = commitValue + clubFee`, `artistRoyaltySats = floor(mintPrice x ROYALTY_BPS / 10000)` raised
+   to the payout script's dust limit (P2TR 330, P2WPKH 294; `royaltyRaisedToDust` says so),
+   `totalSats = commitValue + clubFee + royalty`. The quote carries `artistAddress`, `artworkId`,
+   `mintPriceSats` and the reserved `edition`.
+4. **Signs attribution into the envelope** (plan §3.4): the browser builds the content with
+   `attribution: { artist, artwork, edition, studio: 'degent.club' }` (ord tag 5, canonical CBOR via
+   `@bsh/inscription.encodeAttribution`), which changes the commit address and the exact reveal weight; the
+   quote already accounts for it. `POST /reveal` recomputes the same envelope: a reveal built without the
+   metadata, or with another edition, is `reveal_invalid`. `GET /rescue` returns `artworkId`, `artistAddress`
+   and `edition` so the recovery bundle reproduces the envelope.
+5. **Verifies the funding transaction by script** (plan §3.3, `worker.detectArtworkPayment`): after the
+   commit output matches, every output paying the artist's payout script and the club script
+   (`SERVICE_FEE_ADDRESS`) is summed and compared with the quote (`domain/royalty.ts`, never address
+   strings). The order is `paid` either way (the commit is funded) and the edition is assigned; a short or
+   missing output moves it straight to `rescue_available` naming the output, and the parent is never
+   co-signed. A satisfied artist output is recorded as `royaltyPaid { txid, vout, sats }`.
+6. **Reports the royalty**: `degent.mint.royalty.paid` is emitted once and the record is `POST`ed to the
+   studio's `/v1/internal/royalties` (idempotent on `orderId`), retried with backoff (30 s doubling, capped at
+   1 h) on later ticks. A failed post never blocks the mint; a non-retryable refusal (e.g. 409 conflicting
+   facts) stops the retries and logs for an operator (`royaltyReport.gaveUp`). Both wait while the funding
+   transaction is unconfirmed **and** RBF-signalling (the order itself proceeds as any unconfirmed commit does).
+7. **Records the ledger** (plan §3.5, platform `@bsh/ledger` 1.2): a ledger order (`product: degent`,
+   `customerRef` = recipient) with line items `network-cost` (payee `platform:commit`, the commit address -
+   the psbt method needs a payee on every line), `club-fee` (payee `club:degent-club`) and `artist-royalty`
+   (payee `artist:<address>`), a `psbt` intent (expected outputs = the funding layout), and, once paid, the
+   observed funding transaction (`POST /v1/payments/{id}/observations`, unconfirmed first, again when
+   confirmed) from which the ledger records one payout per payee output. Idempotency keys
+   `degent-mint:<orderId>:{order,payment}`; retried with backoff; never blocks.
+8. **Publishes `collection.minted`** (platform topic 1.1.0) on `delivered` for every parent-linked mint, with
+   `artist`, `artworkId`, `edition` and `royalty` on artwork orders (a rescued child has no parent link and
+   is not announced).
+
+The funding transaction the browser builds is `[commit, artist royalty, club fee, change]` (plan §3.2); the
+reveal is unchanged (ADR-0005), so a rescue changes nothing for the artist: they were paid when the minter
+paid (ADR-0007 §5). The shared `degent.mint.order.{status}` payload is untouched (platform-owned topic).
+
+Configuration: `STUDIO_URL` + `STUDIO_API_KEY` (scope `studio:internal`), `LEDGER_URL` + `LEDGER_API_KEY`,
+`ROYALTY_BPS` (default 1000), `CLUB_FEE_BPS_{STANDARD,LARGE,FULLBLOCK}` (default 1000; `SERVICE_FEE_ADDRESS`
+required when > 0 with a studio). Without `STUDIO_URL` artwork orders are refused (`GET /v1/config` says
+`studioUrl: null`); on regtest an empty in-memory studio and ledger are wired. Tests use `MemoryStudioClient`,
+`MemoryLedgerClient` and the fake chain (`test/artwork-orders`, `test/royalty-worker`, `test/artwork-e2e`).
+
+Known gaps: the studio does not expose the artist's payout address on `GET /v1/artists/{address}` yet
+(`HttpStudioClient` reads `payoutAddress` from that profile when present, else "not proven"); the
+`report-royalty` / `record-ledger` worker steps scan `delivered` rows each tick (an index is Phase 5 work).
+
 ## API summary
 
 | Method | Path | Auth | Result |
@@ -134,7 +198,7 @@ postage, the lane fee band and that the fee rate matches the quote. A refusal mo
 | GET | `/v1/config` | - | collection rules, three tiers, collection address, `parentValueSats`, upload limit |
 | GET | `/v1/fees` | - | sat/vB per lane |
 | GET | `/v1/queue` | - | lane waiting / in-flight / capacity / ETA; block lane `weightBudget` + `inFlightWeight` |
-| POST | `/v1/orders` | - | 201 `{ order, orderToken }` |
+| POST | `/v1/orders` | - | 201 `{ order, orderToken }`; with `artworkId` the order comes back `approved` (Open Studio) |
 | PUT | `/v1/orders/{id}/content` | Bearer | raw bytes (`application/octet-stream`, <= 4 MiB) -> approved/rejected order |
 | POST | `/v1/orders/{id}/reveal` | Bearer | `SubmitRevealRequest` -> `awaiting_payment` |
 | GET | `/v1/orders/{id}` | - | public order (no PSBT, no token) |
@@ -159,7 +223,10 @@ See [`env.schema.json`](./env.schema.json) for every variable. Essentials:
 | `REVEAL_ENCRYPTION_KEY` | 32-byte hex AES key for stored reveals (required off regtest) |
 | `CORS_ORIGINS` | exact origins, comma-separated; empty = deny all |
 | `ART_REVIEW_API_KEY` | enables the Claude vision review (`claude-opus-5`); unset = rules only |
-| `SERVICE_FEE_ADDRESS`, `SERVICE_FEE_SATS_{STANDARD,LARGE,FULLBLOCK}` | optional per-tier service fee, paid in the funding tx |
+| `SERVICE_FEE_ADDRESS`, `SERVICE_FEE_SATS_{STANDARD,LARGE,FULLBLOCK}` | optional per-tier service fee, paid in the funding tx (plain orders) |
+| `STUDIO_URL`, `STUDIO_API_KEY` | Open Studio: artwork orders from `@bsh/degent-studio` (key scope `studio:internal`) |
+| `LEDGER_URL`, `LEDGER_API_KEY` | platform ledger recording of artwork orders (never blocks a mint) |
+| `ROYALTY_BPS`, `CLUB_FEE_BPS_{STANDARD,LARGE,FULLBLOCK}` | artist royalty (of the mint price) and club fee (of the network cost) in basis points; defaults 1000 |
 
 Config errors are listed all at once and the process exits non-zero.
 

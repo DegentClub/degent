@@ -172,6 +172,9 @@ export function createApp(o: AppOptions): Hono {
       parentValueSats: s.parentValueSats,
       serviceFeeAddress: s.serviceFeeAddress,
       maxUploadBytes: s.maxUploadBytes,
+      royaltyBps: s.royaltyBps,
+      clubFeeBps: s.clubFeeBps,
+      studioUrl: o.orders.studioEnabled ? s.studioUrl : null,
     };
     return c.json(body);
   });

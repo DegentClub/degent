@@ -1,5 +1,8 @@
-import type { CollectionConfig, Network } from '@bsh/degent-mint-sdk';
+import type { CollectionConfig, Network, Tier } from '@bsh/degent-mint-sdk';
 import type { PolicyConfig } from '../domain/policy.js';
+
+/** `collectionId` of every `collection.minted` event this service publishes (the product slug). */
+export const COLLECTION_ID = 'degent';
 
 /** Runtime settings shared by the API and the worker (built by config.ts or by tests). */
 export interface MintSettings {
@@ -22,4 +25,11 @@ export interface MintSettings {
   /** Keep watching expired orders for a late commit this long after expiry. */
   latePaymentWindowSeconds: number;
   policy: PolicyConfig;
+  // ---- Open Studio (ADR-0007, plan §3) ----
+  /** Artist royalty, basis points of the mint price (commitValue + clubFee). Default 1000. */
+  royaltyBps: number;
+  /** Club fee per tier, basis points of commitValue, paid to serviceFeeAddress. Default 1000 each. */
+  clubFeeBps: Record<Tier, number>;
+  /** Base URL of the Artist Studio (published in GET /v1/config); null when artwork orders are disabled. */
+  studioUrl: string | null;
 }

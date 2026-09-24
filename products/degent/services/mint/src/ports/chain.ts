@@ -7,9 +7,15 @@ export interface ChainTxOutput {
 
 export interface ChainTx {
   txid: string;
+  /** In vout order; `scriptHex` is the scriptPubKey (what the worker compares, never `address`). */
   vout: ChainTxOutput[];
   confirmed: boolean;
   blockHeight: number | null;
+  /**
+   * BIP125: unconfirmed and at least one input signals replaceability (sequence < 0xfffffffe). False once
+   * confirmed. Adapters that cannot tell report false (the existing payment path never depended on it).
+   */
+  rbfSignalled: boolean;
 }
 
 export interface ChainOutspend {

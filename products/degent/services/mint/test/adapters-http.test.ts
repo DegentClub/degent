@@ -29,7 +29,7 @@ describe('EsploraChain', () => {
       return new Response('', { status: 404 });
     });
     const c = new EsploraChain({ esploraUrl: 'http://esplora/api/', ordUrl: 'http://ord', fetch: f.fetch });
-    expect(await c.getTx(TXID)).toEqual({ txid: TXID, vout: [{ value: 1234n, scriptHex: '5120aa', address: 'bcrt1p' }], confirmed: true, blockHeight: 7 });
+    expect(await c.getTx(TXID)).toEqual({ txid: TXID, vout: [{ value: 1234n, scriptHex: '5120aa', address: 'bcrt1p' }], confirmed: true, blockHeight: 7, rbfSignalled: false });
     expect(await c.getTx('00'.repeat(32))).toBeNull();
     expect(await c.getTxOutspends(TXID)).toEqual([{ spent: true, txid: 'cd'.repeat(32), vin: 1 }, { spent: false, txid: null, vin: null }]);
     expect(await c.findOutputsPaying('bcrt1p')).toEqual([{ txid: TXID, vout: 0, value: 5n, confirmed: false }]);

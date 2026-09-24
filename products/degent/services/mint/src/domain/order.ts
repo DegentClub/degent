@@ -9,6 +9,32 @@
  */
 import type { Lane, Order, OrderStatus, QueueInfo } from '@bsh/degent-mint-sdk';
 
+/** Bookkeeping for the studio royalty record (plan §3.3: retry with backoff, idempotent on orderId). */
+export interface RoyaltyReportState {
+  /** `degent.mint.royalty.paid` published. */
+  emittedAt: string | null;
+  /** `POST /v1/internal/royalties` acknowledged. */
+  reportedAt: string | null;
+  attempts: number;
+  nextAttemptAt: string | null;
+  lastError: string | null;
+  /** The studio refused the record for good (e.g. conflicting facts); an operator must look. */
+  gaveUp: boolean;
+}
+
+/** Bookkeeping for the ledger order + psbt intent (plan §3.5; never blocks the mint). */
+export interface LedgerRecordState {
+  orderId: string | null;
+  paymentId: string | null;
+  attempts: number;
+  nextAttemptAt: string | null;
+  lastError: string | null;
+  /** The funding transaction was reported (`POST /v1/payments/{id}/observations`); set once at >= 1 confirmation. */
+  observedAt?: string | null;
+  /** True when the observation that was reported was already confirmed (nothing more to report). */
+  observedConfirmed?: boolean;
+}
+
 export interface OrderRecord extends Omit<Order, 'queue'> {
   lane: Lane;
   /** Optimistic concurrency: incremented on every save; stores reject stale writes. */
@@ -28,7 +54,14 @@ export interface OrderRecord extends Omit<Order, 'queue'> {
   lastError: string | null;
   /** Parent outpoint this order's reveal spends (set while revealing / after). */
   parentOutpoint: { txid: string; vout: number } | null;
+  // ---- Open Studio artwork orders (absent / undefined on plain orders and on rows written before Phase 3) ----
+  /** Funding tx was unconfirmed and RBF-signalling when the payment was detected; the royalty report waits for finality. */
+  fundingRbf?: boolean;
+  royaltyReport?: RoyaltyReportState | null;
+  ledger?: LedgerRecordState | null;
 }
+
+export const isArtworkOrder = (r: Pick<OrderRecord, 'artworkId'>): boolean => typeof r.artworkId === 'string' && r.artworkId.length > 0;
 
 /** Public projection. Never includes the PSBT, raw hex or internal bookkeeping. */
 export function toPublicOrder(r: OrderRecord, queue: QueueInfo | null): Order {
@@ -53,6 +86,16 @@ export function toPublicOrder(r: OrderRecord, queue: QueueInfo | null): Order {
     timeline: r.timeline,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
+    ...(isArtworkOrder(r)
+      ? {
+          artworkId: r.artworkId,
+          artistAddress: r.artistAddress,
+          artistRoyaltySats: r.artistRoyaltySats,
+          clubFeeSats: r.clubFeeSats,
+          ...(r.edition !== undefined ? { edition: r.edition } : {}),
+          royaltyPaid: r.royaltyPaid ?? null,
+        }
+      : {}),
   };
 }
 

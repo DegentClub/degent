@@ -5,10 +5,14 @@
  */
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
-import { p2tr } from '@scure/btc-signer';
-import { addressToScript, buildHalfSignedReveal, buildResignedRescue, commitAddress, networkParams } from '@bsh/inscription';
+import { p2tr, p2wpkh } from '@scure/btc-signer';
+import { addressToScript, buildHalfSignedReveal, buildResignedRescue, commitAddress, networkParams, type Attribution } from '@bsh/inscription';
 import type { CreateOrderResponse, Order, RescueInputs, Tier } from '@bsh/degent-mint-sdk';
-import { DEFAULT_CONFIG, MAX_UPLOAD_BYTES, sha256Hex, tierForSize } from '@bsh/degent-mint-sdk';
+import { DEFAULT_CLUB_FEE_BPS, DEFAULT_CONFIG, DEFAULT_ROYALTY_BPS, MAX_UPLOAD_BYTES, sha256Hex, tierForSize } from '@bsh/degent-mint-sdk';
+import { MetaEditionStore } from '../../src/adapters/edition-store.js';
+import { MemoryLedgerClient } from '../../src/adapters/ledger-client.js';
+import { MemoryStudioClient } from '../../src/adapters/studio-client.js';
+import { ATTRIBUTION_STUDIO } from '../../src/domain/quote.js';
 import { createApp } from '../../src/app.js';
 import { OrderService } from '../../src/application/order-service.js';
 import type { MintSettings } from '../../src/application/settings.js';
@@ -36,6 +40,12 @@ export function regtestAddress(seed: number): string {
   return p2tr(schnorr.getPublicKey(key), undefined, networkParams(NET)).address!;
 }
 
+/** A P2WPKH regtest address (the other payout script type the studio accepts). */
+export function regtestWpkhAddress(seed: number): string {
+  const key = new Uint8Array(32).fill(seed);
+  return p2wpkh(new Uint8Array([0x02, ...schnorr.getPublicKey(key)]), networkParams(NET)).address!;
+}
+
 export function fakeTxid(n: number): string {
   return sha256Hex(new TextEncoder().encode(`fake-tx-${n}`));
 }
@@ -46,6 +56,9 @@ export interface HarnessOptions {
   rateLimit?: { windowMs: number; max: number };
   settings?: Partial<MintSettings>;
   parentValue?: bigint;
+  /** Open Studio fakes; default: an empty MemoryStudioClient and a MemoryLedgerClient. `studio: null` disables artwork orders. */
+  studio?: MemoryStudioClient | null;
+  ledger?: MemoryLedgerClient | null;
 }
 
 export function makeHarness(opts: HarnessOptions = {}) {
@@ -73,6 +86,9 @@ export function makeHarness(opts: HarnessOptions = {}) {
     confirmations: 1,
     latePaymentWindowSeconds: 86_400,
     policy,
+    royaltyBps: DEFAULT_ROYALTY_BPS,
+    clubFeeBps: { standard: DEFAULT_CLUB_FEE_BPS, large: DEFAULT_CLUB_FEE_BPS, fullblock: DEFAULT_CLUB_FEE_BPS },
+    studioUrl: 'http://studio.test',
     ...opts.settings,
   };
   const store = new MemoryOrderStore();
@@ -81,6 +97,9 @@ export function makeHarness(opts: HarnessOptions = {}) {
   const reveals = new EncryptedRevealVault(blobs, TEST_KEY);
   const events = new MemoryEventBus();
   const review = opts.review ?? new RulesArtReview(settings.collection);
+  const studio = opts.studio === null ? undefined : (opts.studio ?? new MemoryStudioClient());
+  const ledger = opts.ledger === null ? undefined : (opts.ledger ?? new MemoryLedgerClient());
+  const editions = new MetaEditionStore(store);
   let n = 0;
   const fees = new StaticFees({ standard: { slow: 1, normal: 2, fast: 5 }, block: { min: 1, recommended: 3 } }, () => clock.now());
   const orders = new OrderService({
@@ -93,6 +112,9 @@ export function makeHarness(opts: HarnessOptions = {}) {
     clock,
     chain,
     fees,
+    editions,
+    studio,
+    ledger,
     newId: () => `dgt_test${String(++n).padStart(4, '0')}`,
   });
   const parents = new StoreParentUtxoProvider(store);
@@ -117,7 +139,7 @@ export function makeHarness(opts: HarnessOptions = {}) {
   const broadcasters = { standard: new FakeBroadcaster('standard', chain), block: new FakeBroadcaster('block', chain) };
   const worker = new MintWorker({ orders, store, content, reveals, chain, parents, signer, broadcasters, clock });
 
-  return { clock, chain, signer, settings, store, content, blobs, reveals, events, orders, parents, app, broadcasters, worker, ready, collectionScriptHex, parentTxid, parentValue };
+  return { clock, chain, signer, settings, store, content, blobs, reveals, events, orders, parents, app, broadcasters, worker, ready, collectionScriptHex, parentTxid, parentValue, studio, ledger, editions };
 }
 
 export type Harness = ReturnType<typeof makeHarness>;
@@ -154,6 +176,14 @@ export interface BrowserMint {
   order: Order;
   commitTxid?: string;
   psbt?: string;
+  /** Open Studio: the attribution the browser signs into the envelope (from the quote). */
+  attribution?: Attribution;
+}
+
+/** What the web app builds the envelope with for an artwork order: exactly the quote's facts (plan §3.4). */
+export function attributionFromQuote(order: Order): Attribution {
+  const q = order.quote!;
+  return { artist: q.artistAddress!, artwork: q.artworkId!, edition: q.edition!, studio: ATTRIBUTION_STUDIO };
 }
 
 export function standardArt(size = 200_000, w = 1024, h = 1024): Uint8Array {
@@ -214,7 +244,7 @@ export async function browserReveal(
   override: Partial<Parameters<typeof buildHalfSignedReveal>[0]> = {},
 ) {
   const quote = b.order.quote!;
-  const content = { contentType: b.contentType, body: b.bytes, parentId: h.settings.collection.parentInscriptionId! };
+  const content = { contentType: b.contentType, body: b.bytes, parentId: h.settings.collection.parentInscriptionId!, ...(b.attribution ? { attribution: b.attribution } : {}) };
   const commit = commitAddress(schnorr.getPublicKey(b.revealKey), content, NET);
   if (commit.address !== quote.commitAddress) throw new Error('browser and service disagree on the commit address');
   const cfg = (await api(h, 'GET', '/v1/config')).body as { collectionAddress: string; parentValueSats: number };
@@ -248,10 +278,15 @@ export async function browserRescue(h: Harness, b: BrowserMint) {
   if (res.status !== 200) throw new Error(`rescue inputs failed: ${JSON.stringify(res.body)}`);
   const inputs = res.body as RescueInputs;
   if (inputs.contentSha256 !== sha256Hex(b.bytes)) throw new Error('rescue inputs are for other content');
+  // Recovery bundle v2 carries artworkId and the reserved edition; the rescue must reproduce the same envelope (§3.6).
+  const attribution: Attribution | undefined = inputs.artworkId
+    ? { artist: inputs.artistAddress!, artwork: inputs.artworkId, edition: inputs.edition!, studio: ATTRIBUTION_STUDIO }
+    : undefined;
+  if (b.attribution && JSON.stringify(attribution) !== JSON.stringify(b.attribution)) throw new Error('rescue inputs disagree with the bundle attribution');
   const rescue = buildResignedRescue({
     network: NET,
     revealPrivkey: b.revealKey,
-    content: { contentType: inputs.contentType, body: b.bytes, ...(inputs.parentInscriptionId ? { parentId: inputs.parentInscriptionId } : {}) },
+    content: { contentType: inputs.contentType, body: b.bytes, ...(inputs.parentInscriptionId ? { parentId: inputs.parentInscriptionId } : {}), ...(attribution ? { attribution } : {}) },
     commitOutpoint: { txid: inputs.commitTxid, vout: inputs.commitVout },
     commitValue: BigInt(inputs.commitValueSats),
     recipientAddress: inputs.recipientAddress,
@@ -281,6 +316,120 @@ export async function browserMintToPayment(h: Harness, o: Parameters<typeof brow
   if (r.status !== 200) throw new Error(`reveal failed: ${JSON.stringify(r.body)}`);
   b.order = r.body as Order;
   return b;
+}
+
+// ----------------------------------------------------------------------------- Open Studio artwork orders
+
+export interface StudioArtworkOptions {
+  id?: string;
+  bytes?: Uint8Array;
+  contentType?: string;
+  /** Artist identity address seed (P2TR). */
+  artistSeed?: number;
+  /** Payout address: a P2TR (default, seed 60 + artistSeed) or explicit. `null` = not proven. */
+  payoutAddress?: string | null;
+  status?: 'submitted' | 'reviewing' | 'approved' | 'rejected' | 'delisted';
+}
+
+let artworkN = 0;
+
+/** Hang an artwork in the fake studio (approved, artist with a proven P2TR payout address by default). */
+export function studioArtwork(h: Harness, o: StudioArtworkOptions = {}) {
+  if (!h.studio) throw new Error('harness has no studio');
+  const artistSeed = o.artistSeed ?? 1;
+  const payoutAddress = o.payoutAddress === undefined ? regtestAddress(60 + artistSeed) : o.payoutAddress;
+  const art = h.studio.addArtwork({
+    id: o.id ?? `art_test${String(++artworkN).padStart(3, '0')}`,
+    artist: regtestAddress(30 + artistSeed),
+    payoutAddress,
+    bytes: o.bytes ?? standardArt(200_000, 1024, 1024),
+    contentType: o.contentType ?? 'image/png',
+    ...(o.status ? { status: o.status } : {}),
+  });
+  return art;
+}
+
+/** POST /v1/orders with artworkId, as the web app does after fetching the artwork record from the studio. */
+export async function browserCreateArtwork(
+  h: Harness,
+  artworkId: string,
+  o: { feeRate?: number; recipientSeed?: number; tier?: Tier; facts?: Partial<{ contentType: string; contentLength: number; contentSha256: string }> } = {},
+) {
+  const art = h.studio?.artworks.get(artworkId);
+  const revealKey = schnorr.utils.randomSecretKey();
+  const revealPubkey = bytesToHex(schnorr.getPublicKey(revealKey));
+  const recipientAddress = regtestAddress(o.recipientSeed ?? 42);
+  const facts = {
+    contentType: art?.contentType ?? 'image/png',
+    contentLength: art?.contentLength ?? 200_000,
+    contentSha256: art?.contentSha256 ?? 'a'.repeat(64),
+    ...(o.facts ?? {}),
+  };
+  const res = await api(h, 'POST', '/v1/orders', {
+    json: {
+      tier: o.tier ?? tierForSize(facts.contentLength)?.tier ?? 'standard',
+      ...facts,
+      recipientAddress,
+      revealPubkey,
+      feeRate: o.feeRate ?? 2,
+      artworkId,
+    },
+  });
+  const b: BrowserMint | null =
+    res.status === 201
+      ? {
+          revealKey,
+          revealPubkey,
+          bytes: art!.bytes!,
+          contentType: art!.contentType,
+          recipientAddress,
+          orderId: (res.body as CreateOrderResponse).order.id,
+          token: (res.body as CreateOrderResponse).orderToken,
+          order: (res.body as CreateOrderResponse).order,
+          attribution: attributionFromQuote((res.body as CreateOrderResponse).order),
+        }
+      : null;
+  return { res, b };
+}
+
+/** Artwork order up to awaiting_payment (create is already `approved`, then the half-signed reveal). */
+export async function browserArtworkToPayment(h: Harness, artworkId: string, o: Parameters<typeof browserCreateArtwork>[2] = {}): Promise<BrowserMint> {
+  await h.ready;
+  const { res, b } = await browserCreateArtwork(h, artworkId, o);
+  if (!b) throw new Error(`artwork order failed: ${JSON.stringify(res.body)}`);
+  const r = await browserReveal(h, b);
+  if (r.status !== 200) throw new Error(`reveal failed: ${JSON.stringify(r.body)}`);
+  b.order = r.body as Order;
+  return b;
+}
+
+export interface FundArtworkOptions {
+  /** Commit output value (default: the quote's). */
+  commitValue?: bigint;
+  /** Royalty output value; default the quote's; 0 omits the output. */
+  royalty?: bigint;
+  /** Club fee output value; default the quote's; 0 omits the output. */
+  clubFee?: bigint;
+  /** Pay the royalty to this address instead of the artist's (wrong script). */
+  royaltyTo?: string;
+  clubTo?: string;
+  confirmed?: boolean;
+  rbf?: boolean;
+  /** Extra change output (default: yes, 5,000 sats to the recipient). */
+  change?: boolean;
+}
+
+/** The minter's wallet broadcasts the funding tx `[commit, artist royalty, club fee, change]` (plan §3.2). */
+export function fundArtwork(h: Harness, b: BrowserMint, opts: FundArtworkOptions = {}): void {
+  const q = b.order.quote!;
+  const script = (a: string) => bytesToHex(addressToScript(a, NET));
+  const vout: Array<{ value: bigint; scriptHex: string }> = [{ value: opts.commitValue ?? BigInt(q.commitValueSats), scriptHex: script(q.commitAddress!) }];
+  const royalty = opts.royalty ?? BigInt(q.artistRoyaltySats ?? 0);
+  if (royalty > 0n) vout.push({ value: royalty, scriptHex: script(opts.royaltyTo ?? q.artistAddress!) });
+  const clubFee = opts.clubFee ?? BigInt(q.clubFeeSats ?? 0);
+  if (clubFee > 0n) vout.push({ value: clubFee, scriptHex: script(opts.clubTo ?? h.settings.serviceFeeAddress!) });
+  if (opts.change ?? true) vout.push({ value: 5_000n, scriptHex: script(b.recipientAddress) });
+  h.chain.addTx({ txid: b.commitTxid!, vin: [{ txid: fakeTxid(999_998), vout: 0 }], vout, confirmed: opts.confirmed ?? false, ...(opts.rbf ? { rbf: true } : {}) });
 }
 
 export { FakeArtReview };

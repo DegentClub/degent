@@ -91,8 +91,13 @@ describe('e2e: parent-linked mint', () => {
       'awaiting_content', 'reviewing', 'approved', 'awaiting_payment', 'paid', 'queued', 'revealing', 'revealed', 'confirmed', 'verified', 'delivered',
     ]);
     // Every transition was emitted as an event, none carrying the PSBT.
-    const types = h.events.events.filter((e) => e.orderId === b.orderId).map((e) => e.type);
+    const types = h.events.orderEvents.filter((e) => e.orderId === b.orderId).map((e) => e.type);
     expect(types).toEqual(o.timeline.map((e) => `degent.mint.order.${e.status}`));
+    // Delivered with the parent link: the platform topic collection.minted is published (no artist fields on a plain order).
+    const minted = h.events.mintedEvents.filter((e) => e.orderId === b.orderId);
+    expect(minted).toHaveLength(1);
+    expect(minted[0]).toMatchObject({ collectionId: 'degent', network: 'regtest', inscriptionId: o.inscriptionId, txid: o.revealTxid, contentHash: sha256Hex(art), parentInscriptionId: h.settings.collection.parentInscriptionId });
+    expect(minted[0]).not.toHaveProperty('artist');
     expect(JSON.stringify(h.events.events)).not.toContain(b.psbt!.slice(0, 40));
   });
 
@@ -171,6 +176,8 @@ describe('e2e: rescue path (ADR-0005 §2: re-signed with K_e from the recovery b
     after = await getOrder(h, b.orderId);
     expect(after.status).toBe('delivered');
     expect(after.rescued).toBe(true);
+    // A rescued child has no parent link: it is not a collection mint.
+    expect(h.events.mintedEvents.filter((e) => e.orderId === b.orderId)).toHaveLength(0);
   });
 
   it('policy refusal offers self-rescue immediately', async () => {

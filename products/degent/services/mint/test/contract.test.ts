@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { ORDER_STATUSES } from '@bsh/degent-mint-sdk';
-import { api, browserMintToPayment, fundCommit, makeHarness } from './fakes/harness.js';
+import { api, browserArtworkToPayment, browserMintToPayment, fundArtwork, fundCommit, makeHarness, regtestAddress, studioArtwork } from './fakes/harness.js';
 
 const root = new URL('../../../../../', import.meta.url).pathname;
 const openapi = parse(readFileSync(join(root, 'contracts/openapi/degent-mint.yaml'), 'utf8'));
@@ -70,7 +70,11 @@ describe('OpenAPI contract', () => {
       for (const m of s.matchAll(/(?:DomainError\(|errorBody\()'([a-z_]+)'/g)) codes.add(m[1]!);
     }
     for (const c of ['not_found', 'conflict', 'validation_failed']) codes.add(c);
-    expect([...codes].filter((c) => !schemas.ErrorCode.enum.includes(c))).toEqual([]);
+    // ErrorCode is an open set (x-extensible-enum, the platform ledger convention): the oasdiff gate locks
+    // closed response enums, so new codes are listed here without turning a closed enum into a breaking change.
+    expect(schemas.ErrorCode.enum).toBeUndefined();
+    expect([...codes].filter((c) => !schemas.ErrorCode['x-extensible-enum'].includes(c))).toEqual([]);
+    for (const c of ['artwork_not_found', 'artwork_not_mintable', 'artist_payout_missing']) expect(schemas.ErrorCode['x-extensible-enum']).toContain(c);
   });
 
   it('OrderStatus enums agree across SDK, OpenAPI and AsyncAPI', () => {
@@ -119,7 +123,58 @@ describe('OpenAPI contract', () => {
     const errs = check(b.order, schemas.Order);
     expect(errs).toEqual([]);
   });
+
+  it('Open Studio: artwork order, config, rescue inputs and the new error codes validate; new fields are all optional', async () => {
+    const h = makeHarness({ settings: { serviceFeeAddress: regtestAddress(5) } });
+    await h.ready;
+    const art = studioArtwork(h);
+    const b = await browserArtworkToPayment(h, art.id);
+    expect(check(b.order, schemas.Order)).toEqual([]);
+    for (const k of ['artworkId', 'artistAddress', 'artistRoyaltySats', 'clubFeeSats', 'royaltyPaid']) {
+      expect(schemas.Order.required).not.toContain(k);
+      expect(schemas.Order.properties[k]).toBeDefined();
+    }
+    for (const k of ['clubFeeSats', 'artistRoyaltySats', 'artistAddress', 'artworkId', 'mintPriceSats', 'edition', 'royaltyRaisedToDust']) {
+      expect(schemas.Quote.required).not.toContain(k);
+      expect(schemas.Quote.properties[k]).toBeDefined();
+    }
+    expect(schemas.CreateOrderRequest.required).not.toContain('artworkId');
+    expect(schemas.CreateOrderRequest.properties.artworkId).toBeDefined();
+    const cfg = await api(h, 'GET', '/v1/config');
+    expect(check(cfg.body, schemas.ServiceConfig)).toEqual([]);
+    expect(cfg.body).toMatchObject({ royaltyBps: 1000, clubFeeBps: { standard: 1000 }, studioUrl: 'http://studio.test' });
+    fundArtwork(h, b);
+    await h.worker.tick();
+    const paid = await api(h, 'GET', `/v1/orders/${b.orderId}`);
+    expect(check(paid.body, schemas.Order)).toEqual([]);
+    expect(paid.body.royaltyPaid).toMatchObject({ vout: 1 });
+    expect(paid.body.edition).toBe(1);
+    h.clock.advance(7 * 3600);
+    const c = await browserArtworkToPayment(h, art.id, { recipientSeed: 3 });
+    fundArtwork(h, c);
+    h.broadcasters.standard.mode = 'retryable';
+    await h.worker.tick();
+    h.clock.advance(7 * 3600);
+    await h.worker.tick();
+    const rescue = await api(h, 'GET', `/v1/orders/${c.orderId}/rescue`, { token: c.token });
+    expect(rescue.status).toBe(200);
+    expect(check(rescue.body, schemas.RescueInputs)).toEqual([]);
+    expect(rescue.body).toMatchObject({ artworkId: art.id, edition: 2 });
+    for (const [id, code] of [['art_none', 'artwork_not_found']] as const) {
+      const r = await api(h, 'POST', '/v1/orders', { json: { ...requestFor(b), artworkId: id } });
+      expect(r.body.error.code).toBe(code);
+      expect(check(r.body, schemas.Error)).toEqual([]);
+    }
+    // every POST /v1/orders error status the service can answer is declared
+    const declared = Object.keys(openapi.paths['/v1/orders'].post.responses);
+    for (const st of ['404', '409', '422', '503']) expect(declared).toContain(st);
+  });
 });
+
+function requestFor(b: { order: { tier: string; contentType: string; contentLength: number; contentSha256: string; recipientAddress: string; revealPubkey: string; quote: { feeRate: number } | null } }) {
+  const o = b.order;
+  return { tier: o.tier, contentType: o.contentType, contentLength: o.contentLength, contentSha256: o.contentSha256, recipientAddress: o.recipientAddress, revealPubkey: o.revealPubkey, feeRate: o.quote!.feeRate };
+}
 
 describe('AsyncAPI contract', () => {
   it('every emitted event validates against OrderStatusEvent', async () => {
@@ -132,11 +187,51 @@ describe('AsyncAPI contract', () => {
     // AsyncAPI's only local ref is OrderStatus, identical to OpenAPI's (asserted above), so the
     // OpenAPI schema map resolves it.
     const schema = asyncapi.components.schemas.OrderStatusEvent;
-    for (const e of h.events.events) {
+    for (const e of h.events.orderEvents) {
       expect(check(e, schema)).toEqual([]);
       expect(e.type).toBe(`degent.mint.order.${e.status}`);
     }
-    expect(h.events.events.length).toBeGreaterThanOrEqual(9);
+    expect(h.events.orderEvents.length).toBeGreaterThanOrEqual(9);
+  });
+
+  it('Open Studio: order events keep the shared payload, royalty.paid validates against its channel, collection.minted against the platform topic', async () => {
+    const h = makeHarness({ settings: { serviceFeeAddress: regtestAddress(5) } });
+    const art = studioArtwork(h);
+    const b = await browserArtworkToPayment(h, art.id);
+    fundArtwork(h, b);
+    await h.worker.tick();
+    h.chain.mine();
+    await h.worker.tick();
+    h.chain.inscriptions.set((await h.store.get(b.orderId))!.inscriptionId!, b.bytes);
+    await h.worker.tick();
+    const status = asyncapi.components.schemas.OrderStatusEvent;
+    const mine = h.events.orderEvents.filter((e) => e.orderId === b.orderId);
+    expect(mine.length).toBeGreaterThanOrEqual(11);
+    for (const e of mine) {
+      expect(check(e, status)).toEqual([]);
+      expect(e).not.toHaveProperty('artworkId');
+    }
+    expect(asyncapi.channels.royaltyPaid.address).toBe('degent.mint.royalty.paid');
+    const royaltySchema = asyncapi.components.schemas.RoyaltyPaidEvent;
+    expect(h.events.royaltyEvents).toHaveLength(1);
+    for (const e of h.events.royaltyEvents) expect(check(e, royaltySchema)).toEqual([]);
+    const examples = asyncapi.components.messages.RoyaltyPaid.examples;
+    for (const ex of examples) expect(check(ex.payload, royaltySchema)).toEqual([]);
+    // collection.minted: the platform's schema (1.1.0) with the Open Studio fields
+    const mintedChannel: any = Object.values<any>(platformEvents.channels).find((c) => c.address === 'collection.minted');
+    expect(mintedChannel).toBeDefined();
+    const mintedSchema = platformEvents.components.schemas.CollectionMinted;
+    for (const k of ['artist', 'artworkId', 'edition', 'royalty']) expect(mintedSchema.properties[k]).toBeDefined();
+    expect(h.events.mintedEvents).toHaveLength(1);
+    const { type: _t, ...data } = h.events.mintedEvents[0]!;
+    expect(check(data, mintedSchema)).toEqual([]);
+    expect(data).toMatchObject({ artist: art.payoutAddress, artworkId: art.id, edition: 1, royalty: { vout: 1 } });
+  });
+
+  it('every event type the service emits is a channel of a contract', async () => {
+    const ours = new Set<string>(['degent.mint.order.{status}', 'degent.mint.royalty.paid'].map((a) => a));
+    expect(Object.values<any>(asyncapi.channels).map((c) => c.address).sort()).toEqual([...ours].sort());
+    expect(Object.values<any>(platformEvents.channels).some((c) => c.address === 'collection.minted')).toBe(true);
   });
 });
 
@@ -181,7 +276,7 @@ describe('degent.mint.order.{status} stays compatible with the platform topic (d
     await h.worker.tick();
     h.chain.mine();
     await h.worker.tick();
-    expect(h.events.events.length).toBeGreaterThanOrEqual(9);
-    for (const e of h.events.events) expect(check(e, theirEvent)).toEqual([]);
+    expect(h.events.orderEvents.length).toBeGreaterThanOrEqual(9);
+    for (const e of h.events.orderEvents) expect(check(e, theirEvent)).toEqual([]);
   });
 });

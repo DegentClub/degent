@@ -265,7 +265,7 @@ describe('worker: broadcast failures and recovery', () => {
     const b = await browserMintToPayment(h);
     fundCommit(h, b);
     await h.worker.tick();
-    const evs = h.events.events.filter((e) => e.orderId === b.orderId);
+    const evs = h.events.orderEvents.filter((e) => e.orderId === b.orderId);
     expect(evs.map((e) => [e.previousStatus, e.status])).toEqual([
       [null, 'awaiting_content'],
       ['awaiting_content', 'reviewing'],

@@ -7,8 +7,15 @@ import { httpClient, trimSlash, type HttpOptions } from './http.js';
 
 interface EsploraTx {
   txid: string;
+  vin?: Array<{ sequence?: number }>;
   vout: Array<{ scriptpubkey: string; scriptpubkey_address?: string; value: number }>;
   status: { confirmed: boolean; block_height?: number };
+}
+
+/** BIP125 opt-in: any input with sequence < 0xfffffffe. Only meaningful while unconfirmed. */
+export function isRbfSignalled(tx: Pick<EsploraTx, 'vin' | 'status'>): boolean {
+  if (tx.status.confirmed) return false;
+  return (tx.vin ?? []).some((i) => typeof i.sequence === 'number' && i.sequence < 0xfffffffe);
 }
 
 export class EsploraChain implements ChainPort {
@@ -37,6 +44,7 @@ export class EsploraChain implements ChainPort {
       vout: t.vout.map((o) => ({ value: BigInt(o.value), scriptHex: o.scriptpubkey, address: o.scriptpubkey_address ?? null })),
       confirmed: t.status.confirmed,
       blockHeight: t.status.block_height ?? null,
+      rbfSignalled: isRbfSignalled(t),
     };
   }
 

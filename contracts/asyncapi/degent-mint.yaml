@@ -11,6 +11,14 @@ info:
     Event type == routing key == `degent.mint.order.{status}`. Payloads never contain half-signed reveals,
     order tokens, keys or raw transactions.
 
+    Open Studio (ADR-0007, plan §3.1/§3.3): the degent-owned channel `degent.mint.royalty.paid` announces
+    the verified artist royalty output of the minter's funding transaction (once per artwork order, after the
+    funding transaction is final: confirmed, or unconfirmed and not RBF-signalling). The platform topic
+    `collection.minted` (deps/scribbit/contracts/asyncapi/platform-events.yaml, 1.1.0) is published on
+    `delivered` with `artist`, `artworkId`, `edition` and `royalty` for artwork orders. The shared
+    `degent.mint.order.{status}` payload is unchanged (it is owned by the platform; carrying `artworkId` /
+    `artistAddress` there is a platform topic change first): artwork facts are on `GET /v1/orders/{id}`.
+
     Transport: in-process bus in dev/tests; RabbitMQ topic exchange `degent.mint` in production (persistent
     messages, `message_id` = eventId, `content_type` = application/json). Bind with e.g.
     `degent.mint.order.*` or `degent.mint.order.delivered`.
@@ -61,7 +69,36 @@ channels:
           vhost: /
         bindingVersion: 0.3.0
 
+  royaltyPaid:
+    address: degent.mint.royalty.paid
+    description: The artist royalty output of an artwork order's funding transaction was verified by script and value (plan §3.3).
+    messages:
+      royaltyPaid:
+        $ref: '#/components/messages/RoyaltyPaid'
+    bindings:
+      amqp:
+        is: routingKey
+        exchange:
+          name: degent.mint
+          type: topic
+          durable: true
+          autoDelete: false
+          vhost: /
+        bindingVersion: 0.3.0
+
 operations:
+  publishRoyaltyPaid:
+    action: send
+    channel:
+      $ref: '#/channels/royaltyPaid'
+    summary: Emitted once per artwork order when the funding transaction's artist output is verified and final.
+    messages:
+      - $ref: '#/channels/royaltyPaid/messages/royaltyPaid'
+    bindings:
+      amqp:
+        deliveryMode: 2
+        mandatory: false
+        bindingVersion: 0.3.0
   publishOrderStatus:
     action: send
     channel:
@@ -99,6 +136,29 @@ components:
             detail: broadcast via block lane
             txid: 9f2c0e3d5b6a79880c1d2e3f405162738495a6b7c8d9e0f1a2b3c4d5e6f70819
             inscriptionId: 9f2c0e3d5b6a79880c1d2e3f405162738495a6b7c8d9e0f1a2b3c4d5e6f70819i0
+
+    RoyaltyPaid:
+      name: RoyaltyPaid
+      title: Artist royalty paid
+      contentType: application/json
+      correlationId:
+        location: '$message.payload#/orderId'
+      payload:
+        $ref: '#/components/schemas/RoyaltyPaidEvent'
+      examples:
+        - name: paid
+          payload:
+            type: degent.mint.royalty.paid
+            eventId: 'dgt_4f1c2a9b0e6d7c8a1b2c3d4e:royalty'
+            orderId: dgt_4f1c2a9b0e6d7c8a1b2c3d4e
+            network: mainnet
+            artworkId: art_7d2e1c9a4b3f
+            artist: bc1pexampleartistpayoutaddressxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+            sats: 13580
+            txid: 4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c
+            vout: 1
+            at: '2026-09-23T12:00:00.000Z'
+            edition: 7
 
   schemas:
     OrderStatus:
@@ -140,3 +200,19 @@ components:
           type: string
           pattern: '^[0-9a-f]{64}i[0-9]+$'
           description: Present once the reveal txid is known.
+    RoyaltyPaidEvent:
+      type: object
+      additionalProperties: false
+      required: [type, eventId, orderId, network, artworkId, artist, sats, txid, vout, at]
+      properties:
+        type: { type: string, const: degent.mint.royalty.paid }
+        eventId: { type: string, description: '`<orderId>:royalty`. Idempotency key.' }
+        orderId: { type: string }
+        network: { type: string, enum: [mainnet, testnet, signet, regtest] }
+        artworkId: { type: string }
+        artist: { type: string, description: The artist's payout address (destination of the royalty output). }
+        sats: { type: integer, minimum: 0, description: Sum of the funding tx outputs paying the artist script. }
+        txid: { type: string, pattern: '^[0-9a-f]{64}$', description: The funding (commit) transaction. }
+        vout: { type: integer, minimum: 0, description: First output index paying the artist script (1 per plan §3.2). }
+        at: { type: string, format: date-time }
+        edition: { type: integer, minimum: 1 }

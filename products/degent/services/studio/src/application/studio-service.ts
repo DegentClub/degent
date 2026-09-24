@@ -333,6 +333,13 @@ export class StudioService {
     return toArtist(saved, await this.d.artworks.countByArtist(address));
   }
 
+  /** Internal (scope studio:internal): the proven payout address the mint pays the royalty to. */
+  async artistPayout(address: string): Promise<{ address: string; payoutAddress: string | null; payoutVerifiedAt: string | null }> {
+    const a = await this.d.artists.get(address);
+    if (!a) throw notFound('artist');
+    return { address: a.address, payoutAddress: a.payoutAddress, payoutVerifiedAt: a.payoutVerifiedAt };
+  }
+
   async publicArtist(address: string): Promise<PublicArtist> {
     const a = await this.d.artists.get(address);
     if (!a) throw notFound('artist');

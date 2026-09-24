@@ -1,16 +1,27 @@
-import type { OrderStatusEvent } from '@bsh/degent-mint-sdk';
+import type { OrderStatusEvent, RoyaltyPaidEvent } from '@bsh/degent-mint-sdk';
 import type { Clock } from '../ports/clock.js';
-import type { EventBus } from '../ports/event-bus.js';
+import { isCollectionMintedEvent, isOrderStatusEvent, isRoyaltyPaidEvent, type CollectionMintedEvent, type EventBus, type MintEvent } from '../ports/event-bus.js';
 
 export const systemClock: Clock = { now: () => new Date() };
 
 /** In-process bus: keeps a bounded history and fans out to subscribers (dev, tests, SSE later). */
 export class MemoryEventBus implements EventBus {
-  readonly events: OrderStatusEvent[] = [];
-  private readonly subscribers = new Set<(e: OrderStatusEvent) => void>();
+  readonly events: MintEvent[] = [];
+  private readonly subscribers = new Set<(e: MintEvent) => void>();
   constructor(private readonly maxHistory = 10_000) {}
 
-  async publish(event: OrderStatusEvent): Promise<void> {
+  /** Typed views over the history. */
+  get orderEvents(): OrderStatusEvent[] {
+    return this.events.filter(isOrderStatusEvent);
+  }
+  get royaltyEvents(): RoyaltyPaidEvent[] {
+    return this.events.filter(isRoyaltyPaidEvent);
+  }
+  get mintedEvents(): CollectionMintedEvent[] {
+    return this.events.filter(isCollectionMintedEvent);
+  }
+
+  async publish(event: MintEvent): Promise<void> {
     this.events.push(event);
     if (this.events.length > this.maxHistory) this.events.splice(0, this.events.length - this.maxHistory);
     for (const s of this.subscribers) {
@@ -22,7 +33,7 @@ export class MemoryEventBus implements EventBus {
     }
   }
 
-  subscribe(fn: (e: OrderStatusEvent) => void): () => void {
+  subscribe(fn: (e: MintEvent) => void): () => void {
     this.subscribers.add(fn);
     return () => this.subscribers.delete(fn);
   }

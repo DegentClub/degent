@@ -9,3 +9,6 @@ export type * from './parent-utxo.js';
 export type * from './clock.js';
 export type * from './event-bus.js';
 export type * from './reveal-vault.js';
+export type * from './studio-client.js';
+export type * from './ledger-client.js';
+export type * from './edition-store.js';

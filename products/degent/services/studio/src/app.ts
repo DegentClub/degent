@@ -190,6 +190,7 @@ export function createApp(o: AppOptions): Hono {
   app.post('/v1/artworks/:id/feature', jsonBody, reviewer, async (c) => c.json(await svc.feature(artworkId(c), c.get('apiKey').id, await readJson(c))));
 
   // ---------------------------------------------------------------- internal (mint service)
+  app.get('/v1/internal/artists/:address/payout', internal, async (c) => c.json(await svc.artistPayout(c.req.param('address'))));
   app.post('/v1/internal/royalties', jsonBody, internal, async (c) => {
     const r = await svc.recordRoyalty(await readJson(c));
     return c.json(r, r.created ? 201 : 200);

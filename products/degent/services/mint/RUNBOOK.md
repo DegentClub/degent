@@ -91,3 +91,25 @@ the parent link. The service cannot build or sign a rescue: it never has K_e.
   service recovers, because the half-signed reveal is stored. Never ask a user to send their bundle (it holds
   a key); point them at the Rescue button or the documented `buildResignedRescue` call.
 - The half-signed reveal stays encrypted in the `reveals` table and must not be exported.
+
+## 6. Artwork orders and royalties (Open Studio)
+
+An artwork order (`GET /v1/orders/{id}` has `artworkId`) pays the artist and the club inside the minter's own
+funding transaction: outputs `[commit, artist royalty, club fee, change]`. Nothing here is custodial: the
+service verifies outputs, it never moves money. Read ADR-0007 §5 before acting.
+
+| Symptom | Meaning | Action |
+|---|---|---|
+| `rescue_available` right after `paid`, detail `funding transaction does not pay the studio split: ...` | The wallet-built funding tx is short of, or missing, the artist or club output (compared by script). The parent is never co-signed for it. | Nothing to fix on our side: the user self-rescues (section 5). If the artist output WAS paid, `royaltyPaid` is set and the studio still gets the record. A wallet that keeps producing this needs the web app's post-sign check looked at. |
+| `rescue_available` with detail `edition N was released when the quote expired and taken by another order` | The user paid after the quote expired and another order took the number their reveal was signed with. | User self-rescues (the inscription lands without the parent link; its metadata carries edition N, the collection's edition N is the other order). No manual fix. |
+| `royaltyReport.lastError` in the store row, `royalty record not accepted by the studio; will retry` logs | Studio unreachable or 5xx. | Retried every tick after a 30 s -> 1 h backoff; nothing is lost. Check the studio's health. |
+| `studio refused the royalty record; operator attention needed` (`royaltyReport.gaveUp: true`) | The studio answered a non-retryable status (409 = a record for this `orderId` with different facts, 404 = artwork gone). | Compare the order's `royaltyPaid` with `GET /v1/artists/me/royalties` on the studio side. Never edit either row by hand; if the facts on chain are right, the studio record is the one to correct through its API. |
+| `ledger recording failed; will retry` / `ledger observation failed; will retry` | Ledger down. Ledger recording never blocks a mint. | Retried with backoff. The ledger also finds the transaction itself by payee script once it is back. |
+| Artwork orders refused with 422 "no studio configured" | `STUDIO_URL` unset. | Set `STUDIO_URL` + `STUDIO_API_KEY` (scope `studio:internal`) and `SERVICE_FEE_ADDRESS` when a club fee is set. |
+| Every artwork order is 409 `artist_payout_missing` | The studio does not expose the artist's proven payout address to the mint (or the artist has not proven one). | Artists prove a payout address in the studio (`PUT /v1/artists/me`); the studio must expose it to the mint's key. |
+
+Money facts to remember: the royalty base is the mint price (commit value + club fee), `ROYALTY_BPS` default
+10%; a royalty below the payout script's dust limit is raised to it (the quote says `royaltyRaisedToDust`). The
+`degent.mint.royalty.paid` event and the studio record are emitted once per order after the funding transaction
+is final (confirmed, or unconfirmed and not RBF-signalling). Changing `ROYALTY_BPS` / `CLUB_FEE_BPS_*` affects
+new quotes only; paid orders are verified against the split they were quoted.

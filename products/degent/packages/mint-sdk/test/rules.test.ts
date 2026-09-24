@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   BLOCK_LANE_WEIGHT_BUDGET,
   blockSlotOf,
+  computeRoyaltySplit,
+  DEFAULT_CLUB_FEE_BPS,
   DEFAULT_CONFIG,
+  DEFAULT_ROYALTY_BPS,
+  DUST_LIMIT_SATS,
   estimateTotal,
   fitsInFlight,
   laneForWeight,
@@ -215,5 +219,82 @@ describe('estimateTotal', () => {
   it('eta is position x 10 minutes', () => {
     expect(etaMinutesForPosition(3)).toBe(30);
     expect(etaMinutesForPosition(null)).toBeNull();
+  });
+});
+
+describe('computeRoyaltySplit (Open Studio, plan vocabulary)', () => {
+  it('club fee = floor(commit x bps), mint price = commit + club fee, royalty = floor(mint price x bps)', () => {
+    const s = computeRoyaltySplit({ commitValueSats: 123_456, clubFeeBps: 1000, royaltyBps: 1000, payoutScriptType: 'p2tr' });
+    expect(s.clubFeeSats).toBe(12_345); // floor(12345.6)
+    expect(s.mintPriceSats).toBe(135_801);
+    expect(s.royaltyBeforeDustSats).toBe(13_580); // floor(13580.1)
+    expect(s.artistRoyaltySats).toBe(13_580);
+    expect(s.raisedToDust).toBe(false);
+    expect(s.dustLimitSats).toBe(330);
+    expect(s.totalSats).toBe(123_456 + 12_345 + 13_580);
+  });
+
+  it('uses integer maths only (no floating point drift at the boundaries)', () => {
+    const s = computeRoyaltySplit({ commitValueSats: 10_000, clubFeeBps: 1000, royaltyBps: 1000, payoutScriptType: 'p2tr' });
+    expect(s).toMatchObject({ clubFeeSats: 1000, mintPriceSats: 11_000, artistRoyaltySats: 1100, totalSats: 12_100 });
+    const t = computeRoyaltySplit({ commitValueSats: 9_999, clubFeeBps: 1, royaltyBps: 1, payoutScriptType: 'p2wpkh' });
+    expect(t.clubFeeSats).toBe(0); // floor(0.9999)
+    expect(t.royaltyBeforeDustSats).toBe(0);
+  });
+
+  it.each([
+    ['p2tr', 330],
+    ['p2wpkh', 294],
+  ] as const)('raises a royalty below the %s dust limit (%d sats) to it and says so', (type, dust) => {
+    // 2,000 sats commit, 10% club fee -> 2,200 mint price -> 220 royalty: below both dust limits.
+    const s = computeRoyaltySplit({ commitValueSats: 2_000, clubFeeBps: 1000, royaltyBps: 1000, payoutScriptType: type });
+    expect(s.royaltyBeforeDustSats).toBe(220);
+    expect(s.artistRoyaltySats).toBe(dust);
+    expect(s.raisedToDust).toBe(true);
+    expect(s.dustLimitSats).toBe(dust);
+    expect(s.totalSats).toBe(2_000 + 200 + dust);
+  });
+
+  it('a royalty exactly at the dust limit is not raised', () => {
+    // mint price 3,300 -> royalty 330 == p2tr dust
+    const s = computeRoyaltySplit({ commitValueSats: 3_000, clubFeeBps: 1000, royaltyBps: 1000, payoutScriptType: 'p2tr' });
+    expect(s.artistRoyaltySats).toBe(330);
+    expect(s.raisedToDust).toBe(false);
+    // but 329 is
+    const t = computeRoyaltySplit({ commitValueSats: 3_000, clubFeeBps: 1000, royaltyBps: 997, payoutScriptType: 'p2tr' });
+    expect(t.royaltyBeforeDustSats).toBe(329);
+    expect(t.artistRoyaltySats).toBe(330);
+    expect(t.raisedToDust).toBe(true);
+  });
+
+  it('royaltyBps 0 pays no royalty (the output is omitted, never raised to dust); clubFeeBps 0 charges no club fee', () => {
+    const s = computeRoyaltySplit({ commitValueSats: 50_000, clubFeeBps: 0, royaltyBps: 0, payoutScriptType: 'p2tr' });
+    expect(s).toMatchObject({ clubFeeSats: 0, mintPriceSats: 50_000, artistRoyaltySats: 0, raisedToDust: false, totalSats: 50_000 });
+  });
+
+  it('rejects non-integer amounts, bps outside 0..10000 and unknown script types', () => {
+    expect(() => computeRoyaltySplit({ commitValueSats: 1.5, clubFeeBps: 1000, royaltyBps: 1000, payoutScriptType: 'p2tr' })).toThrow(RangeError);
+    expect(() => computeRoyaltySplit({ commitValueSats: -1, clubFeeBps: 1000, royaltyBps: 1000, payoutScriptType: 'p2tr' })).toThrow(RangeError);
+    expect(() => computeRoyaltySplit({ commitValueSats: 1000, clubFeeBps: 10_001, royaltyBps: 1000, payoutScriptType: 'p2tr' })).toThrow(/clubFeeBps/);
+    expect(() => computeRoyaltySplit({ commitValueSats: 1000, clubFeeBps: 1000, royaltyBps: -1, payoutScriptType: 'p2tr' })).toThrow(/royaltyBps/);
+    expect(() => computeRoyaltySplit({ commitValueSats: 1000, clubFeeBps: 1000, royaltyBps: 1000, payoutScriptType: 'p2pkh' as never })).toThrow(/script type/);
+  });
+
+  it('exposes the plan defaults and the dust table', () => {
+    expect(DEFAULT_ROYALTY_BPS).toBe(1000);
+    expect(DEFAULT_CLUB_FEE_BPS).toBe(1000);
+    expect(DUST_LIMIT_SATS).toEqual({ p2tr: 330, p2wpkh: 294 });
+  });
+});
+
+describe('estimateTotal with the Open Studio extras', () => {
+  it('adds club fee and artist royalty when the quote carries them, and treats them as 0 otherwise', () => {
+    const plain = estimateTotal({ revealFeeSats: 5_000, postageSats: 546, commitValueSats: 5_546, serviceFeeSats: 100 });
+    expect(plain).toMatchObject({ clubFeeSats: 0, artistRoyaltySats: 0, totalSats: 5_646 });
+    const art = estimateTotal(
+      { revealFeeSats: 5_000, postageSats: 546, commitValueSats: 5_546, serviceFeeSats: 0, clubFeeSats: 554, artistRoyaltySats: 610 },
+      { vsize: 200, feeRate: 2 },
+    );
+    expect(art).toMatchObject({ clubFeeSats: 554, artistRoyaltySats: 610, fundingFeeSats: 400, totalSats: 5_546 + 554 + 610 + 400 });
   });
 });

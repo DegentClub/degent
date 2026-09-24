@@ -34,9 +34,10 @@ import type { OrderService } from './application/order-service.js';
 import type { Logger } from './application/logger.js';
 import { silentLogger } from './application/logger.js';
 import { PolicyViolation, StaleWriteError } from './domain/errors.js';
-import type { OrderRecord } from './domain/order.js';
+import { isArtworkOrder, type OrderRecord } from './domain/order.js';
+import { checkFundingOutputs } from './domain/royalty.js';
 import type { LaneBroadcasters } from './ports/broadcaster.js';
-import type { ChainPort } from './ports/chain.js';
+import type { ChainPort, ChainTx } from './ports/chain.js';
 import type { Clock } from './ports/clock.js';
 import type { ContentStore } from './ports/content-store.js';
 import type { OrderStore } from './ports/order-store.js';
@@ -108,11 +109,13 @@ export class MintWorker {
       await this.verifyAndDeliver();
       await this.watchRescues();
       await this.detectPayments();
+      await this.reportRoyalties();
       await this.expireUnpaid();
       await this.enqueuePaid();
       await this.recoverRevealing();
       await this.rescueTimeouts();
       await this.dispatch();
+      await this.recordLedger();
       return this.report;
     } finally {
       this.running = false;
@@ -161,6 +164,10 @@ export class MintWorker {
         return;
       }
       const paidAt = this.d.clock.now().toISOString();
+      if (isArtworkOrder(r)) {
+        await this.detectArtworkPayment(r, tx, paidAt);
+        return;
+      }
       let paid = await this.move(r, 'paid', {
         detail: tx.confirmed ? 'commit confirmed' : 'commit seen in mempool',
         txid: tx.txid,
@@ -177,10 +184,82 @@ export class MintWorker {
     });
   }
 
+  /**
+   * Open Studio (plan §3.3): the commit output is right, now the artist and the club must be paid, compared
+   * by SCRIPT. The order is `paid` either way (the commit is funded; a late or short payer can still
+   * self-rescue), the edition reservation becomes the edition, and only a fully paid split goes on to
+   * `queued`: a short or missing output moves the order to `rescue_available` and the parent is never
+   * co-signed. An artist output that IS satisfied is recorded and reported even when the club's is not.
+   */
+  private async detectArtworkPayment(r: OrderRecord, tx: ChainTx, paidAt: string): Promise<void> {
+    const q = r.quote!;
+    const script = (address: string | null | undefined) => (address ? bytesToHex(addressToScript(address, this.s.network)) : null);
+    const check = checkFundingOutputs({
+      outputs: tx.vout,
+      artistScriptHex: script(r.artistAddress),
+      artistRoyaltySats: r.artistRoyaltySats ?? q.artistRoyaltySats ?? 0,
+      clubScriptHex: script(r.serviceFeeAddress),
+      clubFeeSats: r.clubFeeSats ?? q.clubFeeSats ?? 0,
+    });
+    const edition = await this.d.orders.consumeEdition(r, this.d.clock.now());
+    const royaltyPaid = check.artist?.ok ? { txid: tx.txid, vout: check.artist.vouts[0]!, sats: check.artist.paidSats } : null;
+    const fundingRbf = !tx.confirmed && tx.rbfSignalled;
+    const paid = await this.move(r, 'paid', {
+      detail: tx.confirmed ? 'commit confirmed' : fundingRbf ? 'commit seen in mempool (replaceable)' : 'commit seen in mempool',
+      txid: tx.txid,
+      patch: { paidAt, ...(edition !== null ? { edition } : {}), royaltyPaid, fundingRbf },
+    });
+    if (!check.ok) {
+      await this.move(paid, 'rescue_available', {
+        detail: `funding transaction does not pay the studio split: ${check.detail}; the parent will not be co-signed, self-rescue is available`,
+      });
+      return;
+    }
+    if (edition === null) {
+      await this.move(paid, 'rescue_available', {
+        detail: `edition ${q.edition} was released when the quote expired and taken by another order; the parent will not be co-signed, self-rescue is available`,
+      });
+    }
+  }
+
+  /** Plan §3.3: emit royalty.paid and post the record to the studio (retried with backoff, never blocking). */
+  private async reportRoyalties(): Promise<void> {
+    await this.each('report-royalty', ['paid', 'queued', 'revealing', 'revealed', 'confirmed', 'verified', 'delivered', 'rescue_available'], async (r) => {
+      if (!isArtworkOrder(r) || !r.royaltyPaid) return;
+      if (r.royaltyReport?.reportedAt || r.royaltyReport?.gaveUp) return;
+      const funding = r.fundingRbf && r.commitOutpoint ? await this.d.chain.getTx(r.commitOutpoint.txid) : null;
+      await this.d.orders.reportRoyalty(r, funding);
+    });
+  }
+
+  /**
+   * Plan §3.5: ledger order + psbt intent for artwork orders whose first attempt failed (backoff), then the
+   * observed funding transaction once the order is paid (unconfirmed first, again when confirmed).
+   */
+  private async recordLedger(): Promise<void> {
+    let tip: number | null = null;
+    await this.each('record-ledger', ['approved', 'awaiting_payment', 'paid', 'queued', 'revealing', 'revealed', 'confirmed', 'verified', 'delivered', 'rescue_available'], async (r) => {
+      if (!isArtworkOrder(r)) return;
+      if (!r.ledger?.paymentId) {
+        if (r.status !== 'delivered') await this.d.orders.recordLedger(r);
+        return;
+      }
+      if (!r.paidAt || !r.commitOutpoint || r.ledger.observedConfirmed) return;
+      if (r.ledger.nextAttemptAt && this.nowMs() < Date.parse(r.ledger.nextAttemptAt)) return;
+      const funding = await this.d.chain.getTx(r.commitOutpoint.txid);
+      if (!funding) return;
+      if (r.ledger.observedAt && !funding.confirmed) return;
+      tip ??= await this.d.chain.getTipHeight();
+      await this.d.orders.observeLedger(r, funding, tip);
+    });
+  }
+
   private async expireUnpaid(): Promise<void> {
     await this.each('expire', ['awaiting_content', 'reviewing', 'approved', 'awaiting_payment'], async (r) => {
       if (this.nowMs() <= Date.parse(r.expiresAt)) return;
       await this.move(r, 'expired', { detail: 'quote expired before payment was seen' });
+      // The reserved edition goes back to the pool (plan §3.4); a late payment re-claims it if still free.
+      await this.d.orders.releaseEdition(r);
     });
   }
 
@@ -430,7 +509,9 @@ export class MintWorker {
         this.log.error('child output does not pay the recipient', { orderId: r.id, txid: tx.txid });
         return;
       }
-      await this.move(r, 'delivered', { detail: `child at ${tx.txid}:${childIndex}`, txid: tx.txid });
+      const delivered = await this.move(r, 'delivered', { detail: `child at ${tx.txid}:${childIndex}`, txid: tx.txid });
+      // Platform topic collection.minted (1.1.0): a rescued child has no parent link and is not a collection mint.
+      await this.d.orders.emitCollectionMinted(delivered, delivered.updatedAt);
     });
   }
 

@@ -174,3 +174,26 @@ describe('GET /v1/artists/{address}', () => {
     expect(r.body.error.code).toBe('not_found');
   });
 });
+
+describe('GET /v1/internal/artists/{address}/payout (scope studio:internal)', () => {
+  it('returns the proven payout address to an internal key, and null before a proof', async () => {
+    const h = makeHarness();
+    const s = await signIn(h, 14);
+    const before = await api(h, 'GET', `/v1/internal/artists/${s.address}/payout`, { apiKey: h.mintKey });
+    expect(before.status).toBe(200);
+    expect(before.body).toEqual({ address: s.address, payoutAddress: null, payoutVerifiedAt: null });
+    await api(h, 'PUT', '/v1/artists/me', { token: s.token, json: { payout: payoutProof(wallet(140), s.address) } });
+    const after = await api(h, 'GET', `/v1/internal/artists/${s.address}/payout`, { apiKey: h.mintKey });
+    expect(after.status).toBe(200);
+    expect(after.body.payoutAddress).toBe(wallet(140).address);
+    expect(typeof after.body.payoutVerifiedAt).toBe('string');
+  });
+
+  it('refuses callers without the internal scope and 404s unknown artists', async () => {
+    const h = makeHarness();
+    const s = await signIn(h, 15);
+    expect((await api(h, 'GET', `/v1/internal/artists/${s.address}/payout`)).status).toBe(401);
+    expect((await api(h, 'GET', `/v1/internal/artists/${s.address}/payout`, { apiKey: h.reviewerKey })).status).toBe(403);
+    expect((await api(h, 'GET', `/v1/internal/artists/${wallet(98).address}/payout`, { apiKey: h.mintKey })).status).toBe(404);
+  });
+});

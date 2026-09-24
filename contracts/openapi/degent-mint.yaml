@@ -16,6 +16,17 @@ info:
     service cannot reveal within `rescueAfterSeconds`, `GET /v1/orders/{id}/rescue` returns the INPUTS for a
     parent-less rescue that the browser re-signs with the ephemeral key kept in the user's recovery bundle.
 
+    Open Studio artwork orders (ADR-0007, docs/open-studio-plan.md §3): `POST /v1/orders` with `artworkId`
+    takes the content facts and the bytes from the Artist Studio (`contracts/openapi/degent-studio.yaml`),
+    skips the upload step (the artwork was reviewed at submission) and returns the order already `approved`
+    with a binding quote whose `totalSats = commitValueSats + clubFeeSats + artistRoyaltySats`. The minter's
+    funding transaction then carries `[commit, artist royalty, club fee, change]` (§3.2); the worker verifies
+    the artist and club outputs by script before the parent is ever co-signed (§3.3). The reveal envelope
+    carries attribution metadata `{ artist, artwork, edition, studio: "degent.club" }` (ord tag 5, canonical
+    CBOR, `@bsh/inscription.encodeAttribution`), so the browser must build it with the quote's
+    `artistAddress`, `artworkId` and `edition` (§3.4). Every field added for artwork orders is optional and
+    absent on plain orders.
+
     Tiers (`Tier`) are decided by CONTENT BYTES: `standard` (Standard Degent, 200,000-400,000 B), `large`
     (Large Degent, 400,001-3,499,999 B), `fullblock` (Full Block Degent, 3,500,000-3,900,000 B). Lanes
     (`Lane`) are transport, decided by the reveal WEIGHT: <= 400,000 WU is `standard`, else `block`. The
@@ -94,6 +105,14 @@ paths:
         `lane: block`. Returns a random 256-bit `orderToken` exactly once; the service stores only its SHA-256.
         Block-lane orders are refused with 503 `queue_full` when the block slot they would get lies beyond
         the rescue timeout.
+
+        With `artworkId` (Open Studio): the artwork must exist in the studio (404 `artwork_not_found`), be
+        `approved` (409 `artwork_not_mintable` for any other status, e.g. delisted) and its artist must have a
+        proven P2WPKH / P2TR payout address (409 `artist_payout_missing`); the declared content facts must
+        equal the artwork record's (422 `content_mismatch`). The order is created, walked through
+        `awaiting_content -> reviewing -> approved` (timeline detail `artwork <id> reviewed at submission`)
+        and returned `approved` with a binding quote carrying `clubFeeSats`, `artistRoyaltySats`,
+        `artistAddress`, `artworkId`, `mintPriceSats` and the reserved `edition` (held until `expiresAt`).
       requestBody:
         required: true
         content:
@@ -107,6 +126,16 @@ paths:
               schema: { $ref: '#/components/schemas/CreateOrderResponse' }
         '400': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
+        '404':
+          description: Open Studio - the artwork does not exist in the studio (code `artwork_not_found`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Open Studio - the artwork is not `approved` (code `artwork_not_mintable`) or its artist has no proven payout address (code `artist_payout_missing`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '413': { $ref: '#/components/responses/Error' }
         '415': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
@@ -332,6 +361,21 @@ components:
             parentValueSats: { allOf: [{ $ref: '#/components/schemas/Sats' }], description: Constant value of the parent UTXO; the browser signs output 0 = (collectionAddress, parentValueSats). }
             serviceFeeAddress: { type: [string, 'null'] }
             maxUploadBytes: { type: integer, examples: [4194304] }
+            royaltyBps:
+              type: integer
+              minimum: 0
+              maximum: 10000
+              description: Open Studio - artist royalty in basis points of the mint price (commitValueSats + clubFeeSats). Default 1000.
+            clubFeeBps:
+              type: object
+              additionalProperties: false
+              required: [standard, large, fullblock]
+              description: Open Studio - club fee per tier in basis points of commitValueSats, paid to serviceFeeAddress. Default 1000 each.
+              properties:
+                standard: { type: integer, minimum: 0, maximum: 10000 }
+                large: { type: integer, minimum: 0, maximum: 10000 }
+                fullblock: { type: integer, minimum: 0, maximum: 10000 }
+            studioUrl: { type: [string, 'null'], description: Open Studio - base URL of the Artist Studio artworks are taken from; null when artwork orders are disabled. }
     CreateOrderRequest:
       type: object
       additionalProperties: false
@@ -344,6 +388,10 @@ components:
         recipientAddress: { type: string, description: Taproot ordinals address on the service network. }
         revealPubkey: { allOf: [{ $ref: '#/components/schemas/Hex32' }], description: Ephemeral x-only key K_e generated in the browser. }
         feeRate: { type: number, exclusiveMinimum: 0, description: 'sat/vB, at most 3 decimals' }
+        artworkId:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{1,64}$'
+          description: Open Studio - mint this approved studio artwork. contentType / contentLength / contentSha256 must equal the artwork record's; the bytes come from the studio and the upload step is skipped.
     CreateOrderResponse:
       type: object
       additionalProperties: false
@@ -369,12 +417,19 @@ components:
         postageSats: { $ref: '#/components/schemas/Sats' }
         serviceFeeSats: { $ref: '#/components/schemas/Sats' }
         commitValueSats: { allOf: [{ $ref: '#/components/schemas/Sats' }], description: revealFee + postage; exact amount for the commit output. }
-        totalSats: { allOf: [{ $ref: '#/components/schemas/Sats' }], description: commitValue + serviceFee (funding tx fee excluded). }
+        totalSats: { allOf: [{ $ref: '#/components/schemas/Sats' }], description: 'Plain orders: commitValue + serviceFee. Artwork orders: commitValue + clubFee + artistRoyalty (serviceFeeSats is 0). Funding tx fee excluded.' }
         commitAddress: { type: [string, 'null'], description: Null on the indicative quote. }
         binding: { type: boolean }
         expiresAt: { $ref: '#/components/schemas/Timestamp' }
         queuePosition: { type: [integer, 'null'], description: Block lane only - the 1-based block slot (several Large Degents can share a slot). }
         etaMinutes: { type: [integer, 'null'] }
+        clubFeeSats: { allOf: [{ $ref: '#/components/schemas/Sats' }], description: 'Open Studio - floor(commitValueSats x clubFeeBps / 10000) for the tier; output [2] of the funding tx to serviceFeeAddress. Present on artwork orders only.' }
+        artistRoyaltySats: { allOf: [{ $ref: '#/components/schemas/Sats' }], description: 'Open Studio - floor(mintPriceSats x royaltyBps / 10000), raised to the dust limit of the payout script type (P2TR 330, P2WPKH 294); output [1] of the funding tx to artistAddress. Present on artwork orders only.' }
+        artistAddress: { type: string, description: Open Studio - the artist's proven payout address (destination of the royalty output). }
+        artworkId: { type: string }
+        mintPriceSats: { allOf: [{ $ref: '#/components/schemas/Sats' }], description: Open Studio - commitValueSats + clubFeeSats, the royalty base. }
+        edition: { type: integer, minimum: 1, description: Open Studio - the edition reserved for this order until expiresAt; the browser signs the attribution metadata with it. }
+        royaltyRaisedToDust: { type: boolean, description: Open Studio - true when the royalty was below the payout script's dust limit and was raised to it. }
     ReviewCheck:
       type: object
       additionalProperties: false
@@ -442,6 +497,21 @@ components:
         timeline: { type: array, items: { $ref: '#/components/schemas/OrderEvent' } }
         createdAt: { $ref: '#/components/schemas/Timestamp' }
         updatedAt: { $ref: '#/components/schemas/Timestamp' }
+        artworkId: { type: string, description: Open Studio - present on artwork orders only (all fields below likewise). }
+        artistAddress: { type: string }
+        artistRoyaltySats: { $ref: '#/components/schemas/Sats' }
+        clubFeeSats: { $ref: '#/components/schemas/Sats' }
+        edition: { type: integer, minimum: 1, description: Open Studio - assigned when the order reaches paid (the quote-time reservation becomes the edition). }
+        royaltyPaid: { oneOf: [{ $ref: '#/components/schemas/RoyaltyPaid' }, { type: 'null' }], description: Open Studio - the verified artist royalty output of the funding tx; null until paid. }
+    RoyaltyPaid:
+      type: object
+      additionalProperties: false
+      required: [txid, vout, sats]
+      description: Open Studio - the artist royalty output as found in the minter's funding transaction (plan §3.3).
+      properties:
+        txid: { $ref: '#/components/schemas/Txid' }
+        vout: { type: integer, minimum: 0 }
+        sats: { $ref: '#/components/schemas/Sats' }
     SubmitRevealRequest:
       type: object
       additionalProperties: false
@@ -474,6 +544,9 @@ components:
         rescueFeeSats: { allOf: [{ $ref: '#/components/schemas/Sats' }], description: commitValueSats - postageSats; the whole remainder is fee. }
         rescueFeeRate: { type: number, description: rescueFeeSats / vsize, sat/vB. }
         suggestedFeeRate: { type: number, description: Current standard-lane estimate, so the UI can say whether the rescue is competitive. }
+        artworkId: { type: string, description: Open Studio - the attribution the envelope was built with; the rescue must reproduce it (plan §3.4, §3.6). }
+        artistAddress: { type: string }
+        edition: { type: integer, minimum: 1 }
     HealthResponse:
       type: object
       additionalProperties: false
@@ -534,10 +607,15 @@ components:
         tipHeight: { type: [integer, 'null'] }
     ErrorCode:
       type: string
-      enum:
+      description: |
+        Open set (`x-extensible-enum`, the platform ledger convention): clients must tolerate codes they do not
+        know. Open Studio (plan §3.1) added `artwork_not_found`, `artwork_not_mintable` (not approved or
+        delisted) and `artist_payout_missing`.
+      x-extensible-enum:
         [bad_request, unauthorized, forbidden, validation_failed, not_found, conflict, quote_expired, payload_too_large,
          unsupported_media_type, rate_limited, forbidden_origin, content_mismatch, reveal_invalid,
-         rescue_unavailable, review_unavailable, queue_full, upstream_unavailable, internal]
+         rescue_unavailable, review_unavailable, queue_full, upstream_unavailable, internal,
+         artwork_not_found, artwork_not_mintable, artist_payout_missing]
     Error:
       type: object
       additionalProperties: false

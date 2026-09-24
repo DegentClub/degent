@@ -15,9 +15,29 @@ import {
   type InscriptionContent,
   type Network,
 } from '@bsh/inscription';
-import type { CollectionConfig, Lane, Quote, Tier } from '@bsh/degent-mint-sdk';
-import { BLOCK_LANE_WEIGHT_BUDGET, etaMinutesForPosition, laneForWeight, STANDARD_LANE_MAX_WEIGHT, tierRule } from '@bsh/degent-mint-sdk';
+import type { Attribution } from '@bsh/inscription';
+import type { CollectionConfig, Lane, PayoutScriptType, Quote, Tier } from '@bsh/degent-mint-sdk';
+import { BLOCK_LANE_WEIGHT_BUDGET, computeRoyaltySplit, etaMinutesForPosition, laneForWeight, STANDARD_LANE_MAX_WEIGHT, tierRule } from '@bsh/degent-mint-sdk';
 import { invalid } from './errors.js';
+
+/** The studio slug carried in every Open Studio attribution (ord tag 5 metadata, plan §3.4). */
+export const ATTRIBUTION_STUDIO = 'degent.club';
+
+/** Open Studio facts a quote needs beyond the plain order (plan §3.1, §3.4). */
+export interface ArtworkQuoteInput {
+  artworkId: string;
+  artistAddress: string;
+  /** The edition reserved for this order: signed into the envelope, so it changes the weight and the commit address. */
+  edition: number;
+  payoutScriptType: PayoutScriptType;
+  clubFeeBps: number;
+  royaltyBps: number;
+}
+
+/** The attribution map for an artwork order (deterministic CBOR: same inputs, same envelope). */
+export function attributionFor(a: Pick<ArtworkQuoteInput, 'artworkId' | 'artistAddress' | 'edition'>): Attribution {
+  return { artist: a.artistAddress, artwork: a.artworkId, edition: a.edition, studio: ATTRIBUTION_STUDIO };
+}
 
 // One implementation of the maths: the SDK's lane thresholds must be the library's limits.
 if (STANDARD_LANE_MAX_WEIGHT !== LIMITS.MAX_STANDARD_TX_WEIGHT || BLOCK_LANE_WEIGHT_BUDGET !== LIMITS.BLOCK_LANE_MAX_TX_WEIGHT)
@@ -38,10 +58,12 @@ export interface QuoteInput {
   expiresAt: Date;
   /** Block lane: the 1-based block slot this order would land in (ADR-0005 §4). Ignored for the standard lane. */
   queuePosition: number | null;
+  /** Open Studio: present on artwork orders; adds the attribution metadata and the club fee / royalty lines. */
+  artwork?: ArtworkQuoteInput;
 }
 
-export function inscriptionContent(contentType: string, body: Uint8Array, parentId: string | null): InscriptionContent {
-  return parentId ? { contentType, body, parentId } : { contentType, body };
+export function inscriptionContent(contentType: string, body: Uint8Array, parentId: string | null, attribution?: Attribution): InscriptionContent {
+  return { contentType, body, ...(parentId ? { parentId } : {}), ...(attribution ? { attribution } : {}) };
 }
 
 /**
@@ -54,7 +76,7 @@ export function computeQuote(q: QuoteInput): Quote {
   if (!rule) throw invalid(`unknown tier ${q.tier}`);
   const binding = q.body instanceof Uint8Array;
   const body = binding ? (q.body as Uint8Array) : new Uint8Array(q.body.length);
-  const content = inscriptionContent(q.contentType, body, q.parentId);
+  const content = inscriptionContent(q.contentType, body, q.parentId, q.artwork ? attributionFor(q.artwork) : undefined);
   const collectionScript = addressToScript(q.collectionAddress, q.network);
   const recipientScript = addressToScript(q.recipientAddress, q.network);
   const revealWeight = estimateRevealWeight({
@@ -69,9 +91,11 @@ export function computeQuote(q: QuoteInput): Quote {
   if (laneForWeight(revealWeight) !== lane) throw new Error('lane maths disagree between the SDK and @bsh/inscription');
   const postage = BigInt(q.config.postageSats);
   const { revealVsize, revealFee, commitValue } = quoteReveal({ revealWeight, feeRate: q.feeRate, postage });
-  const serviceFeeSats = q.config.serviceFeeSats[q.tier];
+  // Artwork orders replace the flat per-tier service fee with the club fee (bps of the network cost) and add
+  // the artist royalty; plain orders keep the flat fee and both extras are absent (plan §3.1).
+  const serviceFeeSats = q.artwork ? 0 : q.config.serviceFeeSats[q.tier];
   const queuePosition = lane === 'block' ? q.queuePosition : null;
-  return {
+  const base: Quote = {
     tier: q.tier,
     lane,
     feeRate: q.feeRate,
@@ -87,5 +111,23 @@ export function computeQuote(q: QuoteInput): Quote {
     expiresAt: q.expiresAt.toISOString(),
     queuePosition,
     etaMinutes: lane === 'block' ? etaMinutesForPosition(queuePosition) : null,
+  };
+  if (!q.artwork) return base;
+  const split = computeRoyaltySplit({
+    commitValueSats: Number(commitValue),
+    clubFeeBps: q.artwork.clubFeeBps,
+    royaltyBps: q.artwork.royaltyBps,
+    payoutScriptType: q.artwork.payoutScriptType,
+  });
+  return {
+    ...base,
+    totalSats: split.totalSats,
+    clubFeeSats: split.clubFeeSats,
+    artistRoyaltySats: split.artistRoyaltySats,
+    artistAddress: q.artwork.artistAddress,
+    artworkId: q.artwork.artworkId,
+    mintPriceSats: split.mintPriceSats,
+    edition: q.artwork.edition,
+    royaltyRaisedToDust: split.raisedToDust,
   };
 }
