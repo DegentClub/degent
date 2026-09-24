@@ -1,0 +1,243 @@
+# Release 1 on the single server (docs/SERVER.md). On every push to the release branch (and on manual runs):
+# gate (SERVER_PASSWORD set?) -> pnpm check + web build -> build + push images to GHCR (tagged with the git sha)
+# -> over SSH as `ubuntu` with its password (sshpass, secret SERVER_PASSWORD): idempotent bootstrap.sh, then
+# `sudo /opt/degent/bin/deploy.sh deploy <sha>` -> smoke tests of the public URLs.
+# Actions are pinned to full commit SHAs (tag in the trailing comment).
+name: deploy
+
+on:
+  push:
+    branches: [claude/magical-einstein-ugdy2r]
+  workflow_dispatch:
+    inputs:
+      task:
+        description: What to do on the server
+        type: choice
+        options: [deploy, bootstrap, status]
+        default: deploy
+
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io/degentclub
+  DEPLOY_HOST: ${{ vars.DEPLOY_HOST || '170.75.173.105' }}
+  SITE_DOMAIN: degent.club
+  MINT_DOMAIN: mint.degent.club
+  SIGNET_DOMAIN: signet.degent.club
+  CADDY_IMAGE: caddy:2.8.4-alpine
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.pw.outputs.enabled }}
+      task: ${{ steps.pw.outputs.task }}
+    steps:
+      - id: pw
+        env:
+          HAS_PW: ${{ secrets.SERVER_PASSWORD != '' }}
+          TASK: ${{ inputs.task || 'deploy' }}
+        run: |
+          echo "enabled=$HAS_PW" >> "$GITHUB_OUTPUT"
+          echo "task=$TASK" >> "$GITHUB_OUTPUT"
+          if [ "$HAS_PW" != true ]; then
+            echo "### SERVER_PASSWORD not set: nothing deployed" >> "$GITHUB_STEP_SUMMARY"
+            echo "Add the repository secret SERVER_PASSWORD (docs/SERVER.md) and push again." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  check:
+    needs: gate
+    if: needs.gate.outputs.enabled == 'true' && needs.gate.outputs.task == 'deploy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (version from package.json "packageManager")
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: pnpm check (manifests, boundaries, typecheck, all tests)
+        run: pnpm check
+      - name: Web build
+        run: pnpm --filter @bsh/degent-web build
+      - name: Validate the edge Caddyfile
+        run: |
+          for apex in true false; do for www in false true; do
+            docker run --rm -e APEX_REDIRECT="$apex" -e WWW_REDIRECT="$www" \
+              -v "$PWD/products/degent/deploy/server/caddy:/etc/caddy:ro" "$CADDY_IMAGE" \
+              caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          done; done
+
+  images:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: mint
+            dockerfile: products/degent/deploy/mint.Dockerfile
+            args: ''
+          - name: web-mainnet
+            dockerfile: products/degent/deploy/web.Dockerfile
+            # The API's runtime mode (readonly today) wins over the VITE_MINT_MODE hint.
+            args: |
+              VITE_NETWORK=mainnet
+              VITE_MINT_API_URL=/api
+              VITE_ESPLORA_URL=https://mempool.space/api
+              VITE_ORD_URL=https://ordinals.com
+              VITE_SITE_URL=https://mint.degent.club
+              VITE_MINT_MODE=readonly
+              VITE_BETA_URL=https://signet.degent.club
+          - name: web-signet
+            dockerfile: products/degent/deploy/web.Dockerfile
+            args: |
+              VITE_NETWORK=signet
+              VITE_MINT_API_URL=/api
+              VITE_ESPLORA_URL=https://mempool.space/signet/api
+              VITE_ORD_URL=https://signet.ordinals.com
+              VITE_EXPLORER_URL=https://mempool.space/signet
+              VITE_SITE_URL=https://signet.degent.club
+              VITE_MINT_MODE=readonly
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: runtime
+          push: true
+          provenance: false
+          tags: ${{ env.REGISTRY }}/degent-${{ matrix.name }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          build-args: ${{ matrix.args }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  server:
+    needs: [gate, check, images]
+    if: >-
+      always() && needs.gate.outputs.enabled == 'true' &&
+      (needs.images.result == 'success' || needs.gate.outputs.task != 'deploy')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+    env:
+      TASK: ${{ needs.gate.outputs.task }}
+      SSHPASS: ${{ secrets.SERVER_PASSWORD }}
+      KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: SSH client (sshpass; password from the secret via the environment only)
+        run: |
+          echo "::add-mask::$SSHPASS"
+          sudo apt-get update -q && sudo apt-get install -y -q sshpass
+          install -d -m 700 ~/.ssh
+          if [ -n "$KNOWN_HOSTS" ]; then
+            printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+            echo "STRICT=yes" >> "$GITHUB_ENV"
+          else
+            : > ~/.ssh/known_hosts
+            echo "STRICT=accept-new" >> "$GITHUB_ENV"
+          fi
+      - name: Run on the server
+        run: |
+          set -euo pipefail
+          SSH_OPTS=(-o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking="$STRICT"
+                    -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -o ConnectTimeout=20 -o ServerAliveInterval=30)
+          r() { sshpass -e ssh "${SSH_OPTS[@]}" "ubuntu@$DEPLOY_HOST" "$@"; }
+          # sudo: without a password prompt when NOPASSWD, else the password goes first on stdin (-S, never argv).
+          if r 'sudo -n true' </dev/null 2>/dev/null; then NEEDPW=0; else NEEDPW=1; fi
+          rsudo() { # rsudo <remote command>; this function's stdin follows the password line
+            if [ "$NEEDPW" = 1 ]; then { printf '%s\n' "$SSHPASS"; cat; } | r "sudo -S -k -p '' $1"; else r "sudo $1"; fi
+          }
+          {
+            echo "### Server ${DEPLOY_HOST}"
+            echo '```'
+            ssh-keygen -lf ~/.ssh/known_hosts 2>/dev/null || true
+            echo '```'
+            echo "Pin it: save the line below as the repository secret DEPLOY_KNOWN_HOSTS."
+            echo '```'
+            cat ~/.ssh/known_hosts
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+
+          if [ "$TASK" = deploy ] || [ "$TASK" = bootstrap ]; then
+            r 'mkdir -p ~/degent-bootstrap' </dev/null
+            sshpass -e scp "${SSH_OPTS[@]}" products/degent/deploy/server/bootstrap.sh products/degent/deploy/server/deploy.sh \
+              "ubuntu@$DEPLOY_HOST:degent-bootstrap/"
+            rsudo 'bash degent-bootstrap/bootstrap.sh' </dev/null
+          fi
+
+          case "$TASK" in
+            deploy)
+              # GHCR: log in on the server with this job's short-lived token (stdin), deploy, log out again.
+              printf '%s\n' "$GHCR_TOKEN" | rsudo "docker login ghcr.io -u $GITHUB_ACTOR --password-stdin" >/dev/null
+              set +e
+              rsudo "/opt/degent/bin/deploy.sh deploy $SHA both" </dev/null > out.txt
+              status=$?
+              set -e
+              rsudo 'docker logout ghcr.io' </dev/null >/dev/null || true ;;
+            status)
+              set +e; rsudo '/opt/degent/bin/deploy.sh status' </dev/null > out.txt; status=$?; set -e ;;
+            bootstrap) echo '{"ok":true,"action":"bootstrap"}' > out.txt; status=0 ;;
+            *) echo "::error::unknown task $TASK"; exit 1 ;;
+          esac
+          cat out.txt
+          result="$(grep -E '^\{' out.txt | tail -n 1 || true)"
+          { echo '```json'; echo "$result" | jq . 2>/dev/null || echo "$result"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          [ "$status" -eq 0 ] && [ "$(echo "$result" | jq -r '.ok // false')" = true ] || { echo "::error::server said: $result"; exit 1; }
+
+      - name: Smoke test the public URLs
+        if: env.TASK == 'deploy'
+        run: |
+          retry() { # retry <description> <command...>: up to ~5 minutes (first certificates take a moment)
+            local what="$1"; shift
+            for _ in $(seq 1 30); do if "$@"; then echo "ok: $what"; return 0; fi; sleep 10; done
+            echo "::error::smoke test failed: $what"; return 1
+          }
+          # shellcheck disable=SC2329 # called through retry
+          health() { # health <url> <mode regex>
+            local body; body="$(curl -fsS --max-time 15 "$1")" || return 1
+            echo "$body" | jq -e --arg re "$2" '.mode | test($re)' >/dev/null
+          }
+          # shellcheck disable=SC2329 # called through retry
+          home() { curl -fsS --max-time 15 "$1" | grep -q '<div id="root"'; }
+          # shellcheck disable=SC2329 # called through retry
+          apex_redirect() {
+            local out; out="$(curl -sS -o /dev/null --max-time 15 -w '%{http_code} %{redirect_url}' "https://$SITE_DOMAIN/collection?x=1")" || return 1
+            [ "$out" = "301 https://$MINT_DOMAIN/collection?x=1" ]
+          }
+          ok=0
+          retry "https://$MINT_DOMAIN/api/v1/health (mode readonly)" health "https://$MINT_DOMAIN/api/v1/health" '^readonly$' || ok=1
+          retry "https://$MINT_DOMAIN/ home page" home "https://$MINT_DOMAIN/" || ok=1
+          retry "https://$SITE_DOMAIN/... -> 301 https://$MINT_DOMAIN/..." apex_redirect || ok=1
+          retry "https://$SIGNET_DOMAIN/api/v1/health" health "https://$SIGNET_DOMAIN/api/v1/health" '^(full|readonly)$' || ok=1
+          exit $ok

@@ -9,7 +9,8 @@
  *   - runtime Dockerfile stages run as a non-root USER with a HEALTHCHECK;
  *   - the NixOS web module and the container serve the same Caddy site body.
  */
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -345,5 +346,140 @@ describe('NixOS mint module', () => {
     expect(pkgs).toMatch(/degent-mint = lib\.makeOverridable/);
     expect(pkgs).toMatch(/degent-web = lib\.makeOverridable/);
     expect(pkgs).toContain('pnpm.fetchDeps');
+  });
+});
+
+describe('single-host server (compose.server.yaml, server/*.sh, deploy workflow; docs/SERVER.md)', () => {
+  interface ServerService { image: string; user?: string; environment?: Record<string, string>; secrets?: string[]; ports?: string[]; read_only?: boolean; cap_drop?: string[]; security_opt?: string[] }
+  const serverText = deploy('compose.server.yaml');
+  const server = load(serverText) as { services: Record<string, ServerService>; secrets: Record<string, { file: string }> };
+  const serverVars = new Set(Object.keys((composeVars as unknown as { server: Record<string, string> }).server).filter((k) => !k.startsWith('$')));
+
+  it('parses, runs only the official Caddy image and our GHCR images, and interpolates only documented variables', () => {
+    expect(Object.keys(server.services).sort()).toEqual(['caddy', 'mint-mainnet-api', 'mint-mainnet-worker', 'mint-signet-api', 'mint-signet-worker', 'web-mainnet', 'web-signet']);
+    for (const [name, s] of Object.entries(server.services))
+      expect(s.image, name).toMatch(/^(\$\{CADDY_IMAGE:-caddy:[0-9.]+-alpine\}|ghcr\.io\/degentclub\/degent-(mint|web-mainnet|web-signet):\$\{(MAINNET|SIGNET)_TAG:\?[^}]+\})$/);
+    expect(interpolations(serverText).filter((v) => !serverVars.has(v))).toEqual([]);
+  });
+
+  it('hardens every container; only caddy publishes ports (80, 443/tcp, 443/udp)', () => {
+    for (const [name, s] of Object.entries(server.services)) {
+      expect(s.read_only, name).toBe(true);
+      expect(s.cap_drop, name).toEqual(['ALL']);
+      expect(s.security_opt, name).toContain('no-new-privileges:true');
+      if (name !== 'caddy') expect(s.ports, name).toBeUndefined();
+    }
+    expect(server.services.caddy!.ports).toEqual(['80:80/tcp', '443:443/tcp', '443:443/udp']);
+  });
+
+  it('mint services: schema variables only, secrets only as files, no parent key or signer, read-only by default', () => {
+    const secretNames = secrets.map((s) => s.name);
+    for (const name of ['mint-mainnet-api', 'mint-mainnet-worker', 'mint-signet-api', 'mint-signet-worker']) {
+      const s = server.services[name]!;
+      const env = s.environment!;
+      expect(Object.keys(env).filter((k) => !schemaVars.has(k)), name).toEqual([]);
+      for (const k of Object.keys(env)) expect(secretNames, `${name}: ${k} must be a *_FILE`).not.toContain(k);
+      for (const k of ['PARENT_KEY_FILE', 'SIGNER', 'PARENT_INSCRIPTION_ID', 'PARENT_OUTPOINT', 'COLLECTION_ADDRESS']) expect(env, name).not.toHaveProperty(k);
+      expect(env.REVEAL_ENCRYPTION_KEY_FILE).toMatch(/^\/run\/secrets\/(mainnet|signet)-reveal-encryption-key$/);
+      expect(env.SESSION_KEY_FILE).toMatch(/^\/run\/secrets\/(mainnet|signet)-session-key$/);
+      expect(env.MINT_MODE).toMatch(/^\$\{(MAINNET|SIGNET)_MINT_MODE:-readonly\}$/);
+      expect(s.user).toContain('DEPLOY_UID');
+    }
+    for (const [name, sec] of Object.entries(server.secrets)) expect(sec.file, name).toMatch(/^\$\{DEGENT_HOME:-\/opt\/degent\}\/secrets\/(mainnet|signet)\/[a-z-]+$/);
+    expect(server.services['mint-mainnet-api']!.environment!.NETWORK).toBe('mainnet');
+    expect(server.services['mint-signet-api']!.environment!.NETWORK).toBe('signet');
+  });
+
+  it('the mainnet read-only API env is accepted by the service (no signer, no parent)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'degent-server-'));
+    const c = interpolateTree(load(serverText) as typeof server, { MAINNET_TAG: 'abc1234', SIGNET_TAG: 'abc1234', DEPLOY_UID: '1001', DEPLOY_GID: '1001' });
+    const env: Record<string, string> = Object.fromEntries(Object.entries(c.services['mint-mainnet-api']!.environment!).map(([k, v]) => [k, String(v)]));
+    for (const [k, v] of Object.entries(env)) {
+      const m = /^\/run\/secrets\/(.+)$/.exec(v);
+      if (m) {
+        writeFileSync(join(dir, m[1]!), '77'.repeat(32));
+        env[k] = join(dir, m[1]!);
+      }
+    }
+    env.DATABASE_PATH = join(dir, 'mint.db');
+    env.CONTENT_DIR = join(dir, 'content');
+    const cfg = loadConfig(env);
+    expect(cfg.mode).toBe('readonly');
+    expect(cfg.settings.network).toBe('mainnet');
+    expect(cfg.corsOrigins).toEqual(['https://mint.degent.club']);
+  });
+
+  it('caddy: apex 301 to the app, www opt-in, mint and signet sites', () => {
+    const dir = 'server/caddy/';
+    const main = deploy(`${dir}Caddyfile`);
+    expect(main).toMatch(/\{\$MINT_DOMAIN:mint\.degent\.club\} \{[\s\S]*?reverse_proxy web-mainnet:8080/);
+    expect(main).toMatch(/\{\$SIGNET_DOMAIN:signet\.degent\.club\} \{[\s\S]*?reverse_proxy web-signet:8080/);
+    expect(main).toContain('import apex-redirect-{$APEX_REDIRECT:true}.caddy');
+    expect(main).toContain('import www-{$WWW_REDIRECT:false}.caddy');
+    expect(main).not.toMatch(/^www\./m);
+    expect(deploy(`${dir}apex-redirect-true.caddy`)).toContain('redir https://{$MINT_DOMAIN:mint.degent.club}{uri} 301');
+    expect(deploy(`${dir}www-false.caddy`)).not.toMatch(/\{\s*$/m);
+    const keys = Object.keys(server.services.caddy!.environment!);
+    const placeholders = new Set([...['Caddyfile', 'apex-redirect-true.caddy', 'www-true.caddy'].map((f) => deploy(`${dir}${f}`)).join('\n').matchAll(/\{\$([A-Z_]+)/g)].map((m) => m[1]!));
+    expect(keys.sort()).toEqual([...placeholders].sort());
+  });
+
+  it('the mint image carries the release bundle deploy.sh unpacks', () => {
+    const text = deploy('mint.Dockerfile');
+    expect(text).toContain('COPY --chown=root:root products/degent/deploy/compose.server.yaml /app/deploy/compose.server.yaml');
+    expect(text).toContain('COPY --chown=root:root products/degent/deploy/server/caddy /app/deploy/caddy');
+    expect(deploy('server/deploy.sh')).toContain('docker cp "$cid:/app/deploy/." "$dir.tmp/"');
+  });
+
+  it('scripts: strict mode, no password literal, no parent key; bash -n passes', () => {
+    for (const f of ['server/bootstrap.sh', 'server/deploy.sh']) {
+      const text = deploy(f);
+      expect(text, f).toMatch(/^set -euo pipefail$/m);
+      expect(text, f).not.toMatch(/(password|passwd|SSHPASS)\s*=\s*\S/i);
+      expect(text, f).not.toMatch(/chpasswd|parent-key/);
+      execFileSync('bash', ['-n', join(root, 'products/degent/deploy', f)]);
+    }
+    const boot = deploy('server/bootstrap.sh');
+    expect(boot).not.toMatch(/^\s*PasswordAuthentication/m);
+    for (const s of ['PermitRootLogin no', 'MaxAuthTries 3', 'ufw allow 22/tcp', 'ufw allow 80/tcp', 'ufw allow 443/tcp', 'ufw allow 443/udp', 'ufw default deny incoming', 'maxretry = 5', 'findtime = 10m', 'bantime  = 1h', 'env_default MAINNET_MINT_MODE readonly'])
+      expect(boot).toContain(s);
+  });
+
+  it('deploy.sh refuses anything outside its grammar before touching docker', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'degent-deploysh-'));
+    const bin = join(dir, 'bin');
+    mkdirSync(bin);
+    const trace = join(dir, 'docker.log');
+    writeFileSync(join(bin, 'docker'), `#!/bin/sh\necho "$*" >> ${trace}\n`, { mode: 0o755 });
+    const run = (cmd: string) => {
+      const r = spawnSync('bash', [join(root, 'products/degent/deploy/server/deploy.sh')], {
+        env: { PATH: `${bin}:${process.env.PATH}`, DEGENT_HOME: dir, SSH_ORIGINAL_COMMAND: cmd },
+        encoding: 'utf8',
+      });
+      return { code: r.status, out: r.stdout.trim() };
+    };
+    for (const bad of ['', 'deploy', 'deploy $(id)', 'deploy abc;rm', 'deploy ABCDEF1', 'deploy abc1234 prod', 'deploy abc1234 both x', 'logs /etc/passwd', 'logs caddy 99999', 'rm -rf /', 'status now', 'deploy  abc1234']) {
+      const r = run(bad);
+      expect(r.code, bad).toBe(2);
+      expect(JSON.parse(r.out)).toMatchObject({ ok: false, action: 'usage' });
+    }
+    expect(run('status')).toMatchObject({ code: 1 });
+    expect(JSON.parse(run('status').out).error).toMatch(/nothing deployed yet/);
+    expect(existsSync(trace)).toBe(false);
+  });
+
+  it('the deploy workflow parses, pins actions to SHAs, gates on SERVER_PASSWORD and smoke-tests the URLs', () => {
+    const text = read('.github/workflows/deploy.yml');
+    const wf = load(text) as { on: { push: { branches: string[] } }; jobs: Record<string, { permissions?: Record<string, string>; env?: Record<string, string> }> };
+    expect(wf.on.push.branches).toEqual(['claude/magical-einstein-ugdy2r']);
+    for (const m of text.matchAll(/uses: (\S+)/g)) expect(m[1], m[1]).toMatch(/@[0-9a-f]{40}$/);
+    expect(text).toContain("HAS_PW: ${{ secrets.SERVER_PASSWORD != '' }}");
+    expect(wf.jobs.images!.permissions).toMatchObject({ packages: 'write' });
+    expect(wf.jobs.server!.env!.SSHPASS).toBe('${{ secrets.SERVER_PASSWORD }}');
+    expect(text).toContain('sshpass -e ssh');
+    expect(text).not.toMatch(/sshpass -p/);
+    expect(text).toContain('/opt/degent/bin/deploy.sh deploy $SHA both');
+    for (const s of ['https://$MINT_DOMAIN/api/v1/health', 'https://$SIGNET_DOMAIN/api/v1/health', '301 https://$MINT_DOMAIN/collection?x=1']) expect(text).toContain(s);
+    for (const name of ['mint', 'web-mainnet', 'web-signet']) expect(text).toContain(`- name: ${name}`);
   });
 });

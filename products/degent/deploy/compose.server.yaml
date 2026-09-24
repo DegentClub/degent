@@ -1,0 +1,204 @@
+# degent.club single-host release 1 (docs/SERVER.md): one Ubuntu server, no bitcoin nodes, public APIs only.
+#
+#   mint.degent.club    -> caddy -> web-mainnet (static, VITE_NETWORK=mainnet)  /api -> mint-mainnet-api
+#   degent.club         -> caddy: 301 https://mint.degent.club{path+query}
+#   signet.degent.club  -> caddy -> web-signet  (static, VITE_NETWORK=signet)   /api -> mint-signet-api
+#   www.degent.club     -> caddy: 301 like the apex, only with WWW_REDIRECT=true (needs its DNS record first)
+#
+# Run by /opt/degent/bin/deploy.sh (products/degent/deploy/server/deploy.sh) from the release bundle the mint image
+# carries at /app/deploy (this file + caddy/). Settings: /opt/degent/compose/.env (bootstrap.sh). Secrets: files in
+# /opt/degent/secrets/<network>/ (mode 600, owned by the deploy user), never environment values. Images: GHCR, built
+# by .github/workflows/deploy.yml.
+#
+# MAINNET_MINT_MODE / SIGNET_MINT_MODE (in .env) default to readonly: the site and the Register are live, every write
+# answers 503 mint_not_open, and deploy.sh scales the workers to 0. Degents are parentless (ADR-0010): there is no
+# parent key, policy signer or parent inscription here; switching a network to `full` is one line in .env once the
+# parentless mint has merged (docs/SERVER.md).
+name: degent
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+x-mint-mainnet-env: &mint-mainnet-env
+  NETWORK: mainnet
+  MINT_MODE: ${MAINNET_MINT_MODE:-readonly}
+  HOST: 0.0.0.0
+  PORT: "8787"
+  DATABASE_PATH: /var/lib/degent-mint/mint.db
+  CONTENT_DIR: /var/lib/degent-mint/content
+  TRUST_PROXY: "true"
+  REVEAL_ENCRYPTION_KEY_FILE: /run/secrets/mainnet-reveal-encryption-key
+  SESSION_KEY_FILE: /run/secrets/mainnet-session-key
+  ESPLORA_URL: ${MAINNET_ESPLORA_URL:-https://mempool.space/api}
+  ORD_URL: ${MAINNET_ORD_URL:-https://ordinals.com}
+  ORD_PUBLIC_URL: ${MAINNET_ORD_URL:-https://ordinals.com}
+  CORS_ORIGINS: https://${MINT_DOMAIN:-mint.degent.club}
+  SIWB_DOMAIN: ${MINT_DOMAIN:-mint.degent.club}
+  SITE_URL: https://${MINT_DOMAIN:-mint.degent.club}
+  HOLDER_REGISTRY: roster-chain
+  NOTIFY_EMAIL: "off"
+
+x-mint-signet-env: &mint-signet-env
+  NETWORK: signet
+  MINT_MODE: ${SIGNET_MINT_MODE:-readonly}
+  HOST: 0.0.0.0
+  PORT: "8787"
+  DATABASE_PATH: /var/lib/degent-mint/mint.db
+  CONTENT_DIR: /var/lib/degent-mint/content
+  TRUST_PROXY: "true"
+  REVEAL_ENCRYPTION_KEY_FILE: /run/secrets/signet-reveal-encryption-key
+  SESSION_KEY_FILE: /run/secrets/signet-session-key
+  ESPLORA_URL: ${SIGNET_ESPLORA_URL:-https://mempool.space/signet/api}
+  ORD_URL: ${SIGNET_ORD_URL:-https://signet.ordinals.com}
+  ORD_PUBLIC_URL: ${SIGNET_ORD_URL:-https://signet.ordinals.com}
+  # Public signet esplora relays standard transactions only: no Block Degents on the beta.
+  BLOCK_TIER: "off"
+  CORS_ORIGINS: https://${SIGNET_DOMAIN:-signet.degent.club}
+  SIWB_DOMAIN: ${SIGNET_DOMAIN:-signet.degent.club}
+  SITE_URL: https://${SIGNET_DOMAIN:-signet.degent.club}
+  HOLDER_REGISTRY: roster-chain
+  CONFIRMATIONS: "1"
+  REVIEW_SLA_SECONDS: "3600"
+  RESCUE_AFTER_SECONDS: "3600"
+  NOTIFY_EMAIL: "off"
+
+x-mint: &mint
+  <<: *hardening
+  # The deploy user's uid owns the secret files (mode 600) and the data directories behind the volumes.
+  user: "${DEPLOY_UID:?bootstrap.sh writes DEPLOY_UID}:${DEPLOY_GID:?bootstrap.sh writes DEPLOY_GID}"
+
+services:
+  caddy:
+    <<: *hardening
+    image: ${CADDY_IMAGE:-caddy:2.8.4-alpine}
+    # Binds 80/443: the only capability any container gets.
+    cap_add: [NET_BIND_SERVICE]
+    ports:
+      - "80:80/tcp"
+      - "443:443/tcp"
+      - "443:443/udp"
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:-degent.club}
+      MINT_DOMAIN: ${MINT_DOMAIN:-mint.degent.club}
+      SIGNET_DOMAIN: ${SIGNET_DOMAIN:-signet.degent.club}
+      APEX_REDIRECT: ${APEX_REDIRECT:-true}
+      WWW_REDIRECT: ${WWW_REDIRECT:-false}
+      ACME_CA: ${ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
+    volumes:
+      - ./caddy:/etc/caddy:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [web-mainnet, web-signet]
+
+  web-mainnet:
+    <<: *hardening
+    image: ghcr.io/degentclub/degent-web-mainnet:${MAINNET_TAG:?deploy.sh sets MAINNET_TAG}
+    environment:
+      SITE_ADDRESS: ":8080"
+      MINT_API_UPSTREAM: mint-mainnet-api:8787
+      CSP_CONNECT_SRC: https://mempool.space https://ordinals.com
+      CSP_IMG_SRC: https://ordinals.com
+      CSP_HEADER: Content-Security-Policy
+    volumes:
+      - web-mainnet-data:/data
+      - web-mainnet-config:/config
+    expose: ["8080"]
+    depends_on:
+      mint-mainnet-api: { condition: service_healthy }
+
+  mint-mainnet-api:
+    <<: *mint
+    image: ghcr.io/degentclub/degent-mint:${MAINNET_TAG:?deploy.sh sets MAINNET_TAG}
+    command: ["api"]
+    environment:
+      <<: *mint-mainnet-env
+      MINT_ROLE: api
+    volumes:
+      - mainnet-data:/var/lib/degent-mint
+    secrets: [mainnet-reveal-encryption-key, mainnet-session-key]
+    expose: ["8787"]
+
+  mint-mainnet-worker:
+    <<: *mint
+    image: ghcr.io/degentclub/degent-mint:${MAINNET_TAG:?deploy.sh sets MAINNET_TAG}
+    # Exactly one worker. deploy.sh scales it to 0 while MAINNET_MINT_MODE=readonly.
+    command: ["worker"]
+    environment:
+      <<: *mint-mainnet-env
+      MINT_ROLE: worker
+    volumes:
+      - mainnet-data:/var/lib/degent-mint
+    secrets: [mainnet-reveal-encryption-key, mainnet-session-key]
+    depends_on:
+      mint-mainnet-api: { condition: service_healthy }
+
+  web-signet:
+    <<: *hardening
+    image: ghcr.io/degentclub/degent-web-signet:${SIGNET_TAG:?deploy.sh sets SIGNET_TAG}
+    environment:
+      SITE_ADDRESS: ":8080"
+      MINT_API_UPSTREAM: mint-signet-api:8787
+      CSP_CONNECT_SRC: https://mempool.space https://signet.ordinals.com
+      CSP_IMG_SRC: https://signet.ordinals.com
+      CSP_HEADER: Content-Security-Policy
+    volumes:
+      - web-signet-data:/data
+      - web-signet-config:/config
+    expose: ["8080"]
+    depends_on:
+      mint-signet-api: { condition: service_healthy }
+
+  mint-signet-api:
+    <<: *mint
+    image: ghcr.io/degentclub/degent-mint:${SIGNET_TAG:?deploy.sh sets SIGNET_TAG}
+    command: ["api"]
+    environment:
+      <<: *mint-signet-env
+      MINT_ROLE: api
+    volumes:
+      - signet-data:/var/lib/degent-mint
+    secrets: [signet-reveal-encryption-key, signet-session-key]
+    expose: ["8787"]
+
+  mint-signet-worker:
+    <<: *mint
+    image: ghcr.io/degentclub/degent-mint:${SIGNET_TAG:?deploy.sh sets SIGNET_TAG}
+    # Exactly one worker. deploy.sh scales it to 0 while SIGNET_MINT_MODE=readonly.
+    command: ["worker"]
+    environment:
+      <<: *mint-signet-env
+      MINT_ROLE: worker
+    volumes:
+      - signet-data:/var/lib/degent-mint
+    secrets: [signet-reveal-encryption-key, signet-session-key]
+    depends_on:
+      mint-signet-api: { condition: service_healthy }
+
+volumes:
+  # Named volumes backed by directories the deploy user owns (the mints run as that uid): SQLite + content blobs
+  # are plain files under /opt/degent/data, ready for backup.sh (a backup timer is a roadmap follow-up).
+  mainnet-data:
+    driver: local
+    driver_opts: { type: none, o: bind, device: "${DEGENT_HOME:-/opt/degent}/data/mainnet-mint" }
+  signet-data:
+    driver: local
+    driver_opts: { type: none, o: bind, device: "${DEGENT_HOME:-/opt/degent}/data/signet-mint" }
+  caddy-data: {}
+  caddy-config: {}
+  web-mainnet-data: {}
+  web-mainnet-config: {}
+  web-signet-data: {}
+  web-signet-config: {}
+
+secrets:
+  mainnet-reveal-encryption-key: { file: "${DEGENT_HOME:-/opt/degent}/secrets/mainnet/reveal-encryption-key" }
+  mainnet-session-key: { file: "${DEGENT_HOME:-/opt/degent}/secrets/mainnet/session-key" }
+  signet-reveal-encryption-key: { file: "${DEGENT_HOME:-/opt/degent}/secrets/signet/reveal-encryption-key" }
+  signet-session-key: { file: "${DEGENT_HOME:-/opt/degent}/secrets/signet/session-key" }

@@ -1,0 +1,1 @@
+# WWW_REDIRECT=false (default): no www site, so no certificate is requested for a name without a DNS record.

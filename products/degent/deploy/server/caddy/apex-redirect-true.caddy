@@ -1,0 +1,5 @@
+# APEX_REDIRECT=true (default): https://degent.club/<path>?<query> -> 301 https://mint.degent.club/<path>?<query>
+{$SITE_DOMAIN:degent.club} {
+	import security
+	redir https://{$MINT_DOMAIN:mint.degent.club}{uri} 301
+}
