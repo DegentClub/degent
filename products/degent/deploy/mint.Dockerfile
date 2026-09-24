@@ -33,7 +33,7 @@ COPY . .
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm --filter @bsh/degent-mint build \
  && pnpm --filter @bsh/degent-mint deploy --legacy --prod /out \
- && test -f /out/dist/main.mjs
+ && test -f /out/dist/main.mjs && test -f /out/dist/signet-parent.mjs
 
 # -------------------------------------------------------------------------------------------- runtime
 FROM ${NODE_IMAGE} AS runtime
