@@ -8,7 +8,7 @@ loop. This repository holds the product; the shared platform comes from
 
 | Repository | What it is |
 |---|---|
-| **DegentClub/degent** (this repo) | `degent-web` (the degent.club website and mint front end), `degent-mint` (mint service), `degent-mint-sdk` (rules, types, API client), their contracts, ADR-0002 |
+| **DegentClub/degent** (this repo) | `degent-web` (the degent.club website and mint front end), `degent-mint` (mint service), `degent-mint-sdk` (rules, types, API client), `degent-telegram-gate` (holders-only Telegram gate), `degent-x-bot` (X content engine), their contracts, ADR-0002 |
 | [DegentClub/scribbit](https://github.com/DegentClub/scribbit) | The platform: `@bsh/inscription`, `@bsh/wallet-kit`, `@bsh/events`, `@bsh/edge`, …, the catalog tool, scribb.it |
 | [DegentClub/blockspace](https://github.com/DegentClub/blockspace) | block.space: explorer, fee Meter, certification |
 
@@ -35,8 +35,11 @@ runs the platform's tests at the pinned commit (they live in the workspace throu
 products/degent/apps/web/          @bsh/degent-web        degent.club website + mint front end (React + Vite)
 products/degent/services/mint/     @bsh/degent-mint       order state machine, art review, policy signer, lanes
 products/degent/packages/mint-sdk/ @bsh/degent-mint-sdk   rules, domain types, typed API client
+products/degent/services/telegram-gate/ @bsh/degent-telegram-gate  holders-only Telegram gate (SIWB + Register, invite by DM)
+products/degent/services/x-bot/    @bsh/degent-x-bot      X content engine: approval tiers, safety, Register-fact drafts
 contracts/openapi/degent-mint.yaml     HTTP API of degent-mint (provided here)
 contracts/asyncapi/degent-mint.yaml    degent.mint.* order events (provided here; compatible with the platform topic)
+contracts/openapi/degent-telegram-gate.yaml  HTTP API of degent-telegram-gate (provided here; consumed by degent-web /verify)
 deps/scribbit/                     SUBMODULE: the platform (platform/*), catalog tool (tools/catalog), platform contracts
 catalog/                           GENERATED catalog.json + CATALOG.md (platform components listed as external)
 docs/adr/                          ADR-0002 (mint architecture); platform ADRs are in deps/scribbit/docs/adr/
@@ -60,7 +63,9 @@ The catalog tool treats the submodule's packages as **external** components: `ca
 
 ## Contracts
 
-- `contracts/openapi/degent-mint.yaml`: provided by `degent-mint` and `degent-mint-sdk`, consumed by `degent-web`.
+- `contracts/openapi/degent-mint.yaml`: provided by `degent-mint` and `degent-mint-sdk`, consumed by `degent-web`,
+  `degent-telegram-gate` (Register holder check) and `degent-x-bot` (Register facts, stats).
+- `contracts/openapi/degent-telegram-gate.yaml`: provided by `degent-telegram-gate`, consumed by `degent-web` (`/verify`).
 - `contracts/asyncapi/degent-mint.yaml`: `degent.mint.order.{status}` events, provided by `degent-mint`. The shared
   topic is owned by the platform (`deps/scribbit/contracts/asyncapi/platform-events.yaml`); a test in
   `products/degent/services/mint/test/contract.test.ts` asserts this contract stays compatible with it.

@@ -978,19 +978,41 @@ export function createFakeImages(opts: FakeImageOptions = {}): ImageTools {
 // ------------------------------------------------------------------ telegram gate
 
 export interface FakeGateOptions {
-  /** Reject every submission with this message. */
+  /** Reject every verification with this message. */
   reject?: string;
+}
+
+/** A SIWB-shaped challenge like the real gate's (the fake wallet signs any text). */
+export function fakeGateChallenge(token: string, address: string, telegramUserId = 777): string {
+  return [
+    'degent.club wants you to sign in with your Bitcoin account:',
+    address,
+    '',
+    `Prove I hold a Degent to join the degent.club holders group as Telegram user ${telegramUserId}. No transaction, no fees.`,
+    '',
+    'URI: https://degent.club',
+    'Version: 1',
+    'Network: mainnet',
+    `Nonce: ${token.replace(/[^A-Za-z0-9]/g, '').padEnd(16, '0').slice(0, 32)}`,
+    'Issued At: 2026-09-24T12:00:00.000Z',
+    'Expiration Time: 2026-09-24T12:10:00.000Z',
+  ].join('\n');
 }
 
 export function createFakeGate(log: CallLog = [], opts: FakeGateOptions = {}): GateApi & { submissions: Array<{ url: string; body: unknown }> } {
   const submissions: Array<{ url: string; body: unknown }> = [];
   return {
     submissions,
+    async challenge(url, body) {
+      log.push('gate.challenge');
+      submissions.push({ url: `${url}/gate/challenge`, body });
+      return { ok: true, message: fakeGateChallenge(body.token, body.address), expiresAt: '2026-09-24T12:10:00.000Z' };
+    },
     async submit(url, body) {
       log.push('gate.submit');
-      submissions.push({ url, body });
+      submissions.push({ url: `${url}/gate/verify`, body });
       if (opts.reject) return { ok: false, message: opts.reject };
-      return { ok: true, invite: `https://t.me/+demo-${body.token.slice(0, 6)}`, message: 'Welcome, gentleman.' };
+      return { ok: true, degents: [17], message: 'Verified. Your single-use invite is in your Telegram DMs.' };
     },
   };
 }

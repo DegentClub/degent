@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-24T01:44:33.243Z",
+  "generatedAt": "2026-09-24T01:47:33.180Z",
   "schema": "schemas/component.schema.json",
   "components": [
     {
@@ -127,8 +127,61 @@
       },
       "dependents": [
         "degent-mint",
-        "degent-web"
+        "degent-telegram-gate",
+        "degent-web",
+        "degent-x-bot"
       ]
+    },
+    {
+      "name": "degent-telegram-gate",
+      "package": "@bsh/degent-telegram-gate",
+      "kind": "service",
+      "product": "degent",
+      "owner": "team-degent",
+      "summary": "Holders-only Telegram group gate - /verify link, SIWB challenge, Register holder check, single-use invite by DM, periodic re-verification that kicks sellers.",
+      "lifecycle": "beta",
+      "depends_on": [
+        "@bsh/identity",
+        "@bsh/degent-mint-sdk"
+      ],
+      "provides": [
+        "contracts/openapi/degent-telegram-gate.yaml"
+      ],
+      "consumes": [
+        "contracts/openapi/degent-mint.yaml"
+      ],
+      "stores": [
+        "sqlite:degent_telegram_gate"
+      ],
+      "secrets": [
+        "services/degent-telegram-gate/bot-token",
+        "services/degent-telegram-gate/link-secret",
+        "services/degent-telegram-gate/session-key"
+      ],
+      "env_schema": "./env.schema.json",
+      "slo": {
+        "availability": "99.5",
+        "p95_ms": 500
+      },
+      "docs": "./README.md",
+      "commands": {
+        "dev": "dev",
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "products/degent/services/telegram-gate",
+      "version": "0.1.0",
+      "scripts": {
+        "dev": "NETWORK=${NETWORK:-regtest} tsx watch src/main.ts",
+        "start": "tsx src/main.ts",
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "env_schema": "products/degent/services/telegram-gate/env.schema.json",
+        "docs": "products/degent/services/telegram-gate/README.md"
+      },
+      "dependents": []
     },
     {
       "name": "degent-web",
@@ -144,7 +197,8 @@
         "@bsh/degent-mint-sdk"
       ],
       "consumes": [
-        "contracts/openapi/degent-mint.yaml"
+        "contracts/openapi/degent-mint.yaml",
+        "contracts/openapi/degent-telegram-gate.yaml"
       ],
       "docs": "./README.md",
       "commands": {
@@ -164,6 +218,49 @@
       },
       "files": {
         "docs": "products/degent/apps/web/README.md"
+      },
+      "dependents": []
+    },
+    {
+      "name": "degent-x-bot",
+      "package": "@bsh/degent-x-bot",
+      "kind": "service",
+      "product": "degent",
+      "owner": "team-degent",
+      "summary": "@degentclub content engine - approval-tier classifier, content safety (address filter, NFA rules), and Register-fact drafts from delivered mints and stats behind a review queue.",
+      "lifecycle": "experimental",
+      "depends_on": [
+        "@bsh/events",
+        "@bsh/degent-mint-sdk"
+      ],
+      "consumes": [
+        "deps/scribbit/contracts/asyncapi/platform-events.yaml#/channels/degentMintOrderStatus",
+        "contracts/openapi/degent-mint.yaml"
+      ],
+      "stores": [
+        "memory:degent_x_bot_drafts"
+      ],
+      "secrets": [
+        "services/degent-x-bot/x-access-token"
+      ],
+      "env_schema": "./env.schema.json",
+      "docs": "./README.md",
+      "commands": {
+        "dev": "dev",
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "products/degent/services/x-bot",
+      "version": "0.1.0",
+      "scripts": {
+        "dev": "tsx src/main.ts",
+        "start": "tsx src/main.ts",
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "env_schema": "products/degent/services/x-bot/env.schema.json",
+        "docs": "products/degent/services/x-bot/README.md"
       },
       "dependents": []
     },
@@ -231,6 +328,7 @@
       },
       "dependents": [
         "degent-mint",
+        "degent-x-bot",
         "ledger",
         "notify"
       ],
@@ -267,7 +365,8 @@
         "docs": "deps/scribbit/platform/identity/README.md"
       },
       "dependents": [
-        "degent-mint"
+        "degent-mint",
+        "degent-telegram-gate"
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
@@ -448,7 +547,9 @@
       "components": [
         "degent-mint",
         "degent-mint-sdk",
-        "degent-web"
+        "degent-telegram-gate",
+        "degent-web",
+        "degent-x-bot"
       ],
       "owners": [
         "team-degent"
@@ -456,7 +557,7 @@
       "kinds": {
         "app": 1,
         "library": 1,
-        "service": 1
+        "service": 3
       }
     },
     "platform": {
@@ -516,6 +617,19 @@
         "degent-mint-sdk"
       ],
       "consumers": [
+        "degent-telegram-gate",
+        "degent-web",
+        "degent-x-bot"
+      ]
+    },
+    {
+      "path": "contracts/openapi/degent-telegram-gate.yaml",
+      "kind": "openapi",
+      "exists": true,
+      "providers": [
+        "degent-telegram-gate"
+      ],
+      "consumers": [
         "degent-web"
       ]
     },
@@ -536,7 +650,8 @@
         "events"
       ],
       "consumers": [
-        "degent-mint"
+        "degent-mint",
+        "degent-x-bot"
       ]
     },
     {
@@ -570,8 +685,28 @@
       "type": "consumes"
     },
     {
+      "from": "degent-telegram-gate",
+      "to": "contracts/openapi/degent-mint.yaml",
+      "type": "consumes"
+    },
+    {
       "from": "degent-web",
       "to": "contracts/openapi/degent-mint.yaml",
+      "type": "consumes"
+    },
+    {
+      "from": "degent-web",
+      "to": "contracts/openapi/degent-telegram-gate.yaml",
+      "type": "consumes"
+    },
+    {
+      "from": "degent-x-bot",
+      "to": "contracts/openapi/degent-mint.yaml",
+      "type": "consumes"
+    },
+    {
+      "from": "degent-x-bot",
+      "to": "deps/scribbit/contracts/asyncapi/platform-events.yaml",
       "type": "consumes"
     },
     {
@@ -600,6 +735,16 @@
       "type": "depends_on"
     },
     {
+      "from": "degent-telegram-gate",
+      "to": "degent-mint-sdk",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-telegram-gate",
+      "to": "identity",
+      "type": "depends_on"
+    },
+    {
       "from": "degent-web",
       "to": "degent-mint-sdk",
       "type": "depends_on"
@@ -612,6 +757,16 @@
     {
       "from": "degent-web",
       "to": "wallet-kit",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-x-bot",
+      "to": "degent-mint-sdk",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-x-bot",
+      "to": "events",
       "type": "depends_on"
     },
     {
@@ -642,6 +797,11 @@
     {
       "from": "degent-mint-sdk",
       "to": "contracts/openapi/degent-mint.yaml",
+      "type": "provides"
+    },
+    {
+      "from": "degent-telegram-gate",
+      "to": "contracts/openapi/degent-telegram-gate.yaml",
       "type": "provides"
     },
     {

@@ -18,7 +18,7 @@ export function testApp(over: Partial<AppConfig> = {}): AppConfig {
     ordContentUrl: 'https://ord.test',
     pollIntervalMs: 10,
     demo: true,
-    gateUrl: 'https://gate.test/verify',
+    gateUrl: 'https://gate.test',
     siteUrl: 'https://degent.club',
     buyUrl: 'https://magiceden.io/ordinals/marketplace/degentclub',
     buyItemUrl: 'https://magiceden.io/ordinals/item-details/{id}',

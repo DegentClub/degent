@@ -30,7 +30,7 @@ pnpm --filter @bsh/degent-web build      # → dist/
 | `/manifesto`, `/about` | `TODO(copy)` placeholders: the live copy was not captured and must not be invented | – | anyone | `test/site.test.tsx` |
 | `/review` | The members' vote (ADR-0007): SIWB sign-in, orders in `member_review`, Approve / Decline by signing `Approve Degent order <id> (<ref>)` | `/v1/review`, votes | holders | `test/members.test.tsx` |
 | `/explorer` | The Register: stats header, filter/sort/paginated grid, member detail | `/v1/stats`, `/v1/explorer` | anyone | `test/members.test.tsx` |
-| `/verify?tg=<token>` | Telegram gate landing: connect, sign the gate statement, POST to `VITE_GATE_URL` | gate service | holders | `test/members.test.tsx` |
+| `/verify?tg=<token>` | Telegram gate landing: connect, `POST /gate/challenge`, sign the returned SIWB message, `POST /gate/verify {token, address, message, signature}` to the gate at `VITE_GATE_URL` (`@bsh/degent-telegram-gate`, `contracts/openapi/degent-telegram-gate.yaml`); the invite arrives by Telegram DM | gate service | holders | `test/members.test.tsx`, `test/gate-contract.test.ts` |
 | anything else | Not found, with a way home | – | – | `test/site.test.tsx` |
 
 Routing is a few lines in `src/router.ts` (`matchRoute`: pathname → route + `:n` / `:id`); `?demo=1` works on every
@@ -147,7 +147,7 @@ self-rescue (the mint's normal path does not need either).
 | `VITE_EXPLORER_URL` | `https://explore.block.space` | Block explorer for tx links (`/tx/<txid>`) |
 | `VITE_ORD_URL` | `https://ordinals.com` | ord server for `/content/<inscription id>` |
 | `VITE_POLL_MS` | `5000` (`1200` in demo) | Order polling interval |
-| `VITE_GATE_URL` | empty | Telegram gate endpoint for `/verify` (empty disables it) |
+| `VITE_GATE_URL` | empty | Base URL of the Telegram gate service; `/verify` calls `/gate/challenge` and `/gate/verify` (empty disables it) |
 | `VITE_SITE_URL` | `https://degent.club` | Public origin for share links, OpenGraph URLs and JSON-LD |
 | `VITE_BUY_URL` | Magic Eden collection page | Header "Buy" |
 | `VITE_BUY_ITEM_URL` | `https://magiceden.io/ordinals/item-details/{id}` | Lightbox "Buy Item" (`{id}` = inscription id) |

@@ -1,0 +1,16 @@
+name: degent-telegram-gate
+package: "@bsh/degent-telegram-gate"
+kind: service
+product: degent
+owner: team-degent
+summary: Holders-only Telegram group gate - /verify link, SIWB challenge, Register holder check, single-use invite by DM, periodic re-verification that kicks sellers.
+lifecycle: beta
+depends_on: ["@bsh/identity", "@bsh/degent-mint-sdk"]
+provides: [contracts/openapi/degent-telegram-gate.yaml]
+consumes: [contracts/openapi/degent-mint.yaml]
+stores: ["sqlite:degent_telegram_gate"]
+secrets: ["services/degent-telegram-gate/bot-token", "services/degent-telegram-gate/link-secret", "services/degent-telegram-gate/session-key"]
+env_schema: ./env.schema.json
+slo: { availability: "99.5", p95_ms: 500 }
+docs: ./README.md
+commands: { dev: dev, test: test, typecheck: typecheck }

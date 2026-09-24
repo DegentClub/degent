@@ -1,17 +1,14 @@
 /**
- * /verify?tg=<token> — the holders-only Telegram gate landing. Connect the wallet holding a Degent,
- * sign the gate's statement (BIP-322), and post {token, address, message, signature} to GATE_URL.
- * The gate service itself is built separately; this page only produces a verifiable signature.
+ * /verify?tg=<token> — the holders-only Telegram gate landing (`@bsh/degent-telegram-gate`,
+ * contracts/openapi/degent-telegram-gate.yaml). Connect the wallet holding a Degent, fetch the gate's
+ * Sign-in-with-Bitcoin challenge (it names the Telegram account), sign it unmodified (BIP-322), and post
+ * {token, address, message, signature}. The invite arrives by Telegram DM; this page never shows one.
  */
 import { useState } from 'react';
 import { useMint } from '../flow/context';
 import { ScreenHeading } from '../components/ScreenHeading';
 import { Alert, Badge, Button, ExternalLink, Mono, Panel, errorText } from '../components/ui';
 import type { WalletId, WalletSession } from '../services/types';
-
-export function gateStatement(token: string, address: string, issuedAt: string): string {
-  return `Verify Degent holder ${address} for Telegram gate ${token} at ${issuedAt}`;
-}
 
 export function readGateToken(search: string): string | null {
   try {
@@ -29,7 +26,7 @@ export function Verify({ search }: { search?: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [holder, setHolder] = useState<{ degents: number[] } | null>(null);
-  const [result, setResult] = useState<{ invite?: string; message?: string } | null>(null);
+  const [result, setResult] = useState<{ message: string; degents: number[] } | null>(null);
   const wallets = services.wallets.list();
 
   const connect = async (id: WalletId) => {
@@ -53,11 +50,12 @@ export function Verify({ search }: { search?: string }) {
     setError(null);
     try {
       const address = wallet.ordinals.address;
-      const message = gateStatement(token, address, new Date().toISOString());
-      const signature = await wallet.signMessage(message, address);
-      const res = await services.gate.submit(app.gateUrl, { token, address, message, signature });
-      if (!res.ok) throw new Error(res.message ?? 'The gate refused the signature.');
-      setResult({ ...(res.invite ? { invite: res.invite } : {}), ...(res.message ? { message: res.message } : {}) });
+      const ch = await services.gate.challenge(app.gateUrl, { token, address });
+      if (!ch.ok) throw new Error(ch.message);
+      const signature = await wallet.signMessage(ch.message, address);
+      const res = await services.gate.submit(app.gateUrl, { token, address, message: ch.message, signature });
+      if (!res.ok) throw new Error(res.message);
+      setResult({ message: res.message, degents: res.degents });
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -108,8 +106,9 @@ export function Verify({ search }: { search?: string }) {
 
       <Panel title="2 · Sign and enter">
         <p className="small">
-          The message names your address and the gate token, so it cannot be reused for anyone else. The gate checks the
-          signature and the Register, then hands you a single-use invite.
+          The gate asks your wallet to sign a message naming your address and your Telegram account, so it cannot be
+          reused for anyone else. The gate checks the signature and the Register, then sends a single-use invite to your
+          Telegram DMs.
         </p>
         <div className="actions">
           <Button busy={busy === 'verify'} disabled={!wallet || !token || !app.gateUrl || result !== null || (holder !== null && holder.degents.length === 0)} onClick={() => void verify()}>
@@ -119,8 +118,7 @@ export function Verify({ search }: { search?: string }) {
         <div aria-live="assertive">
           {result ? (
             <Alert tone="good" title="Verified">
-              {result.message ?? 'The gate accepted your signature.'}{' '}
-              {result.invite ? <ExternalLink href={result.invite}>Open your invite</ExternalLink> : null}
+              {result.message}
             </Alert>
           ) : null}
           {error ? <Alert tone="bad" title="Not verified">{error}</Alert> : null}
