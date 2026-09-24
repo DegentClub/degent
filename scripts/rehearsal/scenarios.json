@@ -1,0 +1,470 @@
+{
+  "$comment": "Rehearsal scenarios for scripts/rehearsal/run.mjs (docs/REHEARSAL.md). mode auto = the runner does it against the public API; mode manual = a human does the money path in the web app and gives the runner the order id. expect.status is the final status; expect.visits are statuses the public timeline must contain.",
+  "version": 1,
+  "scenarios": [
+    {
+      "name": "smoke",
+      "mode": "auto",
+      "description": "Service is up and self-consistent: health ok (store, chain, parent), config on the expected network, fees and queue answer.",
+      "steps": [
+        "health",
+        "config",
+        "fees",
+        "queue"
+      ]
+    },
+    {
+      "name": "intake-standard",
+      "mode": "auto",
+      "lane": "standard",
+      "tier": "standard",
+      "description": "Create a Standard order with a generated fixture PNG, upload it, get an approved order with a binding quote (never paid; it expires).",
+      "steps": [
+        "create"
+      ]
+    },
+    {
+      "name": "intake-block",
+      "mode": "auto",
+      "lane": "block",
+      "tier": "block",
+      "description": "Same for the Block tier (> 390 KB): the service must offer it on signet (a mainnet standard-lane-only service does not; run with --only there).",
+      "steps": [
+        "create"
+      ],
+      "bytes": 400000
+    },
+    {
+      "name": "policy-refusal",
+      "mode": "auto",
+      "description": "Intake policy: the API refuses what the collection rules and the non-custodial checks forbid, before any payment.",
+      "steps": [
+        "refusals"
+      ],
+      "cases": [
+        {
+          "case": "wrong_network_recipient",
+          "expectStatus": 422,
+          "expectCode": "validation_failed"
+        },
+        {
+          "case": "fee_below_minimum",
+          "expectStatus": 422,
+          "expectCode": "validation_failed"
+        },
+        {
+          "case": "content_type_not_allowed",
+          "expectStatus": 422,
+          "expectCode": "validation_failed"
+        },
+        {
+          "case": "size_outside_tiers",
+          "expectStatus": 422,
+          "expectCode": "validation_failed"
+        },
+        {
+          "case": "invalid_reveal_pubkey",
+          "expectStatus": 422,
+          "expectCode": "validation_failed"
+        },
+        {
+          "case": "art_rejected"
+        }
+      ]
+    },
+    {
+      "name": "wallet-unisat-desktop",
+      "mode": "manual",
+      "wallet": "unisat",
+      "device": "desktop",
+      "lane": "standard",
+      "description": "UniSat on desktop: full Standard mint in the web app (connect, create, pay, save recovery bundle), members approve, delivered with the parent link.",
+      "operator": [
+        "Open the web app on a desktop browser with the extension, connect UniSat.",
+        "Mint a Standard Degent; keep the recovery bundle; note the order id from the Track page.",
+        "Have APPROVAL_QUORUM members approve it on /review.",
+        "Wait for delivered; check 'hash match' on the Track page."
+      ],
+      "expect": {
+        "status": "delivered",
+        "rescued": false,
+        "lane": "standard",
+        "visits": [
+          "paid",
+          "member_review",
+          "queued",
+          "revealed",
+          "confirmed",
+          "verified"
+        ]
+      },
+      "timeoutMinutes": 240
+    },
+    {
+      "name": "wallet-unisat-mobile",
+      "mode": "manual",
+      "wallet": "unisat",
+      "device": "mobile",
+      "lane": "standard",
+      "description": "UniSat on mobile: full Standard mint in the web app (connect, create, pay, save recovery bundle), members approve, delivered with the parent link.",
+      "operator": [
+        "Open the web app on a mobile browser (in-wallet browser or mobile extension), connect UniSat.",
+        "Mint a Standard Degent; keep the recovery bundle; note the order id from the Track page.",
+        "Have APPROVAL_QUORUM members approve it on /review.",
+        "Wait for delivered; check 'hash match' on the Track page."
+      ],
+      "expect": {
+        "status": "delivered",
+        "rescued": false,
+        "lane": "standard",
+        "visits": [
+          "paid",
+          "member_review",
+          "queued",
+          "revealed",
+          "confirmed",
+          "verified"
+        ]
+      },
+      "timeoutMinutes": 240
+    },
+    {
+      "name": "wallet-xverse-desktop",
+      "mode": "manual",
+      "wallet": "xverse",
+      "device": "desktop",
+      "lane": "standard",
+      "description": "Xverse on desktop: full Standard mint in the web app (connect, create, pay, save recovery bundle), members approve, delivered with the parent link.",
+      "operator": [
+        "Open the web app on a desktop browser with the extension, connect Xverse.",
+        "Mint a Standard Degent; keep the recovery bundle; note the order id from the Track page.",
+        "Have APPROVAL_QUORUM members approve it on /review.",
+        "Wait for delivered; check 'hash match' on the Track page."
+      ],
+      "expect": {
+        "status": "delivered",
+        "rescued": false,
+        "lane": "standard",
+        "visits": [
+          "paid",
+          "member_review",
+          "queued",
+          "revealed",
+          "confirmed",
+          "verified"
+        ]
+      },
+      "timeoutMinutes": 240
+    },
+    {
+      "name": "wallet-xverse-mobile",
+      "mode": "manual",
+      "wallet": "xverse",
+      "device": "mobile",
+      "lane": "standard",
+      "description": "Xverse on mobile: full Standard mint in the web app (connect, create, pay, save recovery bundle), members approve, delivered with the parent link.",
+      "operator": [
+        "Open the web app on a mobile browser (in-wallet browser or mobile extension), connect Xverse.",
+        "Mint a Standard Degent; keep the recovery bundle; note the order id from the Track page.",
+        "Have APPROVAL_QUORUM members approve it on /review.",
+        "Wait for delivered; check 'hash match' on the Track page."
+      ],
+      "expect": {
+        "status": "delivered",
+        "rescued": false,
+        "lane": "standard",
+        "visits": [
+          "paid",
+          "member_review",
+          "queued",
+          "revealed",
+          "confirmed",
+          "verified"
+        ]
+      },
+      "timeoutMinutes": 240
+    },
+    {
+      "name": "wallet-leather-desktop",
+      "mode": "manual",
+      "wallet": "leather",
+      "device": "desktop",
+      "lane": "standard",
+      "description": "Leather on desktop: full Standard mint in the web app (connect, create, pay, save recovery bundle), members approve, delivered with the parent link.",
+      "operator": [
+        "Open the web app on a desktop browser with the extension, connect Leather.",
+        "Mint a Standard Degent; keep the recovery bundle; note the order id from the Track page.",
+        "Have APPROVAL_QUORUM members approve it on /review.",
+        "Wait for delivered; check 'hash match' on the Track page."
+      ],
+      "expect": {
+        "status": "delivered",
+        "rescued": false,
+        "lane": "standard",
+        "visits": [
+          "paid",
+          "member_review",
+          "queued",
+          "revealed",
+          "confirmed",
+          "verified"
+        ]
+      },
+      "timeoutMinutes": 240
+    },
+    {
+      "name": "wallet-leather-mobile",
+      "mode": "manual",
+      "wallet": "leather",
+      "device": "mobile",
+      "lane": "standard",
+      "description": "Leather on mobile: full Standard mint in the web app (connect, create, pay, save recovery bundle), members approve, delivered with the parent link.",
+      "operator": [
+        "Open the web app on a mobile browser (in-wallet browser or mobile extension), connect Leather.",
+        "Mint a Standard Degent; keep the recovery bundle; note the order id from the Track page.",
+        "Have APPROVAL_QUORUM members approve it on /review.",
+        "Wait for delivered; check 'hash match' on the Track page."
+      ],
+      "expect": {
+        "status": "delivered",
+        "rescued": false,
+        "lane": "standard",
+        "visits": [
+          "paid",
+          "member_review",
+          "queued",
+          "revealed",
+          "confirmed",
+          "verified"
+        ]
+      },
+      "timeoutMinutes": 240
+    },
+    {
+      "name": "wallet-okx-desktop",
+      "mode": "manual",
+      "wallet": "okx",
+      "device": "desktop",
+      "lane": "standard",
+      "description": "OKX Wallet on desktop: full Standard mint in the web app (connect, create, pay, save recovery bundle), members approve, delivered with the parent link.",
+      "operator": [
+        "Open the web app on a desktop browser with the extension, connect OKX Wallet.",
+        "Mint a Standard Degent; keep the recovery bundle; note the order id from the Track page.",
+        "Have APPROVAL_QUORUM members approve it on /review.",
+        "Wait for delivered; check 'hash match' on the Track page."
+      ],
+      "expect": {
+        "status": "delivered",
+        "rescued": false,
+        "lane": "standard",
+        "visits": [
+          "paid",
+          "member_review",
+          "queued",
+          "revealed",
+          "confirmed",
+          "verified"
+        ]
+      },
+      "timeoutMinutes": 240
+    },
+    {
+      "name": "wallet-okx-mobile",
+      "mode": "manual",
+      "wallet": "okx",
+      "device": "mobile",
+      "lane": "standard",
+      "description": "OKX Wallet on mobile: full Standard mint in the web app (connect, create, pay, save recovery bundle), members approve, delivered with the parent link.",
+      "operator": [
+        "Open the web app on a mobile browser (in-wallet browser or mobile extension), connect OKX Wallet.",
+        "Mint a Standard Degent; keep the recovery bundle; note the order id from the Track page.",
+        "Have APPROVAL_QUORUM members approve it on /review.",
+        "Wait for delivered; check 'hash match' on the Track page."
+      ],
+      "expect": {
+        "status": "delivered",
+        "rescued": false,
+        "lane": "standard",
+        "visits": [
+          "paid",
+          "member_review",
+          "queued",
+          "revealed",
+          "confirmed",
+          "verified"
+        ]
+      },
+      "timeoutMinutes": 240
+    },
+    {
+      "name": "wallet-magiceden-desktop",
+      "mode": "manual",
+      "wallet": "magiceden",
+      "device": "desktop",
+      "lane": "standard",
+      "description": "Magic Eden on desktop: full Standard mint in the web app (connect, create, pay, save recovery bundle), members approve, delivered with the parent link.",
+      "operator": [
+        "Open the web app on a desktop browser with the extension, connect Magic Eden.",
+        "Mint a Standard Degent; keep the recovery bundle; note the order id from the Track page.",
+        "Have APPROVAL_QUORUM members approve it on /review.",
+        "Wait for delivered; check 'hash match' on the Track page."
+      ],
+      "expect": {
+        "status": "delivered",
+        "rescued": false,
+        "lane": "standard",
+        "visits": [
+          "paid",
+          "member_review",
+          "queued",
+          "revealed",
+          "confirmed",
+          "verified"
+        ]
+      },
+      "timeoutMinutes": 240
+    },
+    {
+      "name": "wallet-magiceden-mobile",
+      "mode": "manual",
+      "wallet": "magiceden",
+      "device": "mobile",
+      "lane": "standard",
+      "description": "Magic Eden on mobile: full Standard mint in the web app (connect, create, pay, save recovery bundle), members approve, delivered with the parent link.",
+      "operator": [
+        "Open the web app on a mobile browser (in-wallet browser or mobile extension), connect Magic Eden.",
+        "Mint a Standard Degent; keep the recovery bundle; note the order id from the Track page.",
+        "Have APPROVAL_QUORUM members approve it on /review.",
+        "Wait for delivered; check 'hash match' on the Track page."
+      ],
+      "expect": {
+        "status": "delivered",
+        "rescued": false,
+        "lane": "standard",
+        "visits": [
+          "paid",
+          "member_review",
+          "queued",
+          "revealed",
+          "confirmed",
+          "verified"
+        ]
+      },
+      "timeoutMinutes": 240
+    },
+    {
+      "name": "approve",
+      "mode": "manual",
+      "wallet": "any",
+      "lane": "standard",
+      "description": "Member approval end to end: three distinct holders sign in with SIWB and approve; the order is numbered 4112+rank, revealed with the parent and delivered.",
+      "operator": [
+        "Mint and pay a Standard order with any wallet.",
+        "Three rehearsal members sign in on /review and approve (BIP-322).",
+        "Check the tally on Track and the Degent number in the Register."
+      ],
+      "expect": {
+        "status": "delivered",
+        "rescued": false,
+        "visits": [
+          "member_review",
+          "queued"
+        ]
+      },
+      "timeoutMinutes": 240
+    },
+    {
+      "name": "decline-rescue",
+      "mode": "manual",
+      "wallet": "any",
+      "lane": "standard",
+      "description": "Members decline: the order goes to declined at once, the user re-signs the parent-less self-rescue from the recovery bundle and it lands without the parent.",
+      "operator": [
+        "Mint and pay a Standard order.",
+        "Three members decline on /review.",
+        "On Track, use 'Rescue now' (recovery bundle + passphrase) and broadcast.",
+        "Wait for delivered (rescued)."
+      ],
+      "expect": {
+        "status": "delivered",
+        "rescued": true,
+        "visits": [
+          "member_review",
+          "declined",
+          "revealed"
+        ]
+      },
+      "timeoutMinutes": 240
+    },
+    {
+      "name": "sla-rescue",
+      "mode": "manual",
+      "wallet": "any",
+      "lane": "standard",
+      "description": "Nobody votes: after REVIEW_SLA_SECONDS (3600 in the signet env) the worker offers rescue_available; the user self-rescues.",
+      "operator": [
+        "Mint and pay a Standard order; nobody votes.",
+        "After REVIEW_SLA_SECONDS the Track page offers the rescue; re-sign and broadcast.",
+        "Wait for delivered (rescued)."
+      ],
+      "expect": {
+        "status": "delivered",
+        "rescued": true,
+        "visits": [
+          "member_review",
+          "rescue_available",
+          "revealed"
+        ]
+      },
+      "timeoutMinutes": 300
+    },
+    {
+      "name": "block-lane",
+      "mode": "manual",
+      "wallet": "any",
+      "lane": "block",
+      "description": "A Block Degent (> 390 KB) goes through the block lane (LIBRE_RPC_URL to a node that accepts non-standard transactions) one per block, with the parent.",
+      "operator": [
+        "Mint and pay a Block Degent (> 390 KB).",
+        "Members approve.",
+        "Check logs: broadcast via libre-relay; one block-lane reveal in flight.",
+        "Wait for delivered."
+      ],
+      "expect": {
+        "status": "delivered",
+        "rescued": false,
+        "lane": "block",
+        "visits": [
+          "queued",
+          "revealing",
+          "revealed"
+        ]
+      },
+      "timeoutMinutes": 300
+    },
+    {
+      "name": "lane-outage",
+      "mode": "manual",
+      "wallet": "any",
+      "lane": "block",
+      "description": "Block-lane broadcaster down while an approved order waits: retryable failures keep the lease and rebroadcast the same tx; after the backend returns the order is delivered (or rescue_available after RESCUE_AFTER_SECONDS).",
+      "operator": [
+        "Stop the block-lane node RPC (or point LIBRE_RPC_URL at a closed port and restart mint-worker).",
+        "Mint, pay and approve a Block Degent; watch 'broadcast failed' logs (retryable) and the order held in revealing/queued.",
+        "Restore the backend within RESCUE_AFTER_SECONDS; the same txid is broadcast.",
+        "Wait for delivered."
+      ],
+      "expect": {
+        "status": "delivered",
+        "rescued": false,
+        "lane": "block",
+        "visits": [
+          "queued",
+          "revealing",
+          "revealed"
+        ]
+      },
+      "timeoutMinutes": 360
+    }
+  ]
+}
