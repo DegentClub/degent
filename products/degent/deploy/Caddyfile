@@ -1,0 +1,66 @@
+# degent-web: static SPA + same-origin /api proxy to the mint API. docs/DEPLOY.md.
+#
+# Environment (read when Caddy parses this file):
+#   SITE_ADDRESS        listener; ":8080" (default, TLS terminated by the edge) or "degent.club" (Caddy ACME)
+#   MINT_API_UPSTREAM   mint API host:port (compose: mint-api:8787; NixOS: 127.0.0.1:8787)
+#   CSP_CONNECT_SRC     extra connect-src origins: esplora (UTXOs, broadcast), the Telegram gate
+#   CSP_IMG_SRC         extra img-src origins: the ord server that serves /content/<id>
+#   WEB_ROOT            directory with the built app (default /srv)
+#   CSP_HEADER          "Content-Security-Policy" (default) or "Content-Security-Policy-Report-Only"
+#                       (use report-only only while a wallet extension is being diagnosed in a rehearsal)
+{
+	admin off
+	persist_config off
+	servers {
+		# Keep X-Forwarded-For from the fleet edge (netcore) and docker networks; strip it from anyone else.
+		trusted_proxies static private_ranges
+	}
+}
+
+{$SITE_ADDRESS::8080} {
+	encode zstd gzip
+
+	log {
+		output stdout
+		format json
+	}
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()" 
+		{$CSP_HEADER:Content-Security-Policy} "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: {$CSP_IMG_SRC:https://ordinals.com}; connect-src 'self' {$CSP_CONNECT_SRC:https://mempool.space}; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
+	}
+
+	# Liveness for container HEALTHCHECK / systemd probes; no upstream involved.
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	# Same-origin API: /api/v1/... -> mint /v1/... . The mint still needs CORS_ORIGINS=<this origin>
+	# (browsers send Origin on same-origin POSTs) and TRUST_PROXY=true (client IP for rate limiting).
+	handle_path /api/* {
+		header Cache-Control "no-store"
+		reverse_proxy {$MINT_API_UPSTREAM:mint-api:8787} {
+			header_up -Cookie
+		}
+	}
+
+	handle {
+		root * {$WEB_ROOT:/srv}
+		# Content-hashed build output never changes: cache forever.
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		# index.html and anything not hashed: always revalidate so a deploy is picked up at once.
+		@html not path /assets/*
+		header @html Cache-Control "no-cache"
+		# SPA fallback: /review, /explorer, /verify are client routes.
+		try_files {path} /index.html
+		file_server
+	}
+}

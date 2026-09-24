@@ -174,7 +174,7 @@ See [`env.schema.json`](./env.schema.json) for every variable. Essentials:
 | `NETWORK` | required; `regtest` enables dev defaults (in-memory stores, dev reveal key, random parent key) |
 | `DATABASE_PATH`, `CONTENT_DIR` | sqlite file and blob dir (required off regtest) |
 | `ESPLORA_URL`, `ORD_URL` | chain + ord backends |
-| `LIBRE_RPC_URL/USER/PASS`, `SLIPSTREAM_URL/API_KEY` | block lane (mainnet needs at least one; both = fan-out) |
+| `LIBRE_RPC_URL/USER/PASS`, `SLIPSTREAM_URL/API_KEY` | block lane (both = fan-out); mainnet with neither offers the standard tier only |
 | `PARENT_INSCRIPTION_ID`, `PARENT_OUTPOINT`, `COLLECTION_ADDRESS` | parent identity, initial location, key address |
 | `SIGNER`, `PARENT_KEY_FILE` | `memory` + key file is dev-only; **mainnet refuses to start** with it (KMS adapter TODO) |
 | `REVEAL_ENCRYPTION_KEY` | 32-byte hex AES key for stored reveals (required off regtest) |

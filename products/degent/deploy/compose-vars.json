@@ -1,0 +1,129 @@
+{
+  "$comment": "Deployment knobs for compose.{signet,mainnet}.yaml that are NOT degent-mint service variables (those are in products/degent/services/mint/env.schema.json). gen-env.mjs renders .env.<env>.example from both files; test/deploy.test.ts checks that compose files interpolate only variables listed here or in env.schema.json.",
+  "fixed": {
+    "$comment": "Service variables the compose files set themselves (not operator-tunable there).",
+    "NETWORK": "signet / mainnet, per compose file",
+    "MINT_ROLE": "api for mint-api, worker for mint-worker (also the container command)",
+    "HOST": "0.0.0.0 inside the container",
+    "PORT": "8787 inside the container",
+    "DATABASE_PATH": "/var/lib/degent-mint/mint.db on the mint-data volume",
+    "CONTENT_DIR": "/var/lib/degent-mint/content on the mint-data volume",
+    "SIGNER": "memory on signet (dev key file), kms on mainnet",
+    "PARENT_KEY_FILE": "/run/secrets/parent-key on signet; never set on mainnet",
+    "TRUST_PROXY": "true: the web container (Caddy) is the only client of mint-api",
+    "ROSTER_FILE": "/etc/degent-mint/roster.json, bind-mounted from ROSTER_PATH"
+  },
+  "deploy": {
+    "DEGENT_IMAGE_PREFIX": {
+      "description": "Image name prefix (registry/namespace) for mint, mint-backup and web images.",
+      "default": "degent"
+    },
+    "DEGENT_IMAGE_TAG": {
+      "description": "Image tag. Signet builds locally; mainnet runs the exact mint images rehearsed on signet, promoted by tag (git commit).",
+      "default": "local",
+      "mainnet": null
+    },
+    "SECRETS_DIR": {
+      "description": "Host directory holding one file per secret (see the secrets list). Files must be readable by uid 1000 and nobody else (chmod 0400, chown 1000). An empty file means unset for optional secrets.",
+      "signet": "./secrets",
+      "mainnet": null
+    },
+    "ROSTER_PATH": {
+      "description": "Host path of the Gallery roster JSON mounted read-only as ROSTER_FILE. Signet member votes need a signet roster (docs/REHEARSAL.md).",
+      "default": "../services/mint/data/roster.json"
+    },
+    "WEB_BIND": {
+      "description": "Host address the web container publishes on. Keep 127.0.0.1 behind a TLS edge.",
+      "default": "127.0.0.1"
+    },
+    "WEB_PORT": {
+      "description": "Host port the web container publishes on.",
+      "default": "8080"
+    },
+    "VITE_ESPLORA_URL": {
+      "description": "Browser-facing esplora API (UTXOs, broadcast) for the SAME chain as ESPLORA_URL (the fleet's private signet is not mempool.space/signet). Build-time, public.",
+      "signet": "https://esplora-signet.example/api",
+      "mainnet": "https://mempool.space/api"
+    },
+    "VITE_ORD_URL": {
+      "description": "Browser-facing ord server for /content/<id>. Build-time, public.",
+      "signet": "https://ord-signet.example",
+      "mainnet": "https://ordinals.com"
+    },
+    "VITE_EXPLORER_URL": {
+      "description": "Block explorer for tx links. Build-time, public.",
+      "signet": "https://esplora-signet.example",
+      "mainnet": "https://explore.block.space"
+    },
+    "VITE_SITE_URL": {
+      "description": "Public site origin used in share links. Build-time, public.",
+      "signet": "https://signet.degent.club",
+      "mainnet": "https://degent.club"
+    },
+    "VITE_GATE_URL": {
+      "description": "Telegram gate endpoint for /verify; empty disables the page. Build-time, public.",
+      "default": ""
+    },
+    "VITE_POLL_MS": {
+      "description": "Order polling interval in the browser (ms). Build-time.",
+      "default": "5000"
+    },
+    "CSP_CONNECT_SRC": {
+      "description": "Space-separated extra connect-src origins for the web CSP: the browser-facing esplora and gate origins.",
+      "signet": "https://esplora-signet.example",
+      "mainnet": "https://mempool.space"
+    },
+    "CSP_IMG_SRC": {
+      "description": "Space-separated extra img-src origins for the web CSP: the browser-facing ord origin.",
+      "signet": "https://ord-signet.example",
+      "mainnet": "https://ordinals.com"
+    },
+    "CSP_HEADER": {
+      "description": "Content-Security-Policy, or Content-Security-Policy-Report-Only while diagnosing a wallet extension in a rehearsal.",
+      "default": "Content-Security-Policy"
+    },
+    "BACKUP_DIR": {
+      "description": "Host directory receiving sqlite snapshots and content blobs (mint-backup service). Put it on a different disk, then ship it off-host.",
+      "default": "./backups",
+      "mainnet": null
+    },
+    "BACKUP_INTERVAL_SECONDS": {
+      "description": "Seconds between backups.",
+      "default": "3600"
+    },
+    "BACKUP_KEEP": {
+      "description": "Database snapshots to keep (content blobs are never pruned).",
+      "default": "48"
+    }
+  },
+  "examples": {
+    "$comment": "Example values for service variables in the generated .env files; null = required, no default (the operator must fill it in).",
+    "signet": {
+      "ESPLORA_URL": "http://esplora-signet.internal:3002",
+      "ORD_URL": "http://10.40.0.219:8080",
+      "LIBRE_RPC_URL": "http://10.40.0.220:38332",
+      "LIBRE_RPC_USER": "degent",
+      "PARENT_INSCRIPTION_ID": null,
+      "PARENT_OUTPOINT": null,
+      "COLLECTION_ADDRESS": null,
+      "CORS_ORIGINS": "https://signet.degent.club",
+      "SIWB_DOMAIN": "signet.degent.club",
+      "REVIEW_SLA_SECONDS": "3600",
+      "RESCUE_AFTER_SECONDS": "3600",
+      "CONFIRMATIONS": "1",
+      "HOLDER_REGISTRY": "roster-chain",
+      "ORD_PUBLIC_URL": "https://ord-signet.example"
+    },
+    "mainnet": {
+      "ESPLORA_URL": null,
+      "ORD_URL": null,
+      "PARENT_INSCRIPTION_ID": null,
+      "PARENT_OUTPOINT": null,
+      "COLLECTION_ADDRESS": null,
+      "CORS_ORIGINS": "https://degent.club",
+      "SIWB_DOMAIN": "degent.club",
+      "HOLDER_REGISTRY": "roster-chain",
+      "ORD_PUBLIC_URL": "https://ordinals.com"
+    }
+  }
+}
