@@ -3,7 +3,7 @@
  * and refuses unsafe combinations (mainnet with the in-memory dev signer, dev defaults off regtest).
  */
 import { readFileSync } from 'node:fs';
-import type { CollectionConfig, Network } from '@bsh/degent-mint-sdk';
+import type { CollectionConfig, MintMode, Network } from '@bsh/degent-mint-sdk';
 import { DEFAULT_APPROVAL_QUORUM, DEFAULT_CONFIG, DEFAULT_DECLINE_QUORUM, DEFAULT_REVIEW_SLA_SECONDS, GALLERY_SIZE, MAX_UPLOAD_BYTES } from '@bsh/degent-mint-sdk';
 import { DEFAULT_POLICY } from './domain/policy.js';
 import { addressKind } from './domain/address.js';
@@ -22,7 +22,12 @@ export type MintRole = 'all' | 'api' | 'worker';
 export interface MintConfig {
   settings: MintSettings;
   role: MintRole;
-  /** Mainnet without LIBRE_RPC_URL / SLIPSTREAM_URL: the block tier is not offered (standard lane only). */
+  /**
+   * `full` (default): the mint takes orders. `readonly` (MINT_MODE=readonly): site reads only; every write route
+   * answers 503 mint_not_open, no worker runs and no policy signer, parent, reveal key or session key is needed.
+   */
+  mode: MintMode;
+  /** Mainnet without LIBRE_RPC_URL / SLIPSTREAM_URL, or BLOCK_TIER=off: the block tier is not offered (standard lane only). */
   blockTierWithdrawn: boolean;
   port: number;
   host: string;
@@ -132,20 +137,28 @@ export function loadConfig(rawEnv: Record<string, string | undefined>, version =
   if (!network) problems.push(`NETWORK is required: one of ${NETWORKS.join(', ')}`);
   const net: Network = network ?? 'regtest';
   const dev = net === 'regtest';
-  const need = (k: string) => {
+
+  const modeRaw = str('MINT_MODE') ?? 'full';
+  if (modeRaw !== 'full' && modeRaw !== 'readonly') problems.push('MINT_MODE must be "full" or "readonly"');
+  const mode: MintMode = modeRaw === 'readonly' ? 'readonly' : 'full';
+  const full = mode === 'full';
+  /** Required off regtest, and only when the mint takes orders. */
+  const needFull = (k: string) => {
     const v = str(k);
-    if (v === null && !dev) problems.push(`${k} is required on ${net}`);
+    if (v === null && !dev && full) problems.push(`${k} is required on ${net}`);
     return v;
   };
 
   const roleRaw = str('MINT_ROLE') ?? 'all';
   if (roleRaw !== 'all' && roleRaw !== 'api' && roleRaw !== 'worker') problems.push('MINT_ROLE must be "all", "api" or "worker"');
   const role: MintRole = roleRaw === 'api' || roleRaw === 'worker' ? roleRaw : 'all';
-  if (role !== 'all' && dev && (!str('DATABASE_PATH') || !str('CONTENT_DIR')))
+  if (!full && role === 'worker') problems.push('MINT_MODE=readonly runs no worker: use MINT_ROLE=api (or all)');
+  if (full && role !== 'all' && dev && (!str('DATABASE_PATH') || !str('CONTENT_DIR')))
     problems.push('MINT_ROLE=api|worker needs a shared DATABASE_PATH and CONTENT_DIR (in-memory stores are per process)');
 
-  const databasePath = need('DATABASE_PATH');
-  const contentDir = need('CONTENT_DIR');
+  // Read-only keeps nothing it must not lose: without DATABASE_PATH / CONTENT_DIR it runs on in-memory stores.
+  const databasePath = needFull('DATABASE_PATH');
+  const contentDir = needFull('CONTENT_DIR');
   const esploraUrl = url('ESPLORA_URL', dev ? 'http://127.0.0.1:3002' : null);
   if (!esploraUrl && !dev) problems.push('ESPLORA_URL is required');
   const ordUrl = url('ORD_URL', dev ? 'http://127.0.0.1:8080' : null);
@@ -157,12 +170,15 @@ export function loadConfig(rawEnv: Record<string, string | undefined>, version =
   const slipstream = slipUrl ? { url: slipUrl, apiKey: str('SLIPSTREAM_API_KEY') } : null;
   // Mainnet never falls back to esplora for non-standard Block Degent reveals: without Libre Relay or Slipstream
   // the block tier is withdrawn (standard lane only; /v1/config stops offering it, block orders fail validation).
-  const blockTierWithdrawn = net === 'mainnet' && !libre && !slipstream;
+  // BLOCK_TIER=off withdraws it on any network (public signet: esplora relays standard transactions only).
+  const blockTierRaw = str('BLOCK_TIER') ?? 'auto';
+  if (blockTierRaw !== 'auto' && blockTierRaw !== 'off') problems.push('BLOCK_TIER must be "auto" or "off"');
+  const blockTierWithdrawn = blockTierRaw === 'off' || (net === 'mainnet' && !libre && !slipstream);
 
   const parentInscriptionId = str('PARENT_INSCRIPTION_ID');
   if (parentInscriptionId && !/^[0-9a-f]{64}i\d+$/.test(parentInscriptionId))
     problems.push('PARENT_INSCRIPTION_ID must look like <txid>i<index>');
-  if (!parentInscriptionId && !dev) problems.push(`PARENT_INSCRIPTION_ID is required on ${net}`);
+  if (!parentInscriptionId && !dev && full) problems.push(`PARENT_INSCRIPTION_ID is required on ${net}`);
 
   let parentOutpoint: MintConfig['parentOutpoint'] = null;
   const po = str('PARENT_OUTPOINT');
@@ -175,22 +191,25 @@ export function loadConfig(rawEnv: Record<string, string | undefined>, version =
   const signerRaw = str('SIGNER') ?? 'memory';
   if (signerRaw !== 'memory' && signerRaw !== 'kms') problems.push('SIGNER must be "memory" or "kms"');
   const signer = signerRaw === 'kms' ? 'kms' : 'memory';
-  if (signer === 'kms') problems.push('SIGNER=kms is not implemented yet (see adapters/kms-policy-signer.ts)');
-  if (net === 'mainnet' && signer === 'memory')
-    problems.push('refusing to start on mainnet with the in-memory dev policy signer (SIGNER=memory)');
+  // The signer guards apply whenever the mint takes orders; read-only mode never signs, so it needs no signer.
+  if (full) {
+    if (signer === 'kms') problems.push('SIGNER=kms is not implemented yet (see adapters/kms-policy-signer.ts)');
+    if (net === 'mainnet' && signer === 'memory')
+      problems.push('refusing to start on mainnet with the in-memory dev policy signer (SIGNER=memory)');
+  }
   const parentKeyFile = str('PARENT_KEY_FILE');
   if (parentKeyFile && net === 'mainnet') problems.push('PARENT_KEY_FILE is dev-only and not accepted on mainnet');
-  if (!parentKeyFile && signer === 'memory' && !dev && net !== 'mainnet') problems.push(`PARENT_KEY_FILE is required on ${net} with SIGNER=memory`);
+  if (!parentKeyFile && full && signer === 'memory' && !dev && net !== 'mainnet') problems.push(`PARENT_KEY_FILE is required on ${net} with SIGNER=memory`);
 
   const collectionAddress = str('COLLECTION_ADDRESS');
   if (collectionAddress && addressKind(collectionAddress, net) !== 'tr')
     problems.push(`COLLECTION_ADDRESS must be a taproot address on ${net}`);
-  if (!collectionAddress && !dev) problems.push(`COLLECTION_ADDRESS is required on ${net}`);
+  if (!collectionAddress && !dev && full) problems.push(`COLLECTION_ADDRESS is required on ${net}`);
 
   const revealEncryptionKey = str('REVEAL_ENCRYPTION_KEY');
   if (revealEncryptionKey && !/^[0-9a-fA-F]{64}$/.test(revealEncryptionKey))
     problems.push('REVEAL_ENCRYPTION_KEY must be 32 bytes of hex (64 characters)');
-  if (!revealEncryptionKey && !dev) problems.push(`REVEAL_ENCRYPTION_KEY is required on ${net} (dev default is regtest-only)`);
+  if (!revealEncryptionKey && !dev && full) problems.push(`REVEAL_ENCRYPTION_KEY is required on ${net} (dev default is regtest-only)`);
 
   const serviceFeeAddress = str('SERVICE_FEE_ADDRESS');
   const feeStd = int('SERVICE_FEE_SATS_STANDARD', 0, 0, 10_000_000);
@@ -220,13 +239,13 @@ export function loadConfig(rawEnv: Record<string, string | undefined>, version =
   const approvalQuorum = int('APPROVAL_QUORUM', DEFAULT_APPROVAL_QUORUM, 1, 100);
   const declineQuorum = int('DECLINE_QUORUM', DEFAULT_DECLINE_QUORUM, 1, 100);
   const reviewSlaSeconds = int('REVIEW_SLA_SECONDS', DEFAULT_REVIEW_SLA_SECONDS, 3600, 90 * 86_400);
-  const siwbDomain = str('SIWB_DOMAIN') ?? (dev ? 'localhost:8787' : null);
+  const siwbDomain = str('SIWB_DOMAIN') ?? (dev || !full ? 'localhost:8787' : null);
   if (!siwbDomain) problems.push(`SIWB_DOMAIN is required on ${net} (the host holder sign-ins are bound to)`);
   else if (!/^[a-z0-9.-]+(?::\d{1,5})?$/.test(siwbDomain)) problems.push('SIWB_DOMAIN must be a lower-case host[:port]');
   const siwbUri = str('SIWB_URI') ?? (dev ? `http://${siwbDomain}` : null);
   const sessionKey = str('SESSION_KEY');
   if (sessionKey && !/^[0-9a-fA-F]{64}$/.test(sessionKey)) problems.push('SESSION_KEY must be 32 bytes of hex (64 characters)');
-  if (!sessionKey && !dev) problems.push(`SESSION_KEY is required on ${net} (dev default is regtest-only)`);
+  if (!sessionKey && !dev && full) problems.push(`SESSION_KEY is required on ${net} (dev default is regtest-only)`);
   const sessionKid = str('SESSION_KID') ?? 'k1';
   if (!/^[A-Za-z0-9._-]{1,64}$/.test(sessionKid)) problems.push('SESSION_KID must be 1-64 of [A-Za-z0-9._-]');
   const holderRaw = str('HOLDER_REGISTRY') ?? (dev ? 'memory' : 'roster-chain');
@@ -244,6 +263,7 @@ export function loadConfig(rawEnv: Record<string, string | undefined>, version =
 
   const out: MintConfig = {
     role,
+    mode,
     blockTierWithdrawn,
     settings: {
       network: net,

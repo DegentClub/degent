@@ -2,6 +2,7 @@
  * Composition root: builds real adapters from MintConfig. main.ts calls this; tests can call it
  * with a regtest config to prove the wiring is sound.
  */
+import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,7 +52,8 @@ const serviceDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 export interface Runtime {
   app: Hono;
-  worker: MintWorker;
+  /** null in read-only mode: no worker, nothing is signed or broadcast. */
+  worker: MintWorker | null;
   orders: OrderService;
   approval: ApprovalService;
   register: RegisterService;
@@ -60,16 +62,21 @@ export interface Runtime {
   parents: StoreParentUtxoProvider;
   chain: ChainPort;
   events: MemoryEventBus;
-  signer: InMemoryPolicySigner;
+  /** null in read-only mode: no policy signer is needed. */
+  signer: InMemoryPolicySigner | null;
   close(): void;
 }
 
 export function buildRuntime(cfg: MintConfig, log: Logger = jsonLogger()): Runtime {
   const net = cfg.settings.network;
+  const readonly = cfg.mode === 'readonly';
 
-  // Signer first: the collection address must be the signer's address.
-  let signer: InMemoryPolicySigner;
-  if (cfg.parentKeyFile) {
+  // Signer first: the collection address must be the signer's address. Read-only mode signs nothing.
+  let signer: InMemoryPolicySigner | null;
+  if (readonly) {
+    signer = null;
+    log.info('MINT_MODE=readonly: minting is not open; write routes answer 503 mint_not_open, no worker, no signer', { network: net });
+  } else if (cfg.parentKeyFile) {
     const hex = readFileSync(cfg.parentKeyFile, 'utf8').trim();
     if (!/^[0-9a-fA-F]{64}$/.test(hex)) throw new ConfigError(['PARENT_KEY_FILE must contain 32 bytes of hex']);
     signer = new InMemoryPolicySigner(hexToBytes(hex), net, cfg.settings.policy, log);
@@ -79,8 +86,8 @@ export function buildRuntime(cfg: MintConfig, log: Logger = jsonLogger()): Runti
   } else {
     throw new ConfigError(['no parent signer configured']);
   }
-  const collectionAddress = cfg.settings.collectionAddress || signer.collectionAddress();
-  if (collectionAddress !== signer.collectionAddress())
+  const collectionAddress = cfg.settings.collectionAddress || (signer?.collectionAddress() ?? '');
+  if (signer && collectionAddress !== signer.collectionAddress())
     throw new ConfigError(['COLLECTION_ADDRESS does not match the parent signing key']);
   const settings = { ...cfg.settings, collectionAddress };
 
@@ -104,7 +111,9 @@ export function buildRuntime(cfg: MintConfig, log: Logger = jsonLogger()): Runti
     subscriptions = new MemoryOrderSubscriptionStore();
   }
   const content = cfg.contentDir ? new FsContentStore(cfg.contentDir) : new MemoryContentStore();
-  const reveals = new EncryptedRevealVault(blobs, cfg.revealEncryptionKey ?? REGTEST_DEV_REVEAL_KEY);
+  // Read-only stores no reveal: a throwaway key keeps the dev key off real networks.
+  const revealKey = cfg.revealEncryptionKey ?? (readonly && net !== 'regtest' ? randomBytes(32).toString('hex') : REGTEST_DEV_REVEAL_KEY);
+  const reveals = new EncryptedRevealVault(blobs, revealKey);
 
   const chain = new EsploraChain({ esploraUrl: cfg.esploraUrl, ordUrl: cfg.ordUrl });
   const fees = new EsploraFees({ esploraUrl: cfg.esploraUrl, minFeeRate: settings.collection.minFeeRate });
@@ -113,7 +122,7 @@ export function buildRuntime(cfg: MintConfig, log: Logger = jsonLogger()): Runti
   if (cfg.libre) blockTargets.push(new LibreRelayBroadcaster({ rpcUrl: cfg.libre.url, user: cfg.libre.user, password: cfg.libre.password }));
   if (cfg.slipstream)
     blockTargets.push(new SlipstreamBroadcaster({ url: cfg.slipstream.url, ...(cfg.slipstream.apiKey ? { apiKey: cfg.slipstream.apiKey } : {}) }));
-  if (cfg.blockTierWithdrawn) log.warn('no Libre Relay / Slipstream configured: Block Degents are not offered (standard lane only)', {});
+  if (cfg.blockTierWithdrawn && !readonly) log.warn('block tier withdrawn (BLOCK_TIER=off, or mainnet without Libre Relay / Slipstream): Block Degents are not offered (standard lane only)', {});
   if (blockTargets.length === 0) {
     if (!cfg.blockTierWithdrawn) log.warn('no Libre Relay / Slipstream configured: block lane falls back to esplora (test networks only)', {});
     blockTargets.push(standard);
@@ -141,8 +150,10 @@ export function buildRuntime(cfg: MintConfig, log: Logger = jsonLogger()): Runti
     holders = new MemoryHolderRegistry();
     log.warn('HOLDER_REGISTRY=memory: nobody is a member until addresses are added (dev only)', {});
   }
-  const sessionKey: SigningKey = { kid: cfg.sessionKid, secretKey: hexToBytes(cfg.sessionKey ?? REGTEST_DEV_SESSION_KEY) };
-  if (!cfg.sessionKey) log.warn('using the regtest dev session key', {});
+  // Read-only issues no session (auth routes answer 503): a throwaway key keeps the dev key off real networks.
+  const sessionHex = cfg.sessionKey ?? (readonly && net !== 'regtest' ? randomBytes(32).toString('hex') : REGTEST_DEV_SESSION_KEY);
+  const sessionKey: SigningKey = { kid: cfg.sessionKid, secretKey: hexToBytes(sessionHex) };
+  if (!cfg.sessionKey && !readonly) log.warn('using the regtest dev session key', {});
   const approval = new ApprovalService({ orders, store, votes, holders, clock: systemClock, sessionKey, nonces, log });
   const register = new RegisterService({ settings, roster, store, holders, clock: systemClock });
 
@@ -166,14 +177,16 @@ export function buildRuntime(cfg: MintConfig, log: Logger = jsonLogger()): Runti
     notifications,
     fees,
     chain,
-    parents,
+    // Read-only tracks no parent: health reports store + chain only.
+    ...(readonly ? {} : { parents }),
     clock: systemClock,
     corsOrigins: cfg.corsOrigins,
     rateLimit: { windowMs: 60_000, max: cfg.rateLimitPerMinute },
     trustProxy: cfg.trustProxy,
+    mode: cfg.mode,
     log,
   });
-  const worker = new MintWorker({ orders, store, content, reveals, chain, parents, signer, broadcasters, clock: systemClock, log });
+  const worker = signer ? new MintWorker({ orders, store, content, reveals, chain, parents, signer, broadcasters, clock: systemClock, log }) : null;
   return {
     app,
     worker,
@@ -195,6 +208,7 @@ export function buildRuntime(cfg: MintConfig, log: Logger = jsonLogger()): Runti
 
 /** Seed the parent location from PARENT_OUTPOINT when the store has none yet. */
 export async function initialiseParent(rt: Runtime, cfg: MintConfig, log: Logger): Promise<void> {
+  if (!rt.signer) return; // read-only: no parent is tracked
   if (await rt.parents.current()) return;
   if (!cfg.parentOutpoint) {
     log.warn('no parent UTXO known: set PARENT_OUTPOINT; reveals are paused until then', {});

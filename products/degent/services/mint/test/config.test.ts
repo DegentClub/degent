@@ -163,7 +163,7 @@ describe('loadConfig', () => {
 describe('buildRuntime (composition root)', () => {
   it('wires real adapters for a testnet config', async () => {
     const rt = buildRuntime(loadConfig(testnetEnv), silentLogger);
-    expect(rt.signer.collectionAddress()).toBe(addr('testnet'));
+    expect(rt.signer!.collectionAddress()).toBe(addr('testnet'));
     const res = await rt.app.request('/v1/config');
     expect((await res.json()).network).toBe('testnet');
     const reg = await rt.app.request('/v1/register');
