@@ -165,6 +165,8 @@ export function Track() {
   const [rescueState, setRescueState] = useState<
     { state: 'idle' | 'busy' } | { state: 'done'; txid: string; source: 'service' | 'local' } | { state: 'error'; message: string }
   >({ state: 'idle' });
+  const [rescuePassphrase, setRescuePassphrase] = useState('');
+  const [rescueFile, setRescueFile] = useState<Uint8Array | null>(null);
 
   // Poll the order until it reaches a terminal state.
   useEffect(() => {
@@ -227,8 +229,11 @@ export function Track() {
           bundle: state.recovery,
           wallet: state.wallet,
           network: app.network,
+          passphrase: rescuePassphrase,
+          artworkBytes: localBytes?.bytes ?? rescueFile,
         },
       );
+      setRescuePassphrase('');
       setRescueState({ state: 'done', ...r });
     } catch (e) {
       setRescueState({ state: 'error', message: errorText(e) });
@@ -308,23 +313,66 @@ export function Track() {
         <Panel title={order.status === 'declined' ? 'The members declined — keep your inscription' : 'Rescue your Degent'} kicker="Self-custody, as promised">
           {order.status === 'declined' ? (
             <p>
-              The club voted not to admit this piece. Nothing is lost: your funding is sitting in the commit output and
-              your pre-signed reveal still works <em>without</em> the parent. Broadcast it and the inscription lands in
-              your ordinals address — it is simply not a Degent.
+              The club voted not to admit this piece. Nothing is lost: your funding is sitting in the commit output, and
+              only your one-time key can spend it. Your browser re-signs a reveal <em>without</em> the parent and the
+              inscription lands in your ordinals address — it is simply not a Degent.
             </p>
           ) : (
             <p>
-              The mint has not revealed your Degent in time. Your pre-signed reveal was signed with{' '}
-              <Mono>SIGHASH_SINGLE | ANYONECANPAY</Mono>, so the same signature also works in a simple one-input,
-              one-output transaction: <em>commit → your ordinals address</em>. Broadcasting it lands the inscription
-              now, without the on-chain parent link to the collection. Your sats and your art are never stranded.
+              The mint has not revealed your Degent in time. The commit output you funded can only be spent with your
+              one-time key, which your recovery bundle keeps encrypted. Your browser decrypts it with your recovery
+              passphrase and signs a simple one-input, one-output transaction: <em>commit → your ordinals address</em>.
+              Broadcasting it lands the inscription now, without the on-chain parent link to the collection. Your sats and
+              your art are never stranded.
             </p>
           )}
+          <p className="small muted">
+            Signed here, with <Mono>SIGHASH_DEFAULT</Mono>, over exactly the outpoint, recipient and artwork in your recovery
+            bundle. The mint supplies only the artwork bytes (checked against the bundle’s SHA-256); it never sees your key.
+          </p>
           {!state.recovery ? (
-            <p className="small muted">No local recovery bundle on this device: the mint’s rescue endpoint will be used.</p>
-          ) : null}
+            <Alert tone="warn" title="No recovery bundle on this device">
+              Self-rescue needs the recovery bundle you saved when you paid (it holds your encrypted one-time key). Open this
+              page from the device you paid on, or use Resume with your saved bundle.
+            </Alert>
+          ) : (
+            <div className="passphrase">
+              <label className="label" htmlFor="rescue-passphrase">
+                Recovery passphrase
+              </label>
+              <input
+                id="rescue-passphrase"
+                className="input"
+                type="password"
+                autoComplete="current-password"
+                value={rescuePassphrase}
+                disabled={rescueState.state === 'busy' || rescueState.state === 'done'}
+                onChange={(e) => setRescuePassphrase(e.currentTarget.value)}
+              />
+              {!localBytes ? (
+                <>
+                  <label className="label" htmlFor="rescue-artwork">
+                    Artwork file (only if the mint is unreachable)
+                  </label>
+                  <input
+                    id="rescue-artwork"
+                    type="file"
+                    onChange={(e) => {
+                      const f = e.currentTarget.files?.[0];
+                      if (f) void f.arrayBuffer().then((b) => setRescueFile(new Uint8Array(b)));
+                    }}
+                  />
+                </>
+              ) : null}
+            </div>
+          )}
           <div className="actions">
-            <Button variant="danger" busy={rescueState.state === 'busy'} disabled={rescueState.state === 'done'} onClick={() => void doRescue()}>
+            <Button
+              variant="danger"
+              busy={rescueState.state === 'busy'}
+              disabled={rescueState.state === 'done' || !state.recovery || rescuePassphrase.length === 0}
+              onClick={() => void doRescue()}
+            >
               {order.status === 'declined' ? 'Reveal without the parent (keep my inscription)' : 'Rescue now (reveal without parent)'}
             </Button>
           </div>
@@ -332,7 +380,9 @@ export function Track() {
             {rescueState.state === 'done' ? (
               <Alert tone="good" title="Rescue broadcast">
                 Reveal tx <ExternalLink href={`${app.explorerUrl}/tx/${rescueState.txid}`}>{rescueState.txid}</ExternalLink>
-                {rescueState.source === 'local' ? ' — built in your browser from the recovery bundle.' : ' — built by the mint service.'}
+                {rescueState.source === 'local'
+                  ? ' — signed in your browser from the recovery bundle and your artwork file.'
+                  : ' — signed in your browser; the artwork bytes came from the mint.'}
               </Alert>
             ) : null}
             {rescueState.state === 'error' ? <Alert tone="bad" title="Rescue failed">{rescueState.message}</Alert> : null}

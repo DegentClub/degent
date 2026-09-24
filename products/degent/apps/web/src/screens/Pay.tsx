@@ -5,13 +5,14 @@ import type { PayPhase } from '../flow/state';
 import { ScreenHeading } from '../components/ScreenHeading';
 import { Alert, Button, CopyBlock, Fact, Money, Mono, Panel, errorText } from '../components/ui';
 import { recoveryJson, RECOVERY_WARNING } from '../lib/recovery';
+import { checkPassphrase, MIN_PASSPHRASE_LENGTH } from '../lib/keyCrypto';
 import { formatFeeRate, groupDigits, shortHash } from '../lib/format';
 
 const PHASE_TEXT: Partial<Record<PayPhase, string>> = {
   'fetching-utxos': 'Looking up your payment coins…',
   building: 'Building the funding transaction and pre-signing the reveal…',
   'submitting-reveal': 'Handing the half-signed reveal to the mint…',
-  'recovery-saved': 'Recovery bundle saved. Your one-time key has been discarded.',
+  'recovery-saved': 'Recovery bundle saved. Your one-time key is kept only encrypted with your passphrase.',
   'awaiting-wallet': 'Waiting for your wallet — approve the funding transaction there.',
   broadcasting: 'Broadcasting…',
 };
@@ -21,6 +22,9 @@ export function Pay() {
   const { order, wallet, artwork, config, pay } = state;
   const quote = order!.quote!;
   const [kept, setKept] = useState(false);
+  const [passphrase, setPassphrase] = useState('');
+  const [confirmPassphrase, setConfirmPassphrase] = useState('');
+  const passphraseProblem = checkPassphrase(passphrase) ?? (passphrase !== confirmPassphrase ? 'The two passphrases differ.' : null);
   const prepared = pay.funding !== null && state.recovery !== null;
   const working = ['fetching-utxos', 'building', 'submitting-reveal', 'awaiting-wallet', 'broadcasting'].includes(pay.phase);
 
@@ -33,6 +37,7 @@ export function Pay() {
           artwork: artwork!,
           wallet: wallet!,
           config: config!,
+          passphrase,
           onPhase: (p) => {
             if (p !== 'recovery-saved') dispatch({ type: 'PAY_PHASE', phase: p });
           },
@@ -41,6 +46,9 @@ export function Pay() {
       dispatch({ type: 'FUNDING_BUILT', funding: r.funding });
       dispatch({ type: 'ORDER_UPDATED', order: r.order });
       dispatch({ type: 'RECOVERY_SAVED', bundle: r.bundle, savedLocally: r.savedLocally });
+      // The passphrase leaves memory with this screen's state; it is never stored or sent.
+      setPassphrase('');
+      setConfirmPassphrase('');
     } catch (e) {
       dispatch({ type: 'PAY_FAILED', error: errorText(e) });
     }
@@ -71,8 +79,10 @@ export function Pay() {
         <ol className="howto">
           <li>
             <strong>Prepare.</strong> A one-time key — generated in this tab, never sent anywhere — pre-signs the reveal that
-            delivers your Degent to <Mono>{shortHash(wallet!.ordinals.address, 8)}</Mono>. The half-signed reveal goes to the
-            mint and a recovery copy is saved on this device. Then the key is wiped from memory.
+            delivers your Degent to <Mono>{shortHash(wallet!.ordinals.address, 8)}</Mono> and returns the club's parent to
+            its address, exactly as quoted. The half-signed reveal goes to the mint. The key is then kept only{' '}
+            <em>encrypted with your recovery passphrase</em> in a recovery bundle saved on this device — it is what lets you
+            reveal your inscription yourself if the mint ever cannot — and wiped from memory.
           </li>
           <li>
             <strong>Sign.</strong> Your wallet signs one funding transaction. We check it is exactly the one the reveal was
@@ -86,11 +96,45 @@ export function Pay() {
           {PHASE_TEXT[pay.phase] ?? (prepared ? '' : 'Ready when you are.')}
         </div>
         {!prepared ? (
+          <div className="passphrase">
+            <label className="label" htmlFor="recovery-passphrase">
+              Recovery passphrase
+            </label>
+            <input
+              id="recovery-passphrase"
+              className="input"
+              type="password"
+              autoComplete="new-password"
+              value={passphrase}
+              disabled={working}
+              onChange={(e) => setPassphrase(e.currentTarget.value)}
+            />
+            <label className="label" htmlFor="recovery-passphrase-confirm">
+              Repeat the passphrase
+            </label>
+            <input
+              id="recovery-passphrase-confirm"
+              className="input"
+              type="password"
+              autoComplete="new-password"
+              value={confirmPassphrase}
+              disabled={working}
+              onChange={(e) => setConfirmPassphrase(e.currentTarget.value)}
+            />
+            <p className="small muted">
+              At least {MIN_PASSPHRASE_LENGTH} characters. It encrypts your one-time key in the recovery bundle; you need it only
+              to self-rescue. It is never stored or sent — if you lose it, the mint still delivers normally, but you cannot
+              rescue on your own.
+            </p>
+            {passphrase.length > 0 && passphraseProblem ? <p className="small bad">{passphraseProblem}</p> : null}
+          </div>
+        ) : null}
+        {!prepared ? (
           <div className="actions">
             <Button variant="ghost" disabled={working} onClick={() => dispatch({ type: 'GO', step: 'quote' })}>
               Back to quote
             </Button>
-            <Button busy={working} onClick={() => void prepare()}>
+            <Button busy={working} disabled={passphraseProblem !== null} onClick={() => void prepare()}>
               Prepare payment
             </Button>
           </div>
@@ -135,7 +179,8 @@ export function Pay() {
             {pay.recoverySavedLocally
               ? 'Saved on this device. '
               : 'This browser would not let us save it locally — copying it is essential. '}
-            With it you (or anyone you trust) can reveal your Degent without the mint, if it ever fails to deliver.
+            With it and your recovery passphrase you (or anyone you trust) can reveal your inscription without the mint, if it
+            ever fails to deliver. Keep the passphrase somewhere else.
           </p>
           <Alert tone="warn" title="Keep it private">
             {RECOVERY_WARNING}

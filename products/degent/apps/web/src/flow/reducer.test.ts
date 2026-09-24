@@ -53,6 +53,8 @@ const order = (over: Partial<Order> = {}): Order => ({
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
     queuePosition: null,
     etaMinutes: 10,
+    parentReturnAddress: 'bc1pcollection',
+    parentValueSats: 10_000,
   },
   review: { approved: true, reasons: [], checks: [] },
   commitOutpoint: null,

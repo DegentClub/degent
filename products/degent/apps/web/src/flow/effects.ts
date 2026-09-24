@@ -4,20 +4,24 @@
  *
  *   openOrder:        K_e generated → POST /orders (pubkey only) → PUT content → wait for review
  *   verifyCommit:     recompute commit address locally; must equal the service's quote
- *   preparePayment:   UTXOs → funding PSBT + txid → half-signed reveal → POST reveal
- *                     → save recovery bundle → discard K_e
+ *   preparePayment:   passphrase checked → UTXOs → funding PSBT + txid → half-signed reveal (0x81 over
+ *                     [parent return, child], ADR-0005) → K_e encrypted with the passphrase → POST reveal
+ *                     → save recovery bundle → wipe the plaintext K_e
+ *   rescue:           rescue parameters (service, or the bundle + the artwork file) → decrypt K_e →
+ *                     re-sign [commit] → [child] → broadcast → wipe K_e
  *   signAndBroadcast: wallet signs funding PSBT → txid re-checked → broadcast
  *
  * Nothing asks the wallet to sign before the reveal is stored server-side AND the recovery bundle
  * is saved locally, so funds can never be sent to a commit address nobody can spend from.
  */
 import type { CollectionConfig, Network, Order, Tier } from '@bsh/degent-mint-sdk';
-import type { Services, WalletSession, RescueTx } from '../services/types';
+import type { Services, WalletSession, InscriptionContentInput } from '../services/types';
 import type { AppConfig } from '../config';
 import type { Artwork } from './state';
 import type { KeyVault } from './keyVault';
 import { buildFundingPsbt, extractSignedTx, type FundingPsbt } from '../lib/funding';
 import { RECOVERY_NOTE, RECOVERY_WARNING, saveRecovery, type KeyValueStore, type RecoveryBundle } from '../lib/recovery';
+import { checkPassphrase, decryptRevealKey, encryptRevealKey, KDF_ITERATIONS, PassphraseError } from '../lib/keyCrypto';
 
 export class MissingTokenError extends Error {
   constructor() {
@@ -101,18 +105,24 @@ export class MissingKeyError extends Error {
 export type PreparePhase = 'fetching-utxos' | 'building' | 'submitting-reveal' | 'recovery-saved';
 
 export async function preparePayment(
-  deps: { services: Services; vault: KeyVault; app: AppConfig; store: KeyValueStore | null },
+  deps: { services: Services; vault: KeyVault; app: AppConfig; store: KeyValueStore | null; kdfIterations?: number },
   args: {
     order: Order;
     artwork: Artwork;
     wallet: WalletSession;
     config: CollectionConfig;
+    /** Recovery passphrase: encrypts K_e in the recovery bundle. Never stored, never sent. */
+    passphrase: string;
     onPhase?: (p: PreparePhase) => void;
   },
 ): Promise<{ funding: FundingPsbt; bundle: RecoveryBundle; order: Order; savedLocally: boolean }> {
   const { order, wallet } = args;
   const quote = order.quote;
   if (!quote || !quote.binding || !quote.commitAddress) throw new Error('No binding quote on this order.');
+  if (quote.parentValueSats === null)
+    throw new Error('The binding quote has no parent value, so the reveal cannot be pre-signed. Request a fresh quote.');
+  const passphraseProblem = checkPassphrase(args.passphrase);
+  if (passphraseProblem) throw new PassphraseError(passphraseProblem);
   const commitAddress = quote.commitAddress;
   const privkey = deps.vault.get(order.id);
   if (!privkey) throw new MissingKeyError();
@@ -151,7 +161,17 @@ export async function preparePayment(
     commitValue: BigInt(quote.commitValueSats),
     recipientAddress: order.recipientAddress,
     postage: BigInt(quote.postageSats),
+    // 0x81 (ADR-0005): the parent return output is signed now, from the binding quote.
+    parentReturnAddress: quote.parentReturnAddress,
+    parentValue: BigInt(quote.parentValueSats),
   });
+  // K_e is needed again only for a self-rescue; keep it, but only encrypted with the user's passphrase.
+  const revealKey = await encryptRevealKey(
+    privkey,
+    args.passphrase,
+    { orderId: order.id, revealPubkey: order.revealPubkey },
+    deps.kdfIterations ?? KDF_ITERATIONS,
+  );
 
   args.onPhase?.('submitting-reveal');
   const updated = await mintApi.submitReveal(order.id, orderToken, {
@@ -163,7 +183,7 @@ export async function preparePayment(
 
   const bundle: RecoveryBundle = {
     kind: 'degent.club/recovery',
-    version: 1,
+    version: 2,
     orderId: order.id,
     network: deps.app.network,
     mintApiUrl: deps.app.mintApiUrl,
@@ -172,15 +192,19 @@ export async function preparePayment(
     commitVout: funding.commitVout,
     commitValueSats: quote.commitValueSats,
     recipientAddress: order.recipientAddress,
+    postageSats: quote.postageSats,
+    feeRate: quote.feeRate,
     contentType: order.contentType,
     contentSha256: order.contentSha256,
-    halfSignedRevealPsbt: reveal.psbtBase64,
+    parentInscriptionId: args.config.parentInscriptionId ?? null,
+    revealPubkey: order.revealPubkey,
+    revealKey,
     orderToken,
     note: RECOVERY_NOTE,
     warning: RECOVERY_WARNING,
   };
   const savedLocally = saveRecovery(bundle, deps.store);
-  // The reveal is signed and stored in two places; K_e has no further purpose.
+  // The reveal is signed and stored; K_e survives only encrypted in the bundle. Wipe the plaintext.
   deps.vault.discard(order.id);
   args.onPhase?.('recovery-saved');
   return { funding, bundle, order: updated, savedLocally };
@@ -218,9 +242,46 @@ export async function signAndBroadcast(
   return pushed || txid;
 }
 
+export class MissingBundleError extends Error {
+  constructor() {
+    super(
+      'Self-rescue needs this order’s recovery bundle: it holds your one-time reveal key (encrypted). Load the ' +
+        'bundle you saved when you paid (Resume) and try again.',
+    );
+    this.name = 'MissingBundleError';
+  }
+}
+
+export class MissingContentError extends Error {
+  constructor() {
+    super(
+      'The mint could not be reached, so the artwork bytes must come from you: choose the exact file you minted ' +
+        '(it is checked against the SHA-256 in your recovery bundle).',
+    );
+    this.name = 'MissingContentError';
+  }
+}
+
+export class RescueMismatchError extends Error {
+  constructor(what: string) {
+    super(`Refusing to sign the rescue: ${what} does not match your recovery bundle.`);
+    this.name = 'RescueMismatchError';
+  }
+}
+
+const b64decode = (s: string): Uint8Array => {
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+};
+
 /**
- * Self-rescue (ADR-0002 §2): prefer the service's rescue transaction; if the service is gone, build
- * it locally from the recovery bundle. Broadcast via the wallet if it can relay, else esplora.
+ * Self-rescue (ADR-0005): re-sign the parent-less [commit] -> [child] with K_e and broadcast it. Every signed
+ * field comes from the recovery bundle; the service only supplies the artwork bytes (checked against the
+ * bundle's SHA-256) and must agree with the bundle on everything else. If the service is gone, the bytes come
+ * from `artworkBytes` (the in-memory artwork, or a file the user re-selects). K_e is decrypted with the
+ * passphrase only for the signature and wiped right after. Broadcast via the wallet if it can relay, else esplora.
  */
 export async function rescue(
   deps: { services: Services },
@@ -230,23 +291,60 @@ export async function rescue(
     bundle: RecoveryBundle | null;
     wallet: WalletSession | null;
     network: Network;
+    passphrase: string;
+    artworkBytes?: Uint8Array | null;
   },
 ): Promise<{ txid: string; source: 'service' | 'local' }> {
-  let tx: RescueTx;
+  const b = args.bundle;
+  if (!b || b.orderId !== args.orderId) throw new MissingBundleError();
+  const { inscription, mintApi, chain } = deps.services;
+  let body: Uint8Array | null = null;
   let source: 'service' | 'local' = 'service';
-  const token = args.orderToken ?? args.bundle?.orderToken ?? null;
+  const token = args.orderToken ?? b.orderToken;
   try {
-    if (!token) throw new MissingTokenError();
-    tx = await deps.services.mintApi.getRescue(args.orderId, token);
+    const p = await mintApi.getRescue(args.orderId, token);
+    const same =
+      p.commitOutpoint.txid === b.commitTxid &&
+      p.commitOutpoint.vout === b.commitVout &&
+      p.commitValueSats === b.commitValueSats &&
+      p.recipientAddress === b.recipientAddress &&
+      p.postageSats === b.postageSats &&
+      p.revealPubkey === b.revealPubkey &&
+      p.contentSha256 === b.contentSha256 &&
+      p.contentType === b.contentType &&
+      (p.parentInscriptionId ?? null) === (b.parentInscriptionId ?? null);
+    if (!same) throw new RescueMismatchError('the mint’s rescue parameters');
+    body = b64decode(p.contentBase64);
   } catch (e) {
-    // The half-signed reveal alone is enough to rescue; the token is only needed for the service path.
-    if (!args.bundle) throw e;
-    tx = deps.services.inscription.buildRescueReveal({
-      network: args.network,
-      halfSignedPsbtBase64: args.bundle.halfSignedRevealPsbt,
-    });
+    if (e instanceof RescueMismatchError) throw e;
+    body = args.artworkBytes ?? null;
     source = 'local';
+    if (!body) throw new MissingContentError();
   }
-  const txid = args.wallet?.pushTx ? await args.wallet.pushTx(tx.hex) : await deps.services.chain.broadcast(tx.hex);
+  if (inscription.sha256Hex(body) !== b.contentSha256) throw new RescueMismatchError('the artwork (SHA-256)');
+
+  const privkey = await decryptRevealKey(b.revealKey, args.passphrase, { orderId: b.orderId, revealPubkey: b.revealPubkey });
+  let tx;
+  try {
+    if (inscription.publicKeyHex(privkey) !== b.revealPubkey) throw new RescueMismatchError('the decrypted key');
+    const content: InscriptionContentInput = {
+      contentType: b.contentType,
+      body,
+      ...(b.parentInscriptionId ? { parentId: b.parentInscriptionId } : {}),
+    };
+    tx = inscription.buildResignedRescue({
+      network: args.network,
+      revealPrivkey: privkey,
+      content,
+      commitOutpoint: { txid: b.commitTxid, vout: b.commitVout },
+      commitValue: BigInt(b.commitValueSats),
+      recipientAddress: b.recipientAddress,
+      postage: BigInt(b.postageSats),
+      feeRate: b.feeRate,
+    });
+  } finally {
+    privkey.fill(0);
+  }
+  const txid = args.wallet?.pushTx ? await args.wallet.pushTx(tx.hex) : await chain.broadcast(tx.hex);
   return { txid: txid || tx.txid, source };
 }

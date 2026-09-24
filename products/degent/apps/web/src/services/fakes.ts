@@ -20,6 +20,7 @@ import type {
   PublicVote,
   Quote,
   RegisterMember,
+  RescueResponse,
   ServiceConfig,
   StatsResponse,
   SubmitRevealRequest,
@@ -37,7 +38,6 @@ import type {
   InscriptionOps,
   MintApi,
   QueueSnapshot,
-  RescueTx,
   Services,
   SourceImage,
   Utxo,
@@ -122,6 +122,9 @@ export function createFakeInscription(log: CallLog = []): InscriptionOps {
       const privkey = schnorr.utils.randomSecretKey();
       return { privkey, pubkeyHex: hex.encode(schnorr.getPublicKey(privkey)) };
     },
+    publicKeyHex(privkey) {
+      return hex.encode(schnorr.getPublicKey(privkey));
+    },
     commitAddress(pubkeyHex: string, content: InscriptionContentInput, network: Network) {
       log.push('inscription.commitAddress');
       return fakeCommitAddress(pubkeyHex, sha256Hex(content.body), content.contentType, content.parentId, network);
@@ -135,15 +138,21 @@ export function createFakeInscription(log: CallLog = []): InscriptionOps {
         commitValue: args.commitValue.toString(),
         recipient: args.recipientAddress,
         postage: args.postage.toString(),
-        sighash: '0x83',
+        parentReturn: { address: args.parentReturnAddress, value: args.parentValue.toString() },
+        sighash: '0x81',
         contentSha256: sha256Hex(args.content.body),
       };
       return { psbtBase64: base64.encode(enc.encode(JSON.stringify(payload))) };
     },
-    buildRescueReveal(args) {
-      log.push('inscription.buildRescueReveal');
-      const raw = sha256(enc.encode(`rescue|${args.halfSignedPsbtBase64}`));
-      return { hex: hex.encode(raw), txid: hex.encode(dsha(raw).reverse()) };
+    buildResignedRescue(args) {
+      log.push('inscription.buildResignedRescue');
+      if (args.revealPrivkey.every((b) => b === 0)) throw new Error('reveal key was wiped');
+      const raw = sha256(
+        enc.encode(`rescue|${args.commitOutpoint.txid}:${args.commitOutpoint.vout}|${args.recipientAddress}|${sha256Hex(args.content.body)}`),
+      );
+      const weight = 4 * 150 + args.content.body.length;
+      const vsize = Math.ceil(weight / 4);
+      return { hex: hex.encode(raw), txid: hex.encode(dsha(raw).reverse()), weight, vsize, fee: args.commitValue - args.postage };
     },
     sha256Hex,
   };
@@ -216,6 +225,8 @@ export type FakeScenario = 'happy' | 'rescue' | 'reject' | 'declined';
 /** Demo club members who vote in the fakes: their Degent numbers, in the order their votes arrive. */
 export const DEMO_VOTERS = [17, 808, 2049] as const;
 export const DEMO_QUORUM = 3;
+/** Value of the demo parent UTXO (the parent return output the browser signs, ADR-0005). */
+export const DEMO_PARENT_VALUE = 10_000;
 export const DEMO_REVIEW_SLA_SECONDS = 14 * 86_400;
 
 export interface FakeMintOptions {
@@ -229,6 +240,8 @@ export interface FakeMintOptions {
   tamperCommit?: boolean;
   /** GET /rescue fails (service gone) so the front end must build the rescue locally. */
   rescueEndpointDown?: boolean;
+  /** GET /rescue returns parameters that differ from the user's bundle (hostile service test). */
+  tamperRescue?: boolean;
   fees?: FeeSnapshot;
   queue?: QueueSnapshot;
   chain?: FakeChainState;
@@ -310,7 +323,7 @@ function weekOf(iso: string): string {
 export function createFakeMintApi(
   log: CallLog = [],
   opts: FakeMintOptions,
-): MintApi & { orders: Map<string, Order>; votes: Map<string, PublicVote[]>; tokenFor(id: string): string | undefined } {
+): MintApi & { orders: Map<string, Order>; votes: Map<string, PublicVote[]>; tokenFor(id: string): string | undefined; revealPsbts: Map<string, string> } {
   const config = demoConfig(opts.network);
   const orders = new Map<string, Order>();
   const bodies = new Map<string, Uint8Array>();
@@ -418,6 +431,7 @@ export function createFakeMintApi(
 
   const requests = new Map<string, CreateOrderRequest>();
   const tokens = new Map<string, string>();
+  const revealPsbts = new Map<string, string>();
   const auth = (id: string, token: string) => {
     if (!token) throw new Error('401 unauthorized: missing order token');
     if (tokens.get(id) !== token) throw new Error('403 forbidden: order token does not match');
@@ -462,6 +476,8 @@ export function createFakeMintApi(
       expiresAt: new Date(now() + config.quoteTtlSeconds * 1000).toISOString(),
       queuePosition: req.tier === 'block' ? queue.blockLaneLength + 1 : null,
       etaMinutes: req.tier === 'block' ? (queue.blockLaneLength + 1) * 10 : 10,
+      parentReturnAddress: config.collectionAddress,
+      parentValueSats: DEMO_PARENT_VALUE,
     };
   }
 
@@ -486,6 +502,7 @@ export function createFakeMintApi(
     orders,
     votes,
     tokenFor: (id: string) => tokens.get(id),
+    revealPsbts,
     async getConfig() {
       log.push('api.getConfig');
       return config;
@@ -548,6 +565,7 @@ export function createFakeMintApi(
       const o = get(id);
       if (req.commitAddress && req.commitAddress !== o.quote?.commitAddress) throw new Error('409 commit address mismatch');
       if (o.status !== 'approved') throw new Error(`cannot submit reveal in status ${o.status}`);
+      revealPsbts.set(id, req.halfSignedRevealPsbt);
       orders.set(id, { ...o, commitOutpoint: { txid: req.commitTxid, vout: req.commitVout } });
       return push(get(id), 'awaiting_payment', 'Half-signed reveal verified and stored');
     },
@@ -604,11 +622,30 @@ export function createFakeMintApi(
       log.push('api.getRescue');
       if (opts.rescueEndpointDown) throw new Error('service unavailable');
       auth(id, token);
+      // The real service refuses outside rescue_available / declined; the fake stays lenient for effect tests.
       const o = get(id);
-      const raw = sha256(enc.encode(`service-rescue|${id}`));
-      const tx: RescueTx = { hex: hex.encode(raw), txid: hex.encode(dsha(raw).reverse()) };
-      void o; // the real service refuses outside rescue_available / declined; the fake stays lenient for effect tests
-      return tx;
+      const body = bodies.get(id);
+      if (!o.quote || !o.commitOutpoint || !body) throw new Error('409 rescue_unavailable');
+      const weight = 4 * 150 + body.length;
+      const params: RescueResponse = {
+        orderId: id,
+        network: o.network,
+        method: 'resign',
+        commitOutpoint: o.commitOutpoint,
+        commitValueSats: o.quote.commitValueSats,
+        recipientAddress: o.recipientAddress,
+        postageSats: o.quote.postageSats,
+        contentType: o.contentType,
+        contentSha256: o.contentSha256,
+        contentBase64: base64.encode(body),
+        parentInscriptionId: config.parentInscriptionId,
+        revealPubkey: o.revealPubkey,
+        feeRate: o.quote.feeRate,
+        weight,
+        vsize: Math.ceil(weight / 4),
+        feeSats: o.quote.commitValueSats - o.quote.postageSats,
+      };
+      return opts.tamperRescue ? { ...params, recipientAddress: fakeAddress('attacker-rescue', opts.network) } : params;
     },
 
     // ------------------------------------------------------------ member approval
@@ -916,6 +953,8 @@ export interface FakeServices extends Services {
   apiOrders: Map<string, Order>;
   apiVotes: Map<string, PublicVote[]>;
   gateSubmissions: Array<{ url: string; body: unknown }>;
+  /** The most recent half-signed reveal the fake mint received. */
+  lastRevealPsbt(): string | undefined;
 }
 
 export function createFakeServices(o: FakeServicesOptions = {}): FakeServices {
@@ -938,5 +977,6 @@ export function createFakeServices(o: FakeServicesOptions = {}): FakeServices {
     apiOrders: mintApi.orders,
     apiVotes: mintApi.votes,
     gateSubmissions: gate.submissions,
+    lastRevealPsbt: () => [...mintApi.revealPsbts.values()].at(-1),
   };
 }

@@ -16,6 +16,7 @@ import type {
   Order,
   RegisterMember,
   RegisterSummary,
+  RescueResponse,
   ReviewQueueResponse,
   ServiceConfig,
   StatsResponse,
@@ -73,8 +74,11 @@ export interface MintApi {
   /** POST /v1/orders/{id}/reveal with the half-signed reveal. */
   submitReveal(orderId: string, orderToken: string, req: SubmitRevealRequest): Promise<Order>;
   getOrder(orderId: string): Promise<Order>;
-  /** GET /v1/orders/{id}/rescue: the parent-less [commit] -> [child] reveal, fully signed. */
-  getRescue(orderId: string, orderToken: string): Promise<RescueTx>;
+  /**
+   * GET /v1/orders/{id}/rescue: the parameters (incl. the content bytes) of the parent-less [commit] -> [child]
+   * rescue. Not a transaction: only the user's K_e can sign it (ADR-0005).
+   */
+  getRescue(orderId: string, orderToken: string): Promise<RescueResponse>;
 
   // Member approval (ADR-0007): holder sign-in, review queue, votes
   authChallenge(address: string): Promise<AuthChallengeResponse>;
@@ -187,9 +191,21 @@ export interface EphemeralKey {
   pubkeyHex: string;
 }
 
+export interface ResignedRescueTx extends RescueTx {
+  weight: number;
+  vsize: number;
+  fee: bigint;
+}
+
 export interface InscriptionOps {
   generateEphemeralKey(): EphemeralKey;
+  /** x-only public key (hex) of a reveal key, to check a decrypted K_e belongs to the order. */
+  publicKeyHex(privkey: Uint8Array): string;
   commitAddress(pubkeyHex: string, content: InscriptionContentInput, network: Network): string;
+  /**
+   * SIGHASH_ALL|ANYONECANPAY (0x81, ADR-0005): [commit] -> [parent return, child]. Output 0 (the collection
+   * address, exactly `parentValue`) comes from the binding quote and is signed up front.
+   */
   buildHalfSignedReveal(args: {
     network: Network;
     revealPrivkey: Uint8Array;
@@ -198,8 +214,20 @@ export interface InscriptionOps {
     commitValue: bigint;
     recipientAddress: string;
     postage: bigint;
+    parentReturnAddress: string;
+    parentValue: bigint;
   }): { psbtBase64: string };
-  buildRescueReveal(args: { network: Network; halfSignedPsbtBase64: string }): RescueTx;
+  /** Self-rescue (ADR-0005): re-sign [commit] -> [child] with K_e (SIGHASH_DEFAULT); no parent. */
+  buildResignedRescue(args: {
+    network: Network;
+    revealPrivkey: Uint8Array;
+    content: InscriptionContentInput;
+    commitOutpoint: { txid: string; vout: number };
+    commitValue: bigint;
+    recipientAddress: string;
+    postage: bigint;
+    feeRate?: number;
+  }): ResignedRescueTx;
   sha256Hex(bytes: Uint8Array): string;
 }
 

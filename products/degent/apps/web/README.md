@@ -33,10 +33,12 @@ Configuration adds `VITE_GATE_URL` (gate endpoint; empty disables `/verify`) and
  tiers,     wallet-kit  exact     mint-sdk    fee rate  1 Prepare                     poll GET /v1/orders/{id}
  live fees  ordinals vs bytes,    rules       breakdown   UTXOs (esplora)             ADR state timeline + tx links
  & queue    payment;    compress  locally,    lane/queue  funding PSBT + txid         verified → ord /content
-            legacy      to tier   then PUT    ETA,        half-signed reveal (K_e)    side-by-side + "hash match ✓"
-            refused     range,    content →   expiry,     POST /reveal                rescue_available → one-click
-                        SHA-256,  art review  commit addr save recovery (localStorage)  rescue (service, or local
-                        preview   (approved?) VERIFIED?   wipe K_e                      from the bundle)
+            legacy      to tier   then PUT    ETA,        half-signed reveal (K_e,    side-by-side + "hash match ✓"
+            refused     range,    content →   expiry,       0x81)                     rescue_available | declined →
+                        SHA-256,  art review  commit addr POST /reveal                  passphrase → decrypt K_e →
+                        preview   (approved?) VERIFIED?   K_e encrypted (passphrase)    re-sign [commit]→[child]
+                                                          save recovery (localStorage)  (bytes from the mint, or the
+                                                          wipe plaintext K_e            re-selected file)
                                                         2 Sign (wallet) → txid check
    ▲                                                      → broadcast
    └── on load: recovery bundle found in localStorage → "Resume tracking"
@@ -47,16 +49,19 @@ without an approved review, no Pay without a verified commit address and a live 
 money may have moved. Side effects live in `src/flow/effects.ts` and are written against ports so their
 **order** is tested.
 
-### The money path (ADR-0002 §2), in order
+### The money path (ADR-0002 §2, ADR-0005), in order
 
 1. `openOrder` — generate the ephemeral key `K_e` (in-memory `KeyVault`, never in React state), `POST /v1/orders`
    with only its x-only pubkey, keep the returned `orderToken` in memory, `PUT` the exact bytes (bearer token),
    wait for the art review.
 2. `verifyCommit` — `@bsh/inscription.commitAddress(K_e.pub, bytes, parent, network)` must equal the service's
    **binding** quote. Mismatch or indicative quote → Pay is disabled.
-3. `preparePayment` — fetch payment UTXOs (esplora), build the funding PSBT (commit output at vout 0, service
-   fee if > 0, change) and compute its txid from the unsigned tx (nested-SegWit scriptSigs included),
-   `buildHalfSignedReveal` (SIGHASH 0x83), `POST /reveal`, **save the recovery bundle**, **wipe `K_e`**.
+3. `preparePayment` — require a recovery passphrase (≥ 8 characters, typed twice), fetch payment UTXOs
+   (esplora), build the funding PSBT (commit output at vout 0, service fee if > 0, change) and compute its txid
+   from the unsigned tx (nested-SegWit scriptSigs included), `buildHalfSignedReveal` with
+   `SIGHASH_ALL|ANYONECANPAY` (0x81) over `[parent return, child]` — output 0 is the quote's
+   `parentReturnAddress` with exactly `parentValueSats` — encrypt `K_e` with the passphrase, `POST /reveal`,
+   **save the recovery bundle**, **wipe the plaintext `K_e`**.
 4. The bundle is shown as copyable JSON (no download links) with a privacy warning; the user confirms they
    kept a copy.
 5. `signAndBroadcast` — the wallet signs **without** broadcasting; we finalize, check the txid equals the one
@@ -67,14 +72,21 @@ The wallet is never asked to sign before steps 3's reveal upload and recovery sa
 
 ### Recovery bundle
 
-`localStorage["degent.club/recovery/v1"]`: order id, network, API URL, funding txid/vout, commit value,
-recipient, content hash, the half-signed reveal PSBT and the **order token**. No private key. It is the only
-place the token is persisted; it never appears in URLs or logs. Anyone holding it can interfere with the
-order (e.g. trigger rescue early), never redirect the Degent or funds — the UI says so.
+`localStorage["degent.club/recovery/v2"]` (`src/lib/recovery.ts`): order id, network, API URL, funding
+txid/vout, commit value, recipient, postage, quoted fee rate, content type and hash, parent id, reveal public
+key, **`K_e` encrypted** (`src/lib/keyCrypto.ts`: AES-256-GCM, key from PBKDF2-SHA256 with 600,000
+iterations over the recovery passphrase, order id + reveal pubkey as additional data; WebCrypto) and the
+**order token**. The passphrase is never stored or sent. It is the only place the token and the key are
+persisted; neither appears in URLs or logs. The bundle alone cannot move anything; bundle **and** passphrase
+can spend the commit, so the UI says to keep them apart. Version-1 bundles (0x83 era) are not recognised.
 
-Rescue (`rescue_available`): `GET /rescue` with the token; if the service is unreachable, the parent-less
-`[commit] → [child]` reveal is built locally from the bundle (`@bsh/inscription.buildRescueReveal`) and
-broadcast via wallet `pushTx` or esplora.
+Rescue (`rescue_available` and `declined`, ADR-0005): the user types the passphrase; `rescue()` fetches
+`GET /rescue` with the token and uses only the artwork bytes from it (every other field must equal the
+bundle, and the bytes must match the bundle's SHA-256), decrypts `K_e`, re-signs `[commit] → [child]` with
+`@bsh/inscription.buildResignedRescue` (SIGHASH_DEFAULT, at least the quoted fee rate), wipes the key, and
+broadcasts via wallet `pushTx` or esplora. If the service is unreachable, the bytes come from the artwork
+still in memory or from the file the user re-selects. Without the bundle or the passphrase there is no
+self-rescue (the mint's normal path does not need either).
 
 ## Configuration
 
@@ -118,10 +130,17 @@ with the service's own config; the app adds byte-level checks (magic bytes, leng
   signed tx id for P2WPKH, P2SH-P2WPKH and P2TR payment addresses.
 - `test/payment.test.ts` — **call order**: reveal POSTed and recovery saved and `K_e` wiped before
   `wallet.signPsbt`; no wallet call when the reveal upload fails; altered funding tx is never broadcast;
-  order-token handling incl. missing-token errors; commit verification; rescue (service and local).
+  order-token handling incl. missing-token errors; commit verification; the 0x81 reveal carries the quoted parent
+  return and `K_e` is only in the bundle encrypted; rescue re-signed with `K_e` (service bytes, local bytes,
+  wrong passphrase, a service whose parameters disagree with the bundle, no bundle).
+- `src/lib/keyCrypto.test.ts`, `src/lib/recovery.test.ts` — K_e encryption (round trip, wrong passphrase, binding to
+  the order, tampering) and the v2 bundle format.
+- `test/inscription.test.ts` — the real `@bsh/inscription` adapter: 0x81 reveal accepted by `verifyHalfSignedReveal`
+  only with the right parent return; re-signed rescue shape.
 - `test/rules.test.tsx`, `test/quote.test.tsx` — rules display, review results, quote rendering (sats + BTC),
   commit-address mismatch blocking, Block Degent warnings, fee clamping and re-quote.
-- `test/track.test.tsx` — timeline for every ADR status, delivered + hash match, rescue, resume from localStorage.
+- `test/track.test.tsx` — timeline for every ADR status, delivered + hash match, rescue with the recovery passphrase
+  (service up, service down, wrong passphrase, re-selected artwork after a reload), resume from localStorage.
 - `test/demo.e2e.test.tsx` — the whole flow through the UI in demo mode.
 
 ## Accessibility & design

@@ -1714,3 +1714,17 @@ input[type='range'] {
     order: 3;
   }
 }
+
+/* ---------- ADR-0005: recovery passphrase (Pay) and re-signed rescue (Track) ---------- */
+.passphrase {
+  display: grid;
+  gap: 0.4rem;
+  max-width: 28rem;
+  margin: 0.75rem 0;
+}
+.passphrase .input {
+  width: 100%;
+}
+.bad {
+  color: var(--bad);
+}

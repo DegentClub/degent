@@ -73,11 +73,18 @@ describe('demo mode: the whole flow, end to end, through the UI', () => {
 
     // 6 · Pay
     await screen.findByRole('heading', { level: 1, name: /Settle the account/ });
-    await user.click(screen.getByRole('button', { name: 'Prepare payment' }));
+    const prepare = screen.getByRole('button', { name: 'Prepare payment' });
+    expect(prepare).toBeDisabled(); // a recovery passphrase comes first (ADR-0005)
+    await user.type(screen.getByLabelText('Recovery passphrase'), 'correct horse battery staple');
+    await user.type(screen.getByLabelText('Repeat the passphrase'), 'correct horse battery staple');
+    await user.click(prepare);
     const bundleText = (await screen.findByLabelText('Recovery bundle (JSON)')) as HTMLTextAreaElement;
     const bundle = JSON.parse(bundleText.value);
     expect(bundle.kind).toBe('degent.club/recovery');
     expect(bundle.orderToken).toMatch(/^[0-9a-f]{64}$/);
+    expect(bundle.version).toBe(2);
+    expect(bundle.revealKey).toMatchObject({ alg: 'AES-256-GCM', kdf: 'PBKDF2-SHA256', iterations: 600_000 });
+    expect(bundleText.value).not.toContain('correct horse');
     expect(screen.getByText('Keep it private')).toBeInTheDocument();
     expect(loadRecovery(store)?.orderId).toBe(bundle.orderId);
     expect(log).not.toContain('wallet.signPsbt');

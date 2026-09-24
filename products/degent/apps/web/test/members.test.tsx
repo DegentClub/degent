@@ -17,6 +17,8 @@ import { demoOrdinalsAddress } from '../src/services/fakes';
 import type { FakeServicesOptions } from '../src/services/fakes';
 import { fakes, memoryStore, renderApp, stateAtQuote, testApp } from './helpers';
 
+const PASS = 'correct horse battery staple';
+
 describe('router', () => {
   it('maps paths to routes', () => {
     expect(routeFor('/')).toBe('mint');
@@ -167,7 +169,7 @@ async function paidAndTracking(opts: FakeServicesOptions = {}) {
   const app = testApp();
   const { state, vault } = await stateAtQuote(services, app);
   const store = memoryStore();
-  const p = await preparePayment({ services, vault, app, store }, { order: state.order!, artwork: state.artwork!, wallet: state.wallet!, config: state.config! });
+  const p = await preparePayment({ services, vault, app, store }, { order: state.order!, artwork: state.artwork!, wallet: state.wallet!, config: state.config!, passphrase: PASS });
   let s = flowReducer(state, { type: 'ORDER_UPDATED', order: p.order });
   s = flowReducer(s, { type: 'RECOVERY_SAVED', bundle: p.bundle, savedLocally: true });
   s = flowReducer(s, { type: 'FUNDING_BROADCAST', txid: p.funding.txid });
@@ -215,8 +217,10 @@ describe('Track: the members decline', () => {
     expect(await screen.findByRole('heading', { name: 'The members declined — keep your inscription' }, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByTestId('stage-approve')).toHaveAttribute('data-state', 'problem');
     expect(screen.getByText(/3 of 3 declined/)).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText('Recovery passphrase'), PASS);
     await userEvent.click(screen.getByRole('button', { name: /Reveal without the parent/ }));
-    expect(await screen.findByText('Rescue broadcast')).toBeInTheDocument();
+    expect(await screen.findByText('Rescue broadcast', {}, { timeout: 5000 })).toBeInTheDocument();
     expect(t.services.log).toContain('api.getRescue');
+    expect(t.services.log).toContain('inscription.buildResignedRescue');
   });
 });

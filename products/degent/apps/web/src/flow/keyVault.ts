@@ -1,8 +1,9 @@
 /**
  * In-memory holder for the ephemeral reveal key K_e (ADR-0002 §2) and the order's bearer token.
- * Neither is put in React state or logged. K_e is never serialised or sent anywhere; `discard`
- * zeroes it before dropping the reference. The token outlives K_e (it authorises rescue) and is
- * persisted only inside the recovery bundle.
+ * Neither is put in React state or logged. The plaintext K_e is never serialised or sent anywhere;
+ * `discard` zeroes it before dropping the reference, once preparePayment has put it into the recovery
+ * bundle ENCRYPTED with the user's passphrase (ADR-0005: the self-rescue re-signs with it). The token
+ * is persisted only inside the recovery bundle.
  */
 export interface KeyVault {
   putToken(orderId: string, token: string): void;
