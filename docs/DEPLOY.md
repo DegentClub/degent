@@ -107,7 +107,9 @@ Compose hardening: `read_only` root filesystems, `tmpfs /tmp`, `cap_drop: ALL`, 
 web port published (default `127.0.0.1:8080`, behind a TLS edge). The mint API is reachable only on the compose
 network; the web container proxies `/api/*` to it, so the browser stays same-origin. The mint still needs
 `CORS_ORIGINS=<the web origin>` (browsers send `Origin` on same-origin POSTs) and `TRUST_PROXY=true` (set by
-compose) for per-client rate limiting; Caddy only forwards `X-Forwarded-For` from private-range proxies.
+compose) for per-client rate limiting; Caddy only forwards `X-Forwarded-For` from private-range proxies, walks it
+right to left (`trusted_proxies_strict`) and sets `X-Client-IP` from its `{client_ip}`, which is the key the services
+rate-limit on (never the client-supplied left-most `X-Forwarded-For` hop; `docs/security/findings.json` DGT-SEC-007).
 
 ### Nix
 

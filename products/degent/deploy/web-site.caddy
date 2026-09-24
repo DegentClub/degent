@@ -31,6 +31,8 @@ handle_path /api/* {
 	header Cache-Control "no-store"
 	reverse_proxy {$MINT_API_UPSTREAM:mint-api:8787} {
 		header_up -Cookie
+		# The rate-limit key (TRUST_PROXY=true): Caddy's client IP, replacing anything the client sent.
+		header_up X-Client-IP {client_ip}
 	}
 }
 

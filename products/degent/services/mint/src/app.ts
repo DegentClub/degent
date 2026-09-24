@@ -32,7 +32,7 @@ export interface AppOptions {
   /** Exact origins allowed for browser calls. Empty = deny all cross-origin browser calls. */
   corsOrigins: string[];
   rateLimit?: { windowMs: number; max: number };
-  /** Client IP for rate limiting. Default: first X-Forwarded-For hop when trustProxy, else socket. */
+  /** Client IP for rate limiting. Default: clientIpOf(trustProxy) (X-Client-IP / right-most XFF hop, else socket). */
   clientIp?: (c: Context) => string;
   trustProxy?: boolean;
   log?: Logger;
@@ -70,11 +70,21 @@ function rateLimiter(opts: { windowMs: number; max: number }, clock: Clock, ipOf
   };
 }
 
-function defaultIp(trustProxy: boolean) {
+/**
+ * Rate-limit key. Behind the proxy (trustProxy) the left-most X-Forwarded-For entry is whatever the client
+ * sent, so it is never used: the proxy's own view comes from X-Client-IP (the deploy's Caddy site sets it from
+ * {client_ip}, overwriting anything the client sent), or failing that from the right-most XFF entry (appended
+ * by the nearest proxy). Without trustProxy: the socket address.
+ */
+export function clientIpOf(trustProxy: boolean) {
+  const IP = /^[0-9A-Fa-f.:]{2,45}$/;
   return (c: Context): string => {
     if (trustProxy) {
-      const xff = c.req.header('x-forwarded-for');
-      if (xff) return xff.split(',')[0]!.trim();
+      const direct = c.req.header('x-client-ip')?.trim();
+      if (direct && IP.test(direct)) return direct;
+      const hops = (c.req.header('x-forwarded-for') ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+      const last = hops[hops.length - 1];
+      if (last && IP.test(last)) return last;
     }
     const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined;
     return env?.incoming?.socket?.remoteAddress ?? 'unknown';
@@ -112,7 +122,7 @@ export function createApp(o: AppOptions): Hono {
     return next();
   });
 
-  app.use('*', rateLimiter(o.rateLimit ?? { windowMs: 60_000, max: 60 }, o.clock, o.clientIp ?? defaultIp(o.trustProxy ?? false)));
+  app.use('*', rateLimiter(o.rateLimit ?? { windowMs: 60_000, max: 60 }, o.clock, o.clientIp ?? clientIpOf(o.trustProxy ?? false)));
 
   const tooLarge = (limit: number) => (c: Context) =>
     c.json(errorBody('payload_too_large', `request body exceeds ${limit} bytes`), 413);

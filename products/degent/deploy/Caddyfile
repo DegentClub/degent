@@ -14,6 +14,8 @@
 	servers {
 		# Keep X-Forwarded-For from the fleet edge (netcore) and docker networks; strip it from anyone else.
 		trusted_proxies static private_ranges
+		# Walk X-Forwarded-For right to left, so {client_ip} is the first untrusted hop, not a client-chosen value.
+		trusted_proxies_strict
 	}
 }
 

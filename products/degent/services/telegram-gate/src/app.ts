@@ -46,11 +46,21 @@ function rateLimiter(opts: { windowMs: number; max: number }, now: () => number,
   };
 }
 
-function defaultIp(trustProxy: boolean) {
+/**
+ * Rate-limit key. Behind the proxy (trustProxy) the left-most X-Forwarded-For entry is whatever the client
+ * sent, so it is never used: the proxy's own view comes from X-Client-IP (the deploy's Caddy site sets it from
+ * {client_ip}, overwriting anything the client sent), or failing that from the right-most XFF entry (appended
+ * by the nearest proxy). Without trustProxy: the socket address.
+ */
+export function clientIpOf(trustProxy: boolean) {
+  const IP = /^[0-9A-Fa-f.:]{2,45}$/;
   return (c: Context): string => {
     if (trustProxy) {
-      const xff = c.req.header('x-forwarded-for');
-      if (xff) return xff.split(',')[0]!.trim();
+      const direct = c.req.header('x-client-ip')?.trim();
+      if (direct && IP.test(direct)) return direct;
+      const hops = (c.req.header('x-forwarded-for') ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+      const last = hops[hops.length - 1];
+      if (last && IP.test(last)) return last;
     }
     const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined;
     return env?.incoming?.socket?.remoteAddress ?? 'unknown';
@@ -83,7 +93,7 @@ export function createApp(o: AppOptions): Hono {
     if (origin && !allowed.has(origin) && c.req.method === 'POST') return c.json(errorBody('forbidden_origin', 'origin not allowed'), 403);
     return next();
   });
-  app.use('*', rateLimiter(o.rateLimit ?? { windowMs: 60_000, max: 30 }, now, o.clientIp ?? defaultIp(o.trustProxy ?? false)));
+  app.use('*', rateLimiter(o.rateLimit ?? { windowMs: 60_000, max: 30 }, now, o.clientIp ?? clientIpOf(o.trustProxy ?? false)));
   app.use('*', bodyLimit({ maxSize: JSON_BODY_LIMIT, onError: (c) => c.json(errorBody('payload_too_large', `request body exceeds ${JSON_BODY_LIMIT} bytes`), 413) }));
 
   app.onError((err, c) => {

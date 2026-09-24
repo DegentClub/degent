@@ -326,6 +326,11 @@ describe('NixOS web module', () => {
     expect(siteCaddy).toMatch(/@assets path \/assets\/\*\n\s*header @assets Cache-Control "public, max-age=31536000, immutable"/);
     expect(siteCaddy).toMatch(/handle_path \/api\/\*/);
   });
+
+  it('the proxy hands the services a client IP the client cannot choose (DGT-SEC-007)', () => {
+    expect(siteCaddy).toMatch(/reverse_proxy \{\$MINT_API_UPSTREAM[^\n]*\{\n(?:[^\n]*\n)*?\s*header_up X-Client-IP \{client_ip\}\n/);
+    expect(deploy('Caddyfile')).toMatch(/trusted_proxies static private_ranges\s*\n(?:\s*#.*\n)*\s*trusted_proxies_strict/);
+  });
 });
 
 describe('NixOS mint module', () => {
