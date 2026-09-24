@@ -1,0 +1,301 @@
+[
+  {
+    "id": "DGT-SEC-001",
+    "component": "mint",
+    "severity": "high",
+    "title": "Bech32 case variants of one address were distinct identities: a member could sign in and vote twice, and an order paying the upper-case form dodged the self-vote rule",
+    "status": "fixed",
+    "test": "products/degent/services/mint/test/vote-integrity.test.ts",
+    "commit": "d8bcf2c"
+  },
+  {
+    "id": "DGT-SEC-002",
+    "component": "mint",
+    "severity": "high",
+    "title": "A Degent that had voted could vote again after moving to a fresh address (one holder reaching quorum alone)",
+    "status": "fixed",
+    "test": "products/degent/services/mint/test/vote-integrity.test.ts",
+    "commit": "d8bcf2c"
+  },
+  {
+    "id": "DGT-SEC-003",
+    "component": "mint",
+    "severity": "medium",
+    "title": "Concurrent approvals of two orders read the same approvedCount and were assigned the same Degent number",
+    "status": "fixed",
+    "test": "products/degent/services/mint/test/vote-integrity.test.ts",
+    "commit": "d8bcf2c",
+    "note": "rank now from an atomic OrderStore.incrementMeta; also products/degent/services/mint/test/stores.test.ts"
+  },
+  {
+    "id": "DGT-SEC-004",
+    "component": "mint",
+    "severity": "medium",
+    "title": "Concurrent votes decided on the votes read before their own insert, so a quorum reached by simultaneous votes was lost (order stuck in member_review)",
+    "status": "fixed",
+    "test": "products/degent/services/mint/test/vote-integrity.test.ts",
+    "commit": "d8bcf2c"
+  },
+  {
+    "id": "DGT-SEC-005",
+    "component": "mint",
+    "severity": "medium",
+    "title": "Public GET /v1/register/holder/{address} made one ord request per UTXO of any address, and concurrent explorer owner searches repeated thousands of lookups: unbounded upstream amplification",
+    "status": "fixed",
+    "test": "products/degent/services/mint/test/holder-registry.test.ts",
+    "commit": "e21b412"
+  },
+  {
+    "id": "DGT-SEC-006",
+    "component": "web",
+    "severity": "high",
+    "title": "The browser trusted the service for the reveal pubkey, commit address and recipient: a hostile or compromised mint API could lock the payment to its own key (consistent commit address) or pre-sign the child to another address",
+    "status": "fixed",
+    "test": "products/degent/apps/web/test/payment-guards.test.ts",
+    "commit": "96f2785",
+    "note": "the parent-return-address check in the same fix belongs to the parent path removed by ADR-0010; the key/commit/recipient/content checks stay relevant"
+  },
+  {
+    "id": "DGT-SEC-007",
+    "component": "mint",
+    "severity": "medium",
+    "title": "Per-IP rate limits (mint, market, telegram gate) keyed on the client-supplied left-most X-Forwarded-For hop behind the proxy: any client could bypass them",
+    "status": "fixed",
+    "test": "products/degent/services/mint/test/client-ip.test.ts",
+    "commit": "5c4856b",
+    "note": "same fix and tests in services/market and services/telegram-gate; Caddy sets X-Client-IP from {client_ip} with trusted_proxies_strict (test/deploy.test.ts)"
+  },
+  {
+    "id": "DGT-SEC-008",
+    "component": "deploy",
+    "severity": "medium",
+    "title": "Mint backups were plain gzip written 0644 (recipient addresses, notification e-mails/chat ids, votes, encrypted reveals readable by any host user and in clear off-host); the container's sqlite files were 0644",
+    "status": "fixed",
+    "test": "test/backup.test.ts",
+    "commit": "87ef069"
+  },
+  {
+    "id": "DGT-SEC-009",
+    "component": "mint-sdk",
+    "severity": "low",
+    "title": "An order id of '..' became a dot-segment that URL resolution collapsed, sending the order's bearer token to another path",
+    "status": "fixed",
+    "test": "products/degent/packages/mint-sdk/test/client.test.ts",
+    "commit": "80bd957"
+  },
+  {
+    "id": "DGT-SEC-010",
+    "component": "web",
+    "severity": "low",
+    "title": "decryptRevealKey used the PBKDF2 iteration count from the recovery bundle unchecked (a bundle re-selected from a file could freeze the tab)",
+    "status": "fixed",
+    "test": "products/degent/apps/web/src/lib/keyCrypto.test.ts",
+    "commit": "80bd957"
+  },
+  {
+    "id": "DGT-SEC-011",
+    "component": "mint",
+    "severity": "low",
+    "title": "Public read endpoints (/v1/register/*, /v1/explorer, /v1/stats, /v1/orders/{id}) have no per-IP limit; upstream fan-out is now bounded (DGT-SEC-005) but request volume is limited only by the edge",
+    "status": "open",
+    "test": null,
+    "commit": null,
+    "note": "internal consumers (telegram gate, market) call the same endpoints, so a per-IP GET limit needs an allowlist or edge rules",
+    "roadmap": "p0.21"
+  },
+  {
+    "id": "DGT-SEC-012",
+    "component": "mint",
+    "severity": "low",
+    "title": "Every upload of a fresh order triggers a paid vision art review; cost is bounded only by the per-IP POST limit",
+    "status": "open",
+    "test": null,
+    "commit": null,
+    "roadmap": "p0.22"
+  },
+  {
+    "id": "DGT-SEC-013",
+    "component": "web",
+    "severity": "low",
+    "title": "Recovery passphrase minimum is 8 characters; a stolen bundle can be brute-forced offline (PBKDF2-SHA256, 600,000 iterations)",
+    "status": "open",
+    "test": null,
+    "commit": null,
+    "roadmap": "p0.23"
+  },
+  {
+    "id": "DGT-SEC-014",
+    "component": "web",
+    "severity": "low",
+    "title": "The recovery bundle's AAD binds the order id and reveal pubkey, not the rescue parameters (recipient, commit): whoever can edit the user's bundle file can redirect an offline rescue (with the service up, parameters are compared with the service's)",
+    "status": "accepted",
+    "test": null,
+    "commit": null,
+    "roadmap": "p0.23"
+  },
+  {
+    "id": "DGT-SEC-015",
+    "component": "web",
+    "severity": "low",
+    "title": "The order token and the encrypted K_e live in localStorage; any script running on the origin can read them",
+    "status": "accepted",
+    "test": null,
+    "commit": null,
+    "note": "CSP script-src 'self' (no inline script), frame-ancestors 'none'; K_e stays encrypted under the passphrase",
+    "roadmap": "p0.23"
+  },
+  {
+    "id": "DGT-SEC-016",
+    "component": "deploy",
+    "severity": "low",
+    "title": "CSP allows style-src 'unsafe-inline' (React style attributes)",
+    "status": "accepted",
+    "test": null,
+    "commit": null,
+    "note": "scripts are 'self' only; CSS injection cannot run code",
+    "roadmap": "p0.24"
+  },
+  {
+    "id": "DGT-SEC-017",
+    "component": "market",
+    "severity": "low",
+    "title": "Two buy sessions for one listing can both be broadcast (the listing is claimed after broadcast); only one can confirm and no funds are lost, but the loser sees a failed purchase",
+    "status": "open",
+    "test": null,
+    "commit": null,
+    "note": "buys are disabled (BUYS_ENABLED=false) until p3.4/p3.5",
+    "roadmap": "p0.25"
+  },
+  {
+    "id": "DGT-SEC-018",
+    "component": "market",
+    "severity": "low",
+    "title": "buyPrepare makes one ord request per buyer UTXO (safeUtxos) with no cap",
+    "status": "open",
+    "test": null,
+    "commit": null,
+    "note": "buys are disabled",
+    "roadmap": "p0.25"
+  },
+  {
+    "id": "DGT-SEC-019",
+    "component": "telegram-gate",
+    "severity": "low",
+    "title": "One Degent can admit several Telegram accounts in turn (verify, move the Degent, verify again) until the next re-verification run",
+    "status": "accepted",
+    "test": null,
+    "commit": null,
+    "note": "re-verification kicks every account whose wallet no longer holds a Degent; one wallet <-> one active account",
+    "roadmap": "p0.24"
+  },
+  {
+    "id": "DGT-SEC-020",
+    "component": "deploy",
+    "severity": "low",
+    "title": "GitHub Actions are pinned by tag, not commit SHA",
+    "status": "open",
+    "test": null,
+    "commit": null,
+    "roadmap": "p0.24"
+  },
+  {
+    "id": "DGT-SEC-021",
+    "component": "mint",
+    "severity": "low",
+    "title": "GET /v1/orders/{id} is public and shows the recipient address and timeline",
+    "status": "accepted",
+    "test": null,
+    "commit": null,
+    "note": "order ids carry 96 random bits; the recipient is public on chain after reveal",
+    "roadmap": "p0.24"
+  },
+  {
+    "id": "DGT-SEC-022",
+    "component": "mint",
+    "severity": "low",
+    "title": "Order notification subscriptions can target any e-mail address or Telegram chat (max 3 per order, order token required)",
+    "status": "accepted",
+    "test": null,
+    "commit": null,
+    "roadmap": "p0.24"
+  },
+  {
+    "id": "DGT-SEC-023",
+    "component": "mint",
+    "severity": "low",
+    "title": "Content uploads (up to 4 MiB) are buffered in memory per request",
+    "status": "accepted",
+    "test": null,
+    "commit": null,
+    "note": "the order token is checked before the body is read; POST/PUT are rate limited per client",
+    "roadmap": "p0.24"
+  },
+  {
+    "id": "DGT-SEC-030",
+    "component": "mint",
+    "severity": "medium",
+    "title": "A revealing order that times out releases the parent lease while its fully signed parent reveal may still propagate; the next reveal can conflict on the parent until one confirms",
+    "status": "superseded",
+    "test": null,
+    "commit": null,
+    "note": "parent path removed (ADR-0010)"
+  },
+  {
+    "id": "DGT-SEC-031",
+    "component": "mint",
+    "severity": "medium",
+    "title": "ANYONECANPAY leaves the parent input's value unsigned by the user: a compromised service could attach a smaller parent UTXO so the child's first sat lands in output 0 (the collection address); only the policy signer guards it",
+    "status": "superseded",
+    "test": null,
+    "commit": null,
+    "note": "parent path removed (ADR-0010)"
+  },
+  {
+    "id": "DGT-SEC-032",
+    "component": "mint",
+    "severity": "low",
+    "title": "The policy signer checks input 1's hash-type byte but not its signature, not nLockTime/nSequence/version, and computes the fee rate from the quoted weight",
+    "status": "superseded",
+    "test": null,
+    "commit": null,
+    "note": "parent path removed (ADR-0010)"
+  },
+  {
+    "id": "DGT-SEC-033",
+    "component": "mint",
+    "severity": "medium",
+    "title": "No KMS/HSM policy signer: mainnet cannot start, and signet keeps the parent key in a plaintext file",
+    "status": "superseded",
+    "test": null,
+    "commit": null,
+    "note": "parent path removed (ADR-0010)"
+  },
+  {
+    "id": "DGT-SEC-040",
+    "component": "platform",
+    "severity": "medium",
+    "title": "@bsh/identity decodeAddress/verifySignIn accept upper-case bech32 (the comment says lower-case only), so SIWB sessions are not canonical identities for consumers",
+    "status": "platform",
+    "test": null,
+    "commit": null,
+    "note": "degent canonicalises itself since DGT-SEC-001; fix in DegentClub/scribbit, then bump the pin"
+  },
+  {
+    "id": "DGT-SEC-041",
+    "component": "platform",
+    "severity": "low",
+    "title": "@bsh/identity InMemoryNonceStore sweeps expired nonces with the wall clock while verifySignIn uses the injected clock: with a skewed or injected clock, concurrent challenges invalidate each other",
+    "status": "platform",
+    "test": null,
+    "commit": null
+  },
+  {
+    "id": "DGT-SEC-042",
+    "component": "platform",
+    "severity": "low",
+    "title": "@bsh/identity verifySignIn accepts legacy signmessage signatures by default (the mint and the gate use the default; the market disables them)",
+    "status": "platform",
+    "test": null,
+    "commit": null
+  }
+]

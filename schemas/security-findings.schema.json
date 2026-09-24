@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://degent.club/schemas/security-findings.schema.json",
+  "title": "degent.club security findings (docs/security/findings.json)",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["id", "component", "severity", "title", "status", "test", "commit"],
+    "properties": {
+      "id": { "type": "string", "pattern": "^DGT-SEC-[0-9]{3}$" },
+      "component": { "enum": ["mint", "market", "telegram-gate", "x-bot", "mint-sdk", "market-sdk", "web", "deploy", "platform"] },
+      "severity": { "enum": ["critical", "high", "medium", "low"] },
+      "title": { "type": "string", "minLength": 20 },
+      "status": {
+        "enum": ["fixed", "accepted", "open", "platform", "superseded"],
+        "description": "fixed: regression test + commit here; accepted/open: tracked by a roadmap item; platform: for DegentClub/scribbit; superseded: the code path no longer exists or is being removed (note says why)"
+      },
+      "test": { "type": ["string", "null"], "description": "repository-relative path of the regression test (required when fixed)" },
+      "commit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,40}$" },
+      "note": { "type": "string" },
+      "roadmap": { "type": "string", "pattern": "^p[0-9]+\\.[0-9]+$" }
+    },
+    "allOf": [
+      { "if": { "properties": { "status": { "const": "fixed" } } }, "then": { "properties": { "test": { "type": "string" }, "commit": { "type": "string" } } } },
+      { "if": { "properties": { "status": { "enum": ["accepted", "open"] } } }, "then": { "required": ["roadmap"] } },
+      { "if": { "properties": { "status": { "const": "superseded" } } }, "then": { "required": ["note"] } }
+    ]
+  }
+}
