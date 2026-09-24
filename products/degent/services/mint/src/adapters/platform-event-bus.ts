@@ -1,5 +1,5 @@
 import type { OrderStatusEvent } from '@bsh/degent-mint-sdk';
-import { createEvent, degentMintOrder, type EventBus as PlatformBus } from '@bsh/events';
+import { createEvent, degentMintOrder, type EventBus as PlatformBus, type EventEnvelope } from '@bsh/events';
 import type { EventBus } from '../ports/event-bus.js';
 
 /**
@@ -18,21 +18,28 @@ import type { EventBus } from '../ports/event-bus.js';
 export class PlatformEventBusAdapter implements EventBus {
   constructor(
     private readonly bus: PlatformBus,
-    private readonly source = 'urn:bsh:degent-mint',
+    private readonly source = MINT_EVENT_SOURCE,
   ) {}
 
   async publish(event: OrderStatusEvent): Promise<void> {
-    const envelope = createEvent({
-      source: this.source,
-      type: degentMintOrder.typeFor({ status: event.status }),
-      subject: event.orderId,
-      id: event.eventId,
-      time: event.at,
-      dataschema: degentMintOrder.dataschema,
-      data: event,
-    });
-    const v = degentMintOrder.validate(envelope.data);
-    if (!v.valid) throw new Error(`mint event does not match platform topic schema: ${JSON.stringify(v.errors)}`);
-    await this.bus.publish(envelope);
+    await this.bus.publish(toPlatformEnvelope(event, this.source));
   }
+}
+
+export const MINT_EVENT_SOURCE = 'urn:bsh:degent-mint';
+
+/** The CloudEvents envelope of a mint event on `degent.mint.order.{status}`, validated against the platform topic. */
+export function toPlatformEnvelope(event: OrderStatusEvent, source = MINT_EVENT_SOURCE): EventEnvelope<OrderStatusEvent> {
+  const envelope = createEvent({
+    source,
+    type: degentMintOrder.typeFor({ status: event.status }),
+    subject: event.orderId,
+    id: event.eventId,
+    time: event.at,
+    dataschema: degentMintOrder.dataschema,
+    data: event,
+  });
+  const v = degentMintOrder.validate(envelope.data);
+  if (!v.valid) throw new Error(`mint event does not match platform topic schema: ${JSON.stringify(v.errors)}`);
+  return envelope;
 }

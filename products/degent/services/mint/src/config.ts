@@ -34,6 +34,15 @@ export interface MintConfig {
   /** Ed25519 session signing key (hex); null => regtest dev key. */
   sessionKey: string | null;
   sessionKid: string;
+  /** Order notifications (POST /v1/orders/{id}/subscriptions). */
+  notify: {
+    /** Public site origin used in notification links. */
+    siteUrl: string;
+    /** 'console' logs emails (dev); 'off' disables the email channel until a provider adapter is wired. */
+    email: 'console' | 'off';
+    /** Telegram Bot API token (secret); null disables the telegram_chat channel. */
+    telegramBotToken: string | null;
+  };
 }
 
 export class ConfigError extends Error {
@@ -185,6 +194,12 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
   const galleryInscriptionId = str('GALLERY_INSCRIPTION_ID');
   if (galleryInscriptionId && !/^[0-9a-f]{64}i\d+$/.test(galleryInscriptionId)) problems.push('GALLERY_INSCRIPTION_ID must look like <txid>i<index>');
   const ordPublicUrl = url('ORD_PUBLIC_URL', ordUrl ?? 'https://ordinals.com');
+  const siteUrl = url('SITE_URL', 'https://degent.club');
+  const notifyEmailRaw = str('NOTIFY_EMAIL') ?? (dev ? 'console' : 'off');
+  if (notifyEmailRaw !== 'console' && notifyEmailRaw !== 'off') problems.push('NOTIFY_EMAIL must be "console" or "off"');
+  if (notifyEmailRaw === 'console' && net === 'mainnet') problems.push('NOTIFY_EMAIL=console is dev-only and refused on mainnet');
+  const telegramBotToken = str('TELEGRAM_BOT_TOKEN');
+  if (telegramBotToken && !/^\d{5,20}:[A-Za-z0-9_-]{20,64}$/.test(telegramBotToken)) problems.push('TELEGRAM_BOT_TOKEN does not look like a Bot API token');
 
   const out: MintConfig = {
     settings: {
@@ -245,6 +260,11 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
     holderRegistry: holderRaw === 'roster-chain' ? 'roster-chain' : 'memory',
     sessionKey,
     sessionKid,
+    notify: {
+      siteUrl: (siteUrl ?? 'https://degent.club').replace(/\/+$/, ''),
+      email: notifyEmailRaw === 'console' ? 'console' : 'off',
+      telegramBotToken,
+    },
   };
   if (problems.length) throw new ConfigError(problems);
   return out;

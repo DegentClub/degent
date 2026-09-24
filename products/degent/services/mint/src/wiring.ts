@@ -15,6 +15,10 @@ import { ConfigError } from './config.js';
 import { OrderService } from './application/order-service.js';
 import { ApprovalService } from './application/approval-service.js';
 import { RegisterService } from './application/register-service.js';
+import { OrderNotificationService } from './application/notification-service.js';
+import { MemoryOrderSubscriptionStore, SqliteOrderSubscriptionStore } from './adapters/order-subscription-stores.js';
+import { ConsoleEmailSender, HttpTelegramClient } from '@bsh/notify';
+import type { OrderSubscriptionStore } from './ports/order-subscription-store.js';
 import { parseRoster } from './domain/roster.js';
 import { MemoryHolderRegistry } from './adapters/memory-holder-registry.js';
 import { RosterChainHolderRegistry } from './adapters/roster-chain-holder-registry.js';
@@ -51,6 +55,7 @@ export interface Runtime {
   orders: OrderService;
   approval: ApprovalService;
   register: RegisterService;
+  notifications: OrderNotificationService;
   holders: HolderRegistry;
   parents: StoreParentUtxoProvider;
   chain: ChainPort;
@@ -83,17 +88,20 @@ export function buildRuntime(cfg: MintConfig, log: Logger = jsonLogger()): Runti
   let blobs: SecretBlobStore;
   let votes: VoteStore;
   let nonces: NonceStore;
+  let subscriptions: OrderSubscriptionStore;
   if (cfg.databasePath) {
     const sqlite = new SqliteOrderStore(cfg.databasePath);
     store = sqlite;
     blobs = sqlite;
     votes = new SqliteVoteStore(sqlite.database);
     nonces = new SqliteNonceStore(sqlite.database);
+    subscriptions = new SqliteOrderSubscriptionStore(sqlite.database);
   } else {
     store = new MemoryOrderStore();
     blobs = new MemorySecretBlobStore();
     votes = new MemoryVoteStore();
     nonces = new InMemoryNonceStore();
+    subscriptions = new MemoryOrderSubscriptionStore();
   }
   const content = cfg.contentDir ? new FsContentStore(cfg.contentDir) : new MemoryContentStore();
   const reveals = new EncryptedRevealVault(blobs, cfg.revealEncryptionKey ?? REGTEST_DEV_REVEAL_KEY);
@@ -137,10 +145,24 @@ export function buildRuntime(cfg: MintConfig, log: Logger = jsonLogger()): Runti
   const approval = new ApprovalService({ orders, store, votes, holders, clock: systemClock, sessionKey, nonces, log });
   const register = new RegisterService({ settings, roster, store, holders, clock: systemClock });
 
+  // Order notifications (@bsh/notify): follow the in-process order events.
+  const notifications = new OrderNotificationService({
+    orders,
+    subscriptions,
+    email: cfg.notify.email === 'console' ? new ConsoleEmailSender((line) => log.info('email (console sender)', { line })) : null,
+    telegram: cfg.notify.telegramBotToken ? new HttpTelegramClient({ botToken: cfg.notify.telegramBotToken, fetch: (u, i) => fetch(u, i) }) : null,
+    clock: systemClock,
+    siteUrl: cfg.notify.siteUrl,
+    log,
+  });
+  notifications.attach(events);
+  if (notifications.availableChannels().length === 0) log.info('order notifications disabled (NOTIFY_EMAIL=off, no TELEGRAM_BOT_TOKEN)', {});
+
   const app = createApp({
     orders,
     approval,
     register,
+    notifications,
     fees,
     chain,
     parents,
@@ -151,7 +173,23 @@ export function buildRuntime(cfg: MintConfig, log: Logger = jsonLogger()): Runti
     log,
   });
   const worker = new MintWorker({ orders, store, content, reveals, chain, parents, signer, broadcasters, clock: systemClock, log });
-  return { app, worker, orders, approval, register, holders, parents, chain, events, signer, close: () => store.close?.() };
+  return {
+    app,
+    worker,
+    orders,
+    approval,
+    register,
+    notifications,
+    holders,
+    parents,
+    chain,
+    events,
+    signer,
+    close: () => {
+      notifications.stop();
+      store.close?.();
+    },
+  };
 }
 
 /** Seed the parent location from PARENT_OUTPOINT when the store has none yet. */

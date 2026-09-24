@@ -49,6 +49,7 @@ describe('createMintClient', () => {
     await c.explorer({ offset: 20, limit: 10, sort: 'bytes', order: 'desc', q: 'bc1' });
     await c.explorer();
     await c.stats();
+    await c.subscribeOrder('o1', 'tok', { channel: 'email', address: 'gent@example.com' });
     expect(calls.map((x) => `${x.init?.method} ${x.url}`)).toEqual([
       'GET https://mint.example/v1/health',
       'GET https://mint.example/v1/config',
@@ -71,10 +72,12 @@ describe('createMintClient', () => {
       'GET https://mint.example/v1/explorer?offset=20&limit=10&sort=bytes&order=desc&q=bc1',
       'GET https://mint.example/v1/explorer',
       'GET https://mint.example/v1/stats',
+      'POST https://mint.example/v1/orders/o1/subscriptions',
     ]);
     const auth = calls.map((x) => (x.init?.headers as Record<string, string>).authorization ?? null);
     expect(auth.slice(0, 9)).toEqual([null, null, null, null, null, 'Bearer tok', 'Bearer tok', null, 'Bearer tok']);
-    expect(auth.slice(9)).toEqual([null, null, 'Bearer sess', 'Bearer sess', null, null, null, null, null, null, null, null]);
+    expect(auth.slice(9)).toEqual([null, null, 'Bearer sess', 'Bearer sess', null, null, null, null, null, null, null, null, 'Bearer tok']);
+    expect(JSON.parse(String(calls.at(-1)!.init!.body))).toEqual({ channel: 'email', address: 'gent@example.com' });
     const put = calls[5]!.init!;
     expect((put.headers as Record<string, string>)['content-type']).toBe('application/octet-stream');
     expect(put.body).toEqual(new Uint8Array([1, 2, 3]));

@@ -263,6 +263,7 @@ export type ApiErrorCode =
   | 'review_unavailable'
   | 'queue_full'
   | 'upstream_unavailable'
+  | 'channel_unavailable'
   | 'internal';
 
 export interface ApiErrorBody {
@@ -282,6 +283,35 @@ export interface OrderStatusEvent {
   detail?: string;
   txid?: string;
   inscriptionId?: string;
+}
+
+// ---------------------------------------------------------------- order notifications
+
+/** Where order notifications go: an email address, or a Telegram chat id (numeric, or @channel). */
+export type NotifyChannel = 'email' | 'telegram_chat';
+
+/**
+ * The order statuses that notify a subscriber (POST /v1/orders/{id}/subscriptions). Every other
+ * transition is silent: these are the moments that need the minter's attention or deserve a cheer.
+ */
+export const NOTIFY_STATUSES = ['member_review', 'declined', 'rescue_available', 'delivered'] as const satisfies readonly OrderStatus[];
+export type NotifyStatus = (typeof NOTIFY_STATUSES)[number];
+
+export interface CreateSubscriptionRequest {
+  channel: NotifyChannel;
+  /** Email address, or Telegram chat id. */
+  address: string;
+}
+
+export interface OrderSubscription {
+  /** Stable per (order, channel, address): subscribing twice returns the same subscription. */
+  id: string;
+  orderId: string;
+  channel: NotifyChannel;
+  address: string;
+  /** The statuses that will notify (NOTIFY_STATUSES). */
+  events: NotifyStatus[];
+  createdAt: string;
 }
 
 // ---------------------------------------------------------------- member approval (ADR-0007)

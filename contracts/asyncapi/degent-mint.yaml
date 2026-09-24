@@ -19,6 +19,15 @@ info:
     Transport: in-process bus in dev/tests; RabbitMQ topic exchange `degent.mint` in production (persistent
     messages, `message_id` = eventId, `content_type` = application/json). Bind with e.g.
     `degent.mint.order.*` or `degent.mint.order.delivered`.
+
+    Notifications: the mint service itself consumes four of these events and fans them out through `@bsh/notify`
+    to the subscriptions created with `POST /v1/orders/{id}/subscriptions` (email or Telegram, per order,
+    retried with backoff, idempotency key = sha256(subscription, source, eventId)):
+    `member_review` -> "Your Degent is with the club" (commit confirmed, the members are voting);
+    `declined` -> the members said no, self-rescue with the recovery passphrase keeps the inscription;
+    `rescue_available` -> self-rescue is open (review SLA or reveal timeout lapsed);
+    `delivered` -> "Degent #N joined the club, block X" (N = the order's Degent number, X = the block in the
+    `confirmed` event's detail). Every other status is silent. Subscriber addresses never appear in events.
   license: { name: Proprietary, identifier: LicenseRef-Proprietary }
 defaultContentType: application/json
 

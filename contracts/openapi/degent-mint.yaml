@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: degent.club mint API
-  version: 0.2.0
+  version: 0.3.0
   summary: Non-custodial, parent-linked inscription minting for the Decentralized Gentlemen Club.
   description: |
     Implemented by `@bsh/degent-mint` (products/degent/services/mint); typed client and domain types in
@@ -230,6 +230,48 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+
+  /v1/orders/{id}/subscriptions:
+    parameters:
+      - $ref: '#/components/parameters/OrderId'
+    post:
+      tags: [orders]
+      operationId: subscribeOrder
+      summary: Ask to be notified (email or Telegram) when the order needs attention or joins the club.
+      description: |
+        Delivered by `@bsh/notify` from the order's `degent.mint.order.{status}` events
+        (contracts/asyncapi/degent-mint.yaml, "Notifications"), for exactly these transitions:
+        `member_review` ("your Degent is with the club"), `declined` (the members said no; self-rescue with the
+        recovery passphrase), `rescue_available` (self-rescue is open) and `delivered` ("Degent #N joined the
+        club, block X"). Each (order, channel, address) is one subscription: subscribing again returns the same
+        `id`. At most 3 subscriptions per order (422 `validation_failed`). Terminal orders (`rejected`,
+        `delivered`, `failed`) refuse new subscriptions (409 `conflict`). A channel the deployment has not
+        configured answers 503 `channel_unavailable`. `address` is used only for these notifications and is never
+        returned by `GET /v1/orders/{id}` or emitted in events. Telegram: a numeric chat id (what the club bot
+        replies to `/start`) or an `@channel` name; the bot must be allowed to message that chat.
+      security:
+        - orderToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSubscriptionRequest' }
+      responses:
+        '201':
+          description: Subscription (new or existing)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderSubscription' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Error' }
 
   /v1/orders/{id}/votes:
     parameters:
@@ -671,6 +713,34 @@ components:
         commitVout: { type: integer, minimum: 0, maximum: 4294967295 }
         halfSignedRevealPsbt: { type: string, contentEncoding: base64, description: '[commit] -> [parent return, child] PSBT, commit input signed with SIGHASH_ALL|ANYONECANPAY (0x81). Max request body 8 MiB.' }
         commitAddress: { type: string, description: Optional browser-computed commit address; must equal the quote's. }
+    NotifyChannel: { type: string, enum: [email, telegram_chat] }
+    NotifyStatus:
+      type: string
+      enum: [member_review, declined, rescue_available, delivered]
+      description: The order statuses that notify a subscriber.
+    CreateSubscriptionRequest:
+      type: object
+      additionalProperties: false
+      required: [channel, address]
+      properties:
+        channel: { $ref: '#/components/schemas/NotifyChannel' }
+        address:
+          type: string
+          minLength: 1
+          maxLength: 254
+          description: Email address (`email`) or Telegram chat id / `@channel` (`telegram_chat`).
+          examples: [gent@example.com, '123456789']
+    OrderSubscription:
+      type: object
+      additionalProperties: false
+      required: [id, orderId, channel, address, events, createdAt]
+      properties:
+        id: { type: string, pattern: '^sub_[0-9a-f]{24}$' }
+        orderId: { type: string }
+        channel: { $ref: '#/components/schemas/NotifyChannel' }
+        address: { type: string }
+        events: { type: array, items: { $ref: '#/components/schemas/NotifyStatus' } }
+        createdAt: { $ref: '#/components/schemas/Timestamp' }
     RescueResponse:
       type: object
       additionalProperties: false
@@ -943,7 +1013,7 @@ components:
       enum:
         [bad_request, unauthorized, forbidden, validation_failed, not_found, conflict, quote_expired, payload_too_large,
          unsupported_media_type, rate_limited, forbidden_origin, content_mismatch, reveal_invalid,
-         rescue_unavailable, review_unavailable, queue_full, upstream_unavailable, internal,
+         rescue_unavailable, review_unavailable, queue_full, upstream_unavailable, channel_unavailable, internal,
          not_a_holder, already_voted, self_vote, vote_invalid, auth_failed, review_closed]
     Error:
       type: object

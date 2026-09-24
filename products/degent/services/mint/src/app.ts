@@ -9,6 +9,7 @@ import type { ApiErrorBody, FeesResponse, HealthResponse, ServiceConfig } from '
 import type { ApprovalService } from './application/approval-service.js';
 import type { OrderService } from './application/order-service.js';
 import type { RegisterService } from './application/register-service.js';
+import type { OrderNotificationService } from './application/notification-service.js';
 import type { Logger } from './application/logger.js';
 import { silentLogger } from './application/logger.js';
 import { DomainError, StaleWriteError } from './domain/errors.js';
@@ -22,6 +23,8 @@ export interface AppOptions {
   orders: OrderService;
   approval: ApprovalService;
   register: RegisterService;
+  /** Order notifications; absent => POST /v1/orders/{id}/subscriptions answers 503 channel_unavailable. */
+  notifications?: OrderNotificationService;
   fees: FeePort;
   chain?: ChainPort;
   parents?: ParentUtxoProvider;
@@ -235,6 +238,14 @@ export function createApp(o: AppOptions): Hono {
   app.get('/v1/orders/:id/rescue', async (c) =>
     c.json(await o.orders.getRescue(orderId(c), c.req.header('authorization'))),
   );
+
+  app.post('/v1/orders/:id/subscriptions', bodyLimit({ maxSize: JSON_BODY_LIMIT, onError: tooLarge(JSON_BODY_LIMIT) }), async (c) => {
+    const id = orderId(c);
+    const auth = c.req.header('authorization');
+    await o.orders.authorize(id, auth);
+    if (!o.notifications) throw new DomainError('channel_unavailable', 503, 'notifications are not configured on this mint');
+    return c.json(await o.notifications.subscribe(id, auth, await readJson(c)), 201);
+  });
 
   // ---------------------------------------------------------------- member approval (ADR-0007)
 

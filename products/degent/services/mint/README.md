@@ -141,6 +141,22 @@ Scripts: `scripts/build-roster.mjs` (marketplace manifest → `data/roster.json`
 `SIWB_DOMAIN`, `SIWB_URI`, `SESSION_KEY`, `SESSION_KID`, `SESSION_TTL_SECONDS`, `HOLDER_REGISTRY`, `ROSTER_FILE`,
 `ORD_PUBLIC_URL`, `GALLERY_INSCRIPTION_ID` (see `env.schema.json`).
 
+## Order notifications
+
+`POST /v1/orders/{id}/subscriptions` (order token) stores `{ channel: email | telegram_chat, address }` per order
+(`ports/order-subscription-store.ts`: memory, or SQLite in the order database; at most 3 per order; the address
+is never returned by `GET /v1/orders/{id}` nor emitted in events). `application/notification-service.ts` follows
+the in-process order events and hands the four notifying ones (`NOTIFY_STATUSES` in the SDK: `member_review`,
+`declined`, `rescue_available`, `delivered`) as `degent.mint.order.{status}` CloudEvents to `@bsh/notify`, which
+owns delivery, retries with backoff, idempotency keys and dead letters. Each event is handled by a Notifier scoped
+to that order's subscriptions (the platform Notifier matches by topic only), all sharing one `DeliveryLog`, so a
+redelivered event never notifies twice. Copy: "Your Degent is with the club", "The members declined your
+Degent" (self-rescue with the recovery passphrase), "Self-rescue is available", "Degent #N joined the club,
+block X" (block from the `confirmed` event). Settings: `SITE_URL` (links), `NOTIFY_EMAIL` (`console` logs emails:
+default on regtest, refused on mainnet; `off` answers 503 `channel_unavailable` until an SES/Postmark
+`EmailSender` adapter is wired), `TELEGRAM_BOT_TOKEN` (secret; unset = Telegram disabled). Retry timers live in
+memory: after a restart, pending retries are lost (a durable bus subscription would redeliver; see Known gaps).
+
 ## API summary
 
 | Method | Path | Auth | Result |
@@ -152,7 +168,7 @@ Scripts: `scripts/build-roster.mjs` (marketplace manifest → `data/roster.json`
 | POST | `/v1/orders/{id}/votes` | holder session | cast a BIP-322-signed vote (`Approve Degent order <id> (<ref>)`) |
 | GET | `/v1/orders/{id}/votes` | - | public tally + signed votes (voters' Degent numbers, never addresses) |
 | GET | `/v1/register`, `/v1/register/{n}`, `/v1/register/holder/{address}`, `/v1/register/verify/{id}` | - | the Register |
-| GET | `/v1/explorer`, `/v1/stats` | - | paginated members with image URLs; collection statistics |
+| GET | `/v1/explorer`, `/v1/stats` | - | paginated members with image URLs (filters: `q`, `tier`, `minBytes`, `maxBytes`); collection statistics |
 | GET | `/v1/config` | - | collection rules, tiers, collection address, upload limit |
 | GET | `/v1/fees` | - | sat/vB per lane |
 | GET | `/v1/queue` | - | lane waiting / in-flight / capacity / ETA |
@@ -160,6 +176,7 @@ Scripts: `scripts/build-roster.mjs` (marketplace manifest → `data/roster.json`
 | PUT | `/v1/orders/{id}/content` | Bearer | raw bytes (`application/octet-stream`, <= 4 MiB) -> approved/rejected order |
 | POST | `/v1/orders/{id}/reveal` | Bearer | `SubmitRevealRequest` -> `awaiting_payment` |
 | GET | `/v1/orders/{id}` | - | public order (no PSBT, no token) |
+| POST | `/v1/orders/{id}/subscriptions` | Bearer | email / Telegram notifications for `member_review`, `declined`, `rescue_available`, `delivered` (201; 503 `channel_unavailable` when not configured) |
 | GET | `/v1/orders/{id}/rescue` | Bearer | rescue *parameters* (incl. content bytes) for `buildResignedRescue` when `rescue_available` or `declined`, else 409; the browser signs with K_e |
 
 Errors are always `{ "error": { "code", "message", "details"? } }`. 401 = no/malformed token, 403 = wrong
@@ -181,6 +198,7 @@ See [`env.schema.json`](./env.schema.json) for every variable. Essentials:
 | `CORS_ORIGINS` | exact origins, comma-separated; empty = deny all |
 | `ART_REVIEW_API_KEY` | enables the Claude vision review (`claude-opus-5`); unset = rules only |
 | `SERVICE_FEE_ADDRESS`, `SERVICE_FEE_SATS_*` | optional service fee, paid in the funding tx |
+| `SITE_URL`, `NOTIFY_EMAIL`, `TELEGRAM_BOT_TOKEN` | order notifications (links, email channel `console`/`off`, Telegram bot) |
 
 Config errors are listed all at once and the process exits non-zero.
 
@@ -205,5 +223,7 @@ Operations: [RUNBOOK.md](./RUNBOOK.md).
 
 - KMS/HSM `PolicySigner` is an interface only (`src/adapters/kms-policy-signer.ts`); mainnet cannot start until it exists.
 - RabbitMQ `EventBus` adapter is an interface only; events currently go to the in-process bus.
+- No production `EmailSender` (SES/Postmark) yet: off regtest the email channel is `off`. Notification retries are
+  in memory; order events are not yet on a durable bus, so a restart drops pending retries.
 - The rate limiter is per process; run one API replica or put a shared limiter in front.
 - The service trusts one esplora; a second backend for cross-checking payment detection is future work.

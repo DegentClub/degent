@@ -95,6 +95,10 @@ describe('OpenAPI contract', () => {
     await expectOk('get', '/v1/queue', '/v1/queue', 200);
     const b = await browserMintToPayment(h);
     await expectOk('get', `/v1/orders/${b.orderId}`, '/v1/orders/{id}', 200);
+    await expectOk('post', `/v1/orders/${b.orderId}/subscriptions`, '/v1/orders/{id}/subscriptions', 201, {
+      json: { channel: 'email', address: 'gent@example.com' },
+      token: b.token,
+    });
     await fundToReview(h, b);
     await expectOk('get', `/v1/orders/${b.orderId}`, '/v1/orders/{id}', 200);
     await expectOk('get', `/v1/orders/${b.orderId}/votes`, '/v1/orders/{id}/votes', 200);

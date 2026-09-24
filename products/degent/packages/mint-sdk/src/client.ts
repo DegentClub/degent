@@ -11,12 +11,14 @@ import type {
   CastVoteRequest,
   CreateOrderRequest,
   CreateOrderResponse,
+  CreateSubscriptionRequest,
   ExplorerQuery,
   ExplorerResponse,
   FeesResponse,
   HealthResponse,
   HolderResponse,
   Order,
+  OrderSubscription,
   QueueResponse,
   RegisterMember,
   RegisterSummary,
@@ -63,6 +65,8 @@ export interface MintClient {
   submitReveal(orderId: string, orderToken: string, req: SubmitRevealRequest): Promise<Order>;
   getOrder(orderId: string): Promise<Order>;
   getRescue(orderId: string, orderToken: string): Promise<RescueResponse>;
+  /** Email / Telegram notifications for member_review, declined, rescue_available and delivered. */
+  subscribeOrder(orderId: string, orderToken: string, req: CreateSubscriptionRequest): Promise<OrderSubscription>;
 
   // Holder sign-in (SIWB) and member approval (ADR-0007)
   authChallenge(req: AuthChallengeRequest): Promise<AuthChallengeResponse>;
@@ -145,6 +149,7 @@ export function createMintClient(opts: MintClientOptions): MintClient {
     submitReveal: (orderId, token, req) => call('POST', `/v1/orders/${id(orderId)}/reveal`, { json: req }, token),
     getOrder: (orderId) => call('GET', `/v1/orders/${id(orderId)}`),
     getRescue: (orderId, token) => call('GET', `/v1/orders/${id(orderId)}/rescue`, undefined, token),
+    subscribeOrder: (orderId, token, req) => call('POST', `/v1/orders/${id(orderId)}/subscriptions`, { json: req }, token),
     authChallenge: (req) => call('POST', '/v1/auth/challenge', { json: req }),
     authVerify: (req) => call('POST', '/v1/auth/verify', { json: req }),
     reviewQueue: (token) => call('GET', '/v1/review', undefined, token),

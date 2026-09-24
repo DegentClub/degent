@@ -317,6 +317,9 @@ importers:
       '@bsh/inscription':
         specifier: workspace:*
         version: link:../../../../deps/scribbit/platform/inscription
+      '@bsh/notify':
+        specifier: workspace:*
+        version: link:../../../../deps/scribbit/platform/notify
       '@hono/node-server':
         specifier: ^2.1.1
         version: 2.1.1(hono@4.13.8)

@@ -28,6 +28,10 @@ import { StaticFees } from '../../src/adapters/fees.js';
 import { MemoryEventBus } from '../../src/adapters/system.js';
 import { DEFAULT_POLICY } from '../../src/domain/policy.js';
 import { MintWorker } from '../../src/worker.js';
+import { OrderNotificationService } from '../../src/application/notification-service.js';
+import { MemoryOrderSubscriptionStore } from '../../src/adapters/order-subscription-stores.js';
+import { ConsoleEmailSender, type TelegramClient, type TelegramSendResult } from '@bsh/notify';
+import { ManualClock } from '@bsh/events';
 import type { ArtReview } from '../../src/ports/art-review.js';
 import { FakeChain } from './chain.js';
 import { FakeArtReview, FakeBroadcaster, FakeClock } from './misc.js';
@@ -75,6 +79,22 @@ export interface HarnessOptions {
   settings?: Partial<MintSettings>;
   parentValue?: bigint;
   roster?: RosterMember[];
+  /** Leave the telegram channel unconfigured (503 channel_unavailable). */
+  noTelegram?: boolean;
+}
+
+/** Telegram fake: records messages; `failNext` makes the next N sends fail (retryable). */
+export class FakeTelegram implements TelegramClient {
+  readonly sent: Array<{ chatId: string; text: string }> = [];
+  failNext = 0;
+  async sendMessage(chatId: string, text: string): Promise<TelegramSendResult> {
+    if (this.failNext > 0) {
+      this.failNext--;
+      return { ok: false, retryable: true, status: 502, error: 'telegram HTTP 502: bad gateway' };
+    }
+    this.sent.push({ chatId, text });
+    return { ok: true, status: 200 };
+  }
 }
 
 export function makeHarness(opts: HarnessOptions = {}) {
@@ -144,10 +164,25 @@ export function makeHarness(opts: HarnessOptions = {}) {
     createdByLane: null,
   });
   const fees = new StaticFees({ standard: { slow: 1, normal: 2, fast: 5 }, block: { min: 1, recommended: 3 } }, () => clock.now());
+  const email = new ConsoleEmailSender(() => {});
+  const telegram = new FakeTelegram();
+  const retryClock = new ManualClock(Date.UTC(2026, 8, 24));
+  const subscriptions = new MemoryOrderSubscriptionStore();
+  const notifications = new OrderNotificationService({
+    orders,
+    subscriptions,
+    email,
+    telegram: opts.noTelegram ? null : telegram,
+    clock,
+    retryClock,
+    siteUrl: 'https://degent.club',
+  });
+  notifications.attach(events);
   const app = createApp({
     orders,
     approval,
     register,
+    notifications,
     fees,
     chain,
     parents,
@@ -159,7 +194,7 @@ export function makeHarness(opts: HarnessOptions = {}) {
   const broadcasters = { standard: new FakeBroadcaster('standard', chain), block: new FakeBroadcaster('block', chain) };
   const worker = new MintWorker({ orders, store, content, reveals, chain, parents, signer, broadcasters, clock });
 
-  return { clock, chain, signer, settings, store, content, blobs, reveals, events, orders, approval, register, votes, holders, roster, parents, app, broadcasters, worker, ready, collectionScriptHex, parentTxid, parentValue };
+  return { email, telegram, retryClock, subscriptions, notifications, clock, chain, signer, settings, store, content, blobs, reveals, events, orders, approval, register, votes, holders, roster, parents, app, broadcasters, worker, ready, collectionScriptHex, parentTxid, parentValue };
 }
 
 export type Harness = ReturnType<typeof makeHarness>;

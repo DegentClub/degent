@@ -11,3 +11,4 @@ export type * from './event-bus.js';
 export type * from './reveal-vault.js';
 export type * from './holder-registry.js';
 export type * from './vote-store.js';
+export type * from './order-subscription-store.js';

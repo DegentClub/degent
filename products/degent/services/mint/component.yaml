@@ -3,13 +3,13 @@ package: "@bsh/degent-mint"
 kind: service
 product: degent
 owner: team-degent
-summary: Automated degent.club mint service - order state machine, art review, member approval (SIWB holder votes), Register API, parent co-signing policy signer, lane broadcaster.
+summary: degent.club mint service - order state machine, art review, member votes (SIWB), Register API, order notifications (@bsh/notify), parent policy signer, lane broadcaster.
 lifecycle: beta
-depends_on: ["@bsh/inscription", "@bsh/degent-mint-sdk", "@bsh/events", "@bsh/identity"]
+depends_on: ["@bsh/inscription", "@bsh/degent-mint-sdk", "@bsh/events", "@bsh/identity", "@bsh/notify"]
 provides: [contracts/openapi/degent-mint.yaml, contracts/asyncapi/degent-mint.yaml]
 consumes: ["events:block.indexed.{network}", "deps/scribbit/contracts/asyncapi/platform-events.yaml#/channels/degentMintOrderStatus"]
 stores: ["sqlite:degent_mint"]
-secrets: ["services/degent-mint/parent-key", "services/degent-mint/art-review-api-key", "services/degent-mint/reveal-encryption-key", "services/degent-mint/libre-rpc-pass", "services/degent-mint/slipstream-api-key", "services/degent-mint/session-key"]
+secrets: ["services/degent-mint/parent-key", "services/degent-mint/art-review-api-key", "services/degent-mint/reveal-encryption-key", "services/degent-mint/libre-rpc-pass", "services/degent-mint/slipstream-api-key", "services/degent-mint/session-key", "services/degent-mint/telegram-bot-token"]
 env_schema: ./env.schema.json
 slo: { availability: "99.9", p95_ms: 300 }
 runbook: ./RUNBOOK.md
