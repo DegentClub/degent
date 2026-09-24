@@ -50,7 +50,7 @@ LABEL org.opencontainers.image.title="degent-web" \
       org.opencontainers.image.description="degent.club mint front end (static, served by Caddy)"
 RUN addgroup -g 10001 web && adduser -D -H -u 10001 -G web web \
  && mkdir -p /data /config && chown -R web:web /data /config
-COPY --chown=root:root products/degent/deploy/Caddyfile /etc/caddy/Caddyfile
+COPY --chown=root:root products/degent/deploy/Caddyfile products/degent/deploy/web-site.caddy /etc/caddy/
 COPY --from=build --chown=root:root /repo/products/degent/apps/web/dist /srv
 ENV SITE_ADDRESS=:8080 MINT_API_UPSTREAM=mint-api:8787 XDG_DATA_HOME=/data XDG_CONFIG_HOME=/config
 USER web
