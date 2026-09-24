@@ -11,3 +11,4 @@ start from `deps/scribbit/docs/adr/template.md` and take the next free number.
 |---|---|---|
 | [0002](0002-degent-mint-architecture.md) | degent.club automated mint: non-custodial, parent-linked, block-sized | Accepted (§1, §2, §6 amended by 0005) |
 | [0005](0005-strict-reveal-and-tiers.md) | Strict reveals (0x81), user-held rescue key, three tiers by content bytes, block-lane weight budget | Accepted |
+| [0007](0007-open-studio.md) | The Open Studio: SIWB artist identity, BIP-322-proven payout, artwork reviewed once, gallery, royalty as output [1] of the funding PSBT, open editions | Accepted |

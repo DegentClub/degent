@@ -8,9 +8,18 @@
     "reproduce": "pnpm --filter @bsh/degent-mint test -- e2e  # artwork order to delivered with the studio fake receiving the royalty record"
   },
   "repos": {
-    "degent": { "url": "https://github.com/DegentClub/degent", "role": "this repo: mint service, studio service, mint SDK, web app" },
-    "platform": { "url": "https://github.com/DegentClub/scribbit", "role": "@bsh/inscription attribution, @bsh/ledger payees and psbt method, @bsh/signer, @bsh/events AMQP" },
-    "blockspace": { "url": "https://github.com/DegentClub/blockspace", "role": "certification with attribution (ADR-0008)" }
+    "degent": {
+      "url": "https://github.com/DegentClub/degent",
+      "role": "this repo: mint service, studio service, mint SDK, web app"
+    },
+    "platform": {
+      "url": "https://github.com/DegentClub/scribbit",
+      "role": "@bsh/inscription attribution, @bsh/ledger payees and psbt method, @bsh/signer, @bsh/events AMQP"
+    },
+    "blockspace": {
+      "url": "https://github.com/DegentClub/blockspace",
+      "role": "certification with attribution (ADR-0008)"
+    }
   },
   "phases": [
     {
@@ -18,10 +27,35 @@
       "name": "Stabilise",
       "exit": "Strict 0x81 reveals in service and web, CI runs on every push, large-reveal tests never time out.",
       "items": [
-        { "id": "p0.1", "repo": "degent", "title": "0x81 reveals with pre-committed parent return, user-held rescue key (ADR-0005)", "status": "done", "verify": "pnpm --filter @bsh/degent-mint test", "doc": "docs/adr/0005-strict-reveal-and-tiers.md" },
-        { "id": "p0.2", "repo": "degent", "title": "Recovery bundle v2 and local rescue in the web app", "status": "done", "verify": "pnpm --filter @bsh/degent-web test" },
-        { "id": "p0.3", "repo": "degent", "title": "CI on claude/** pushes; CODEOWNERS check passes --org DegentClub", "status": "done", "verify": "pnpm --filter @bsh/catalog-tool run codeowners --check -- --org DegentClub" },
-        { "id": "p0.4", "repo": "degent", "title": "120 s test budget for Full Block and Large Degent reveal tests", "status": "done", "verify": "pnpm --filter @bsh/degent-mint test" }
+        {
+          "id": "p0.1",
+          "repo": "degent",
+          "title": "0x81 reveals with pre-committed parent return, user-held rescue key (ADR-0005)",
+          "status": "done",
+          "verify": "pnpm --filter @bsh/degent-mint test",
+          "doc": "docs/adr/0005-strict-reveal-and-tiers.md"
+        },
+        {
+          "id": "p0.2",
+          "repo": "degent",
+          "title": "Recovery bundle v2 and local rescue in the web app",
+          "status": "done",
+          "verify": "pnpm --filter @bsh/degent-web test"
+        },
+        {
+          "id": "p0.3",
+          "repo": "degent",
+          "title": "CI on claude/** pushes; CODEOWNERS check passes --org DegentClub",
+          "status": "done",
+          "verify": "pnpm --filter @bsh/catalog-tool run codeowners --check -- --org DegentClub"
+        },
+        {
+          "id": "p0.4",
+          "repo": "degent",
+          "title": "120 s test budget for Full Block and Large Degent reveal tests",
+          "status": "done",
+          "verify": "pnpm --filter @bsh/degent-mint test"
+        }
       ]
     },
     {
@@ -29,11 +63,46 @@
       "name": "Degent rules as code",
       "exit": "Square, JPEG-recommended and size rules enforced by the SDK; vision review is Degent-specific and never approves on a skipped check.",
       "items": [
-        { "id": "p1.1", "repo": "degent", "title": "validateContentMeta square check; recommendedContentType and formatAdvice", "status": "in_progress", "verify": "pnpm --filter @bsh/degent-mint-sdk test" },
-        { "id": "p1.2", "repo": "degent", "title": "degent-rules.ts data + contracts/schemas/degent-rules.json agree", "status": "in_progress", "verify": "pnpm --filter @bsh/degent-mint-sdk test -- degent-rules" },
-        { "id": "p1.3", "repo": "degent", "title": "Degent-specific vision guidelines; skipped review => needsHuman, never approved", "status": "in_progress", "verify": "pnpm --filter @bsh/degent-studio test -- review" },
-        { "id": "p1.4", "repo": "degent", "title": "Review corpus fixtures: zero false approvals, every rejection has a reason", "status": "todo", "depends_on": ["p1.3"] },
-        { "id": "p1.5", "repo": "degent", "title": "Web app shows the format advice and the five rules from the SDK data", "status": "todo", "depends_on": ["p1.1", "p1.2"] }
+        {
+          "id": "p1.1",
+          "repo": "degent",
+          "title": "validateContentMeta square check; recommendedContentType and formatAdvice",
+          "status": "done",
+          "verify": "pnpm --filter @bsh/degent-mint-sdk test"
+        },
+        {
+          "id": "p1.2",
+          "repo": "degent",
+          "title": "degent-rules.ts data + contracts/schemas/degent-rules.json agree",
+          "status": "done",
+          "verify": "pnpm --filter @bsh/degent-mint-sdk test -- degent-rules"
+        },
+        {
+          "id": "p1.3",
+          "repo": "degent",
+          "title": "Degent-specific vision guidelines; skipped review => needsHuman, never approved",
+          "status": "done",
+          "verify": "pnpm --filter @bsh/degent-studio test -- review"
+        },
+        {
+          "id": "p1.4",
+          "repo": "degent",
+          "title": "Review corpus fixtures: zero false approvals, every rejection has a reason",
+          "status": "todo",
+          "depends_on": [
+            "p1.3"
+          ]
+        },
+        {
+          "id": "p1.5",
+          "repo": "degent",
+          "title": "Web app shows the format advice and the five rules from the SDK data",
+          "status": "todo",
+          "depends_on": [
+            "p1.1",
+            "p1.2"
+          ]
+        }
       ]
     },
     {
@@ -41,14 +110,62 @@
       "name": "Artist Studio",
       "exit": "An artist signs in with a wallet, proves a payout address, uploads, gets a verdict with reasons and is listed; every response validates against the contract.",
       "items": [
-        { "id": "p2.1", "repo": "degent", "title": "Contracts: contracts/openapi/degent-studio.yaml, contracts/asyncapi/degent-studio.yaml", "status": "in_progress" },
-        { "id": "p2.2", "repo": "degent", "title": "Sign in with Bitcoin via @bsh/identity; session with scope artist", "status": "in_progress", "verify": "pnpm --filter @bsh/degent-studio test -- auth" },
-        { "id": "p2.3", "repo": "degent", "title": "Payout address proven by BIP-322 simple signature; legacy refused", "status": "in_progress", "verify": "pnpm --filter @bsh/degent-studio test -- payout" },
-        { "id": "p2.4", "repo": "degent", "title": "Artworks: submit, upload, review once, gallery, content endpoint, delist, house review, feature", "status": "in_progress", "verify": "pnpm --filter @bsh/degent-studio test" },
-        { "id": "p2.5", "repo": "degent", "title": "Royalty view and internal royalty record endpoint", "status": "in_progress" },
-        { "id": "p2.6", "repo": "degent", "title": "Memory and SQLite stores with parity tests", "status": "in_progress" },
-        { "id": "p2.7", "repo": "degent", "title": "ADR-0007 Open Studio", "status": "in_progress", "doc": "docs/adr/0007-open-studio.md" },
-        { "id": "p2.8", "repo": "degent", "title": "Web: artist sign-in, upload, status, gallery page", "status": "todo", "depends_on": ["p2.1", "p2.4"] }
+        {
+          "id": "p2.1",
+          "repo": "degent",
+          "title": "Contracts: contracts/openapi/degent-studio.yaml, contracts/asyncapi/degent-studio.yaml",
+          "status": "done"
+        },
+        {
+          "id": "p2.2",
+          "repo": "degent",
+          "title": "Sign in with Bitcoin via @bsh/identity; session with scope artist",
+          "status": "done",
+          "verify": "pnpm --filter @bsh/degent-studio test -- auth"
+        },
+        {
+          "id": "p2.3",
+          "repo": "degent",
+          "title": "Payout address proven by BIP-322 simple signature; legacy refused",
+          "status": "done",
+          "verify": "pnpm --filter @bsh/degent-studio test -- payout"
+        },
+        {
+          "id": "p2.4",
+          "repo": "degent",
+          "title": "Artworks: submit, upload, review once, gallery, content endpoint, delist, house review, feature",
+          "status": "done",
+          "verify": "pnpm --filter @bsh/degent-studio test"
+        },
+        {
+          "id": "p2.5",
+          "repo": "degent",
+          "title": "Royalty view and internal royalty record endpoint",
+          "status": "done"
+        },
+        {
+          "id": "p2.6",
+          "repo": "degent",
+          "title": "Memory and SQLite stores with parity tests",
+          "status": "done"
+        },
+        {
+          "id": "p2.7",
+          "repo": "degent",
+          "title": "ADR-0007 Open Studio",
+          "status": "done",
+          "doc": "docs/adr/0007-open-studio.md"
+        },
+        {
+          "id": "p2.8",
+          "repo": "degent",
+          "title": "Web: artist sign-in, upload, status, gallery page",
+          "status": "todo",
+          "depends_on": [
+            "p2.1",
+            "p2.4"
+          ]
+        }
       ]
     },
     {
@@ -56,18 +173,121 @@
       "name": "Open mint with royalty",
       "exit": "A signet mint pays the artist and the club in one funding transaction, the reveal is co-signed, the ledger receipt matches the chain, and a rescue after an outage leaves the artist paid.",
       "items": [
-        { "id": "p3.1", "repo": "platform", "title": "@bsh/ledger: payees on line items, psbt payment method, payout records, ledger.payout events, refund race fixed", "status": "in_progress", "verify": "pnpm --filter @bsh/ledger test" },
-        { "id": "p3.2", "repo": "platform", "title": "@bsh/inscription: encodeAttribution/decodeAttribution (CBOR metadata)", "status": "in_progress", "verify": "pnpm --filter @bsh/inscription test -- attribution" },
-        { "id": "p3.3", "repo": "platform", "title": "collection.minted gains artist, artworkId, edition, royalty (minor bump)", "status": "todo", "depends_on": ["p3.1"] },
-        { "id": "p3.4", "repo": "degent", "title": "Pin bump to the platform commit carrying p3.1-p3.3", "status": "todo", "depends_on": ["p3.1", "p3.2", "p3.3"] },
-        { "id": "p3.5", "repo": "degent", "title": "Contract: CreateOrderRequest.artworkId, Quote/Order royalty fields, ServiceConfig bps, new error codes, royalty.paid channel", "status": "todo", "depends_on": ["p2.1"], "doc": "docs/open-studio-plan.md" },
-        { "id": "p3.6", "repo": "degent", "title": "Orders from artworkId: content from the studio, review skipped, edition reserved at quote", "status": "todo", "depends_on": ["p3.5"] },
-        { "id": "p3.7", "repo": "degent", "title": "Funding PSBT outputs [commit, artist, club, change]; post-sign check covers scripts and values; dust raise", "status": "todo", "depends_on": ["p3.5"], "verify": "pnpm --filter @bsh/degent-web test -- funding" },
-        { "id": "p3.8", "repo": "degent", "title": "Worker verifies artist and club outputs by script; assigns edition; emits royalty.paid; posts to the studio", "status": "todo", "depends_on": ["p3.6"], "verify": "pnpm --filter @bsh/degent-mint test -- worker" },
-        { "id": "p3.9", "repo": "degent", "title": "Attribution metadata in the envelope; collection.minted emitted with royalty fields", "status": "todo", "depends_on": ["p3.4", "p3.6"] },
-        { "id": "p3.10", "repo": "degent", "title": "Ledger recording: order with payee line items, psbt intent, payouts, receipt", "status": "todo", "depends_on": ["p3.4", "p3.8"] },
-        { "id": "p3.11", "repo": "degent", "title": "Web: gallery entry to mint, four quote lines, artist paid on Track, recovery bundle carries artworkId and edition", "status": "todo", "depends_on": ["p3.7"] },
-        { "id": "p3.12", "repo": "degent", "title": "Signet launch with club fee and royalty live", "status": "todo", "owner_action": true, "depends_on": ["p3.8", "p3.9", "p3.10", "p3.11"] }
+        {
+          "id": "p3.1",
+          "repo": "platform",
+          "title": "@bsh/ledger: payees on line items, psbt payment method, payout records, ledger.payout events, refund race fixed",
+          "status": "done",
+          "verify": "pnpm --filter @bsh/ledger test"
+        },
+        {
+          "id": "p3.2",
+          "repo": "platform",
+          "title": "@bsh/inscription: encodeAttribution/decodeAttribution (CBOR metadata)",
+          "status": "done",
+          "verify": "pnpm --filter @bsh/inscription test -- attribution"
+        },
+        {
+          "id": "p3.3",
+          "repo": "platform",
+          "title": "collection.minted gains artist, artworkId, edition, royalty (minor bump)",
+          "status": "todo",
+          "depends_on": [
+            "p3.1"
+          ]
+        },
+        {
+          "id": "p3.4",
+          "repo": "degent",
+          "title": "Pin bump to the platform commit carrying p3.1-p3.3",
+          "status": "todo",
+          "depends_on": [
+            "p3.1",
+            "p3.2",
+            "p3.3"
+          ]
+        },
+        {
+          "id": "p3.5",
+          "repo": "degent",
+          "title": "Contract: CreateOrderRequest.artworkId, Quote/Order royalty fields, ServiceConfig bps, new error codes, royalty.paid channel",
+          "status": "todo",
+          "depends_on": [
+            "p2.1"
+          ],
+          "doc": "docs/open-studio-plan.md"
+        },
+        {
+          "id": "p3.6",
+          "repo": "degent",
+          "title": "Orders from artworkId: content from the studio, review skipped, edition reserved at quote",
+          "status": "todo",
+          "depends_on": [
+            "p3.5"
+          ]
+        },
+        {
+          "id": "p3.7",
+          "repo": "degent",
+          "title": "Funding PSBT outputs [commit, artist, club, change]; post-sign check covers scripts and values; dust raise",
+          "status": "todo",
+          "depends_on": [
+            "p3.5"
+          ],
+          "verify": "pnpm --filter @bsh/degent-web test -- funding"
+        },
+        {
+          "id": "p3.8",
+          "repo": "degent",
+          "title": "Worker verifies artist and club outputs by script; assigns edition; emits royalty.paid; posts to the studio",
+          "status": "todo",
+          "depends_on": [
+            "p3.6"
+          ],
+          "verify": "pnpm --filter @bsh/degent-mint test -- worker"
+        },
+        {
+          "id": "p3.9",
+          "repo": "degent",
+          "title": "Attribution metadata in the envelope; collection.minted emitted with royalty fields",
+          "status": "todo",
+          "depends_on": [
+            "p3.4",
+            "p3.6"
+          ]
+        },
+        {
+          "id": "p3.10",
+          "repo": "degent",
+          "title": "Ledger recording: order with payee line items, psbt intent, payouts, receipt",
+          "status": "todo",
+          "depends_on": [
+            "p3.4",
+            "p3.8"
+          ]
+        },
+        {
+          "id": "p3.11",
+          "repo": "degent",
+          "title": "Web: gallery entry to mint, four quote lines, artist paid on Track, recovery bundle carries artworkId and edition",
+          "status": "todo",
+          "depends_on": [
+            "p3.7"
+          ]
+        },
+        {
+          "id": "p3.12",
+          "repo": "degent",
+          "title": "Signet launch with club fee and royalty live",
+          "status": "todo",
+          "owner_action": true,
+          "depends_on": [
+            "p3.8",
+            "p3.9",
+            "p3.10",
+            "p3.11"
+          ]
+        }
       ]
     },
     {
@@ -75,9 +295,31 @@
       "name": "Provenance and certification",
       "exit": "Every Studio mint resolves to an artist and edition from chain data alone, and the certificate says so.",
       "items": [
-        { "id": "p4.1", "repo": "blockspace", "title": "Certify reads attribution from ord metadata, signs it, summarises artists/artworks/editions, artists endpoint (ADR-0008)", "status": "done", "verify": "pnpm --filter @bsh/blockspace-certify test" },
-        { "id": "p4.2", "repo": "blockspace", "title": "Attestation carries the royalty funding txid and vout from collection.minted", "status": "todo", "depends_on": ["p3.9"] },
-        { "id": "p4.3", "repo": "degent", "title": "Site counts and artist pages read from the attestation", "status": "todo", "depends_on": ["p4.1"] }
+        {
+          "id": "p4.1",
+          "repo": "blockspace",
+          "title": "Certify reads attribution from ord metadata, signs it, summarises artists/artworks/editions, artists endpoint (ADR-0008)",
+          "status": "done",
+          "verify": "pnpm --filter @bsh/blockspace-certify test"
+        },
+        {
+          "id": "p4.2",
+          "repo": "blockspace",
+          "title": "Attestation carries the royalty funding txid and vout from collection.minted",
+          "status": "todo",
+          "depends_on": [
+            "p3.9"
+          ]
+        },
+        {
+          "id": "p4.3",
+          "repo": "degent",
+          "title": "Site counts and artist pages read from the attestation",
+          "status": "todo",
+          "depends_on": [
+            "p4.1"
+          ]
+        }
       ]
     },
     {
@@ -85,12 +327,59 @@
       "name": "Mainnet readiness",
       "exit": "A signet game day with a forced signer failover, a bus outage and a parent re-lease leaves no stranded order and no unpaid artist.",
       "items": [
-        { "id": "p5.1", "repo": "degent", "title": "Policy signer behind @bsh/signer (remote, HSM port); mainnet refusal lifted for the remote signer only", "status": "todo", "depends_on": ["p3.4"] },
-        { "id": "p5.2", "repo": "degent", "title": "Parent UTXO procedure in the RUNBOOK; alert on lease changes", "status": "todo" },
-        { "id": "p5.3", "repo": "degent", "title": "Durable stores by default; RabbitMQ via connectAmqpBus; artist notifications on royalty.paid", "status": "todo", "depends_on": ["p3.4"] },
-        { "id": "p5.4", "repo": "degent", "title": "Edition caps (maxEditions), curation, appeal workflow (ADR-0010)", "status": "todo", "depends_on": ["p3.6"] },
-        { "id": "p5.5", "repo": "degent", "title": "Security review: upload path, royalty verification, internal endpoints", "status": "todo", "depends_on": ["p3.8"] },
-        { "id": "p5.6", "repo": "degent", "title": "Signet game day", "status": "todo", "owner_action": true, "depends_on": ["p5.1", "p5.3"] }
+        {
+          "id": "p5.1",
+          "repo": "degent",
+          "title": "Policy signer behind @bsh/signer (remote, HSM port); mainnet refusal lifted for the remote signer only",
+          "status": "todo",
+          "depends_on": [
+            "p3.4"
+          ]
+        },
+        {
+          "id": "p5.2",
+          "repo": "degent",
+          "title": "Parent UTXO procedure in the RUNBOOK; alert on lease changes",
+          "status": "todo"
+        },
+        {
+          "id": "p5.3",
+          "repo": "degent",
+          "title": "Durable stores by default; RabbitMQ via connectAmqpBus; artist notifications on royalty.paid",
+          "status": "todo",
+          "depends_on": [
+            "p3.4"
+          ]
+        },
+        {
+          "id": "p5.4",
+          "repo": "degent",
+          "title": "Edition caps (maxEditions), curation, appeal workflow (ADR-0010)",
+          "status": "todo",
+          "depends_on": [
+            "p3.6"
+          ]
+        },
+        {
+          "id": "p5.5",
+          "repo": "degent",
+          "title": "Security review: upload path, royalty verification, internal endpoints",
+          "status": "todo",
+          "depends_on": [
+            "p3.8"
+          ]
+        },
+        {
+          "id": "p5.6",
+          "repo": "degent",
+          "title": "Signet game day",
+          "status": "todo",
+          "owner_action": true,
+          "depends_on": [
+            "p5.1",
+            "p5.3"
+          ]
+        }
       ]
     },
     {
@@ -98,9 +387,33 @@
       "name": "The world, and mainnet",
       "exit": "First mainnet Studio mint with an artist paid on chain; weekly counts published from the certificate.",
       "items": [
-        { "id": "p6.1", "repo": "degent", "title": "Site rebuild per products/degent/docs/site-spec.md: collection, gallery, comic, mint process, blog, artist pages", "status": "todo", "doc": "products/degent/docs/site-spec.md" },
-        { "id": "p6.2", "repo": "platform", "title": "scribb.it MCP order tools over the ledger so agents can mint a Degent", "status": "todo", "depends_on": ["p3.10"] },
-        { "id": "p6.3", "repo": "degent", "title": "Mainnet launch: curated first wave, then open submissions", "status": "todo", "owner_action": true, "depends_on": ["p5.6", "p6.1"] }
+        {
+          "id": "p6.1",
+          "repo": "degent",
+          "title": "Site rebuild per products/degent/docs/site-spec.md: collection, gallery, comic, mint process, blog, artist pages",
+          "status": "todo",
+          "doc": "products/degent/docs/site-spec.md"
+        },
+        {
+          "id": "p6.2",
+          "repo": "platform",
+          "title": "scribb.it MCP order tools over the ledger so agents can mint a Degent",
+          "status": "todo",
+          "depends_on": [
+            "p3.10"
+          ]
+        },
+        {
+          "id": "p6.3",
+          "repo": "degent",
+          "title": "Mainnet launch: curated first wave, then open submissions",
+          "status": "todo",
+          "owner_action": true,
+          "depends_on": [
+            "p5.6",
+            "p6.1"
+          ]
+        }
       ]
     }
   ]

@@ -1,0 +1,843 @@
+openapi: 3.1.0
+info:
+  title: degent.club Artist Studio API
+  version: 0.1.0
+  summary: Open studio for the Decentralized Gentlemen Club - artist identity, artwork submission and review, public gallery, royalty view.
+  description: |
+    Implemented by `@bsh/degent-studio` (products/degent/services/studio). Design: docs/adr/0007-open-studio.md.
+    Rules come from `@bsh/degent-mint-sdk` (`DEGENT_RULES`, `DEGENT_RULES_CONFIG`, `contracts/schemas/degent-rules.json`).
+
+    Flow: `POST /v1/auth/challenge` (SIWB message) -> wallet signs (BIP-322 simple, or legacy signmessage) ->
+    `POST /v1/auth/verify` (session JWT, product `degent`, scope `artist`) -> `PUT /v1/artists/me` (display name;
+    payout address proven by a BIP-322 simple signature over `degent.club payout address <address> for <sessionSub>`)
+    -> `POST /v1/artworks` (declaration, one-time `uploadToken`) -> `PUT /v1/artworks/{id}/content` (exact bytes;
+    the review runs ONCE here: rules on the real bytes, then the vision model; a skipped or unavailable vision check
+    never approves, it leaves the artwork `reviewing` with `needsHuman: true`) -> the house resolves with
+    `POST /v1/artworks/{id}/review` -> approved artworks appear in `GET /v1/artworks` and serve their bytes at
+    `GET /v1/artworks/{id}/content` (immutable, ETag = sha256). The mint service reads approved artworks and posts
+    `POST /v1/internal/royalties` after each mint; artists see them at `GET /v1/artists/me/royalties`.
+
+    Statuses: `submitted` -> `reviewing` -> `approved` | `rejected`; `approved` -> `delisted` (artist) or
+    `rejected` (house); `rejected` -> `approved` (house). Every transition is emitted as `degent.artwork.{status}`
+    (contracts/asyncapi/degent-studio.yaml).
+
+    Conventions: amounts are integer sats as JSON numbers; timestamps are ISO 8601 UTC; hashes are lowercase hex.
+    Every error is `{ "error": { "code", "message", "requestId", "details"? } }` (`@bsh/edge` shape). Browser
+    calls are subject to a CORS allowlist (default deny). Mutating requests are rate limited per client IP.
+    JSON responses carry `cache-control: no-store`; approved content is `public, max-age=31536000, immutable`.
+  license: { name: Proprietary, identifier: LicenseRef-Proprietary }
+servers:
+  - url: https://studio.degent.club
+    description: production (mainnet)
+  - url: http://127.0.0.1:8790
+    description: local dev (regtest)
+tags:
+  - name: service
+  - name: auth
+  - name: artists
+  - name: artworks
+  - name: internal
+security: []
+paths:
+  /v1/health:
+    get:
+      tags: [service]
+      operationId: getHealth
+      summary: Liveness plus dependency checks (always 200; see `status`).
+      responses:
+        '200':
+          description: Health report
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+  /v1/config:
+    get:
+      tags: [service]
+      operationId: getConfig
+      summary: The published rules, accepted formats, limits and the SIWB / payout-proof parameters a client needs.
+      responses:
+        '200':
+          description: Studio configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConfigResponse' }
+  /v1/auth/challenge:
+    post:
+      tags: [auth]
+      operationId: createChallenge
+      summary: Issue a Sign-in-with-Bitcoin challenge for an address (nonce bound to domain + address, single use).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChallengeRequest' }
+      responses:
+        '201':
+          description: Challenge message to sign with the wallet
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChallengeResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /v1/auth/verify:
+    post:
+      tags: [auth]
+      operationId: verifySignIn
+      summary: Verify the signed challenge and issue an artist session (JWT, product `degent`, scope `artist`).
+      description: |
+        Verified with `@bsh/identity.verifySignIn` (grammar, domain, address, network, validity window,
+        BIP-322 simple or legacy signature, then the nonce is consumed). The artist profile is created on
+        first sign-in. Failure is 401 `sign_in_failed` with `details.reason` (one of the identity error codes).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VerifyRequest' }
+      responses:
+        '200':
+          description: Session issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /v1/artists/me:
+    get:
+      tags: [artists]
+      operationId: getMe
+      summary: The signed-in artist's own profile (includes the payout address).
+      security:
+        - session: []
+      responses:
+        '200':
+          description: Artist profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Artist' }
+        '401': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [artists]
+      operationId: updateMe
+      summary: Update display name and/or the payout address (proven by a BIP-322 simple signature).
+      description: |
+        `payout.address` must be a segwit (P2WPKH) or taproot (P2TR) address on the service network; legacy
+        P2PKH / P2SH addresses are refused with 422 `payout_address_legacy`. `payout.signature` is a BIP-322
+        simple signature by that address over the exact text `degent.club payout address <address> for <sessionSub>`
+        (`payoutMessageTemplate` in `GET /v1/config`); an invalid proof is 422 `payout_proof_invalid`.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateArtistRequest' }
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Artist' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /v1/artists/me/royalties:
+    get:
+      tags: [artists]
+      operationId: getMyRoyalties
+      summary: Mint records that paid this artist a royalty (newest first) plus totals over all records.
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Royalty records and totals
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoyaltiesResponse' }
+        '401': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /v1/artists/{address}:
+    parameters:
+      - $ref: '#/components/parameters/ArtistAddress'
+    get:
+      tags: [artists]
+      operationId: getArtist
+      summary: Public artist profile.
+      responses:
+        '200':
+          description: Public profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicArtist' }
+        '404': { $ref: '#/components/responses/Error' }
+  /v1/artworks:
+    get:
+      tags: [artworks]
+      operationId: listArtworks
+      summary: Gallery listing - featured first, then newest. Public for `approved`; other statuses need the owner's session or an API key.
+      security:
+        - {}
+        - session: []
+        - apiKey: []
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/ArtworkStatus' }
+          description: Default `approved`. Anything else requires the owner's session (with `artist` = the session address) or an API key.
+        - name: artist
+          in: query
+          schema: { type: string, maxLength: 90 }
+          description: Filter by artist address.
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: One page of artworks
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtworkList' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [artworks]
+      operationId: createArtwork
+      summary: Declare an artwork (title, description, content type and length) and get a one-time upload token.
+      description: |
+        The declaration is validated against the collection rules (allowed type, size within a tier). The artwork
+        is created in `submitted`. `uploadToken` is a random 256-bit bearer secret returned exactly once (only its
+        SHA-256 is stored); it authorises `PUT /v1/artworks/{id}/content`. No per-artist cap (rule `quantity`).
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateArtworkRequest' }
+      responses:
+        '201':
+          description: Artwork created (`submitted`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreateArtworkResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /v1/artworks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ArtworkId'
+    get:
+      tags: [artworks]
+      operationId: getArtwork
+      summary: Artwork view. Public once `approved`; otherwise visible to the owner (session) or an API key, 404 to anyone else.
+      security:
+        - {}
+        - session: []
+        - apiKey: []
+      responses:
+        '200':
+          description: Artwork
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Artwork' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [artworks]
+      operationId: delistArtwork
+      summary: The artist delists an approved artwork (`approved` -> `delisted`). The bytes stay content-addressed but are no longer served.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: Artwork now `delisted`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Artwork' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /v1/artworks/{id}/content:
+    parameters:
+      - $ref: '#/components/parameters/ArtworkId'
+    put:
+      tags: [artworks]
+      operationId: uploadArtworkContent
+      summary: Upload the exact bytes; the review runs once, here.
+      description: |
+        Requires status `submitted` (409 `conflict` otherwise) and the upload token. 422 `content_mismatch` when
+        the length differs from the declaration. The bytes are stored content-addressed (sha256), then reviewed:
+        rules on the real bytes (magic bytes, header dimensions, square, size tier) and, if configured, the
+        vision model against the Degent design rules. Outcomes: `approved`; `rejected` (200, see
+        `review.automated.reasons`); or `reviewing` with `needsHuman: true` when the vision check was skipped
+        (unsupported type, oversized image, no vision reviewer) - a skipped check never approves. If the
+        reviewer is unavailable: 503 `review_unavailable` and the artwork stays `submitted` for a retry.
+      security:
+        - uploadToken: []
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              contentMediaType: application/octet-stream
+              maxLength: 4194304
+      responses:
+        '200':
+          description: Artwork after review (`approved`, `rejected` or `reviewing` with `needsHuman`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Artwork' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Error' }
+    get:
+      tags: [artworks]
+      operationId: getArtworkContent
+      summary: The exact bytes of an approved artwork (404 for any other status). Immutable; ETag is the sha256.
+      description: |
+        Headers: `content-type` (the real image type), `content-length`, `etag: "<sha256>"`,
+        `cache-control: public, max-age=31536000, immutable`. `If-None-Match` with the ETag returns 304.
+        The mint front end fetches these bytes and PUTs them unchanged to the mint service.
+      parameters:
+        - name: If-None-Match
+          in: header
+          schema: { type: string }
+      responses:
+        '200':
+          description: Image bytes
+          headers:
+            ETag: { schema: { type: string }, description: '`"<sha256>"`' }
+            Cache-Control: { schema: { type: string }, description: 'public, max-age=31536000, immutable' }
+          content:
+            image/jpeg: { schema: { type: string, contentMediaType: image/jpeg } }
+            image/png: { schema: { type: string, contentMediaType: image/png } }
+            image/webp: { schema: { type: string, contentMediaType: image/webp } }
+            image/gif: { schema: { type: string, contentMediaType: image/gif } }
+            image/avif: { schema: { type: string, contentMediaType: image/avif } }
+        '304':
+          description: Not modified (ETag matched)
+        '404': { $ref: '#/components/responses/Error' }
+  /v1/artworks/{id}/review:
+    parameters:
+      - $ref: '#/components/parameters/ArtworkId'
+    post:
+      tags: [artworks]
+      operationId: houseReview
+      summary: House reviewer verdict (API key scope `studio:review`). Resolves `needsHuman`; can also take down or reinstate.
+      description: |
+        Allowed transitions: `reviewing` -> `approved` | `rejected`; `approved` -> `rejected`; `rejected` ->
+        `approved`. Anything else is 409 `illegal_transition`. `reasons` are shown to the artist on reject.
+      security:
+        - apiKey: [studio:review]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HouseReviewRequest' }
+      responses:
+        '200':
+          description: Artwork after the verdict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Artwork' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /v1/artworks/{id}/feature:
+    parameters:
+      - $ref: '#/components/parameters/ArtworkId'
+    post:
+      tags: [artworks]
+      operationId: featureArtwork
+      summary: Curate the gallery (API key scope `studio:review`) - featured artworks list first. Only `approved` artworks (409 otherwise).
+      security:
+        - apiKey: [studio:review]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FeatureRequest' }
+      responses:
+        '200':
+          description: Artwork with the new `featured` flag
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Artwork' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /v1/internal/royalties:
+    post:
+      tags: [internal]
+      operationId: recordRoyalty
+      summary: The mint service records a royalty payment (API key scope `studio:internal`). Idempotent on `orderId`.
+      description: |
+        Called after the minter's funding transaction is seen: output [1] of the funding PSBT paid `royaltySats`
+        to the artist's payout address (ADR-0007 §5). The same `orderId` posted again with identical facts is
+        200 (`created: false`); with different facts it is 409 `conflict`. Unknown `artworkId` is 404.
+      security:
+        - apiKey: [studio:internal]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoyaltyRecordRequest' }
+      responses:
+        '201':
+          description: Recorded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoyaltyRecordResponse' }
+        '200':
+          description: Already recorded with the same facts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoyaltyRecordResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+components:
+  securitySchemes:
+    session:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Artist session from `POST /v1/auth/verify`: compact JWS, EdDSA/Ed25519 (`@bsh/identity`), `aud` = `degent`,
+        scope `artist`, `sub` = the signed-in address. Missing/invalid/expired -> 401 `unauthorized`.
+    uploadToken:
+      type: http
+      scheme: bearer
+      description: |
+        The `uploadToken` returned once by `POST /v1/artworks`. Missing or malformed -> 401 `unauthorized`; wrong
+        token for the artwork -> 403 `forbidden`. Compared in constant time against a stored SHA-256.
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: |
+        `@bsh/edge` API key (`bsh_live_...` / `bsh_test_...`; also accepted as `Authorization: Bearer bsh_...`).
+        Scopes: `studio:review` (house review, feature), `studio:internal` (royalty records; also reads any
+        artwork). 401 `missing_api_key` / `invalid_api_key`, 403 `insufficient_scope`.
+  parameters:
+    ArtworkId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$', examples: [art_4f1c2a9b0e6d7c8a1b2c3d4e] }
+    ArtistAddress:
+      name: address
+      in: path
+      required: true
+      schema: { type: string, minLength: 14, maxLength: 90 }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 24 }
+  headers:
+    RetryAfter:
+      description: Seconds until the rate-limit bucket refills enough for one request.
+      schema: { type: integer }
+  responses:
+    Error:
+      description: Structured error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Too many mutating requests from this client IP (code `rate_limited`)
+      headers:
+        retry-after: { $ref: '#/components/headers/RetryAfter' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Network: { type: string, enum: [mainnet, testnet, signet, regtest] }
+    Timestamp: { type: string, format: date-time }
+    Hex32: { type: string, pattern: '^[0-9a-f]{64}$' }
+    Sats: { type: integer, minimum: 0, description: Integer satoshis }
+    ArtworkStatus:
+      type: string
+      enum: [submitted, reviewing, approved, rejected, delisted]
+      description: |
+        `submitted` (declared, no bytes yet) -> `reviewing` (bytes received; automated review ran; `needsHuman`
+        says whether the house must look) -> `approved` | `rejected`. `approved` -> `delisted` (artist) or
+        `rejected` (house); `rejected` -> `approved` (house). `delisted` is terminal.
+    DegentRule:
+      type: object
+      additionalProperties: false
+      required: [id, title, text, check]
+      properties:
+        id: { type: string, enum: [format, square, design, framing, quantity] }
+        title: { type: string }
+        text: { type: string }
+        check: { type: string, enum: [automated, vision, both] }
+    TierRule:
+      type: object
+      additionalProperties: false
+      required: [tier, label, minBytes, maxBytes]
+      properties:
+        tier: { type: string, enum: [standard, large, fullblock] }
+        label: { type: string }
+        minBytes: { type: integer }
+        maxBytes: { type: integer }
+    ConfigResponse:
+      type: object
+      additionalProperties: false
+      required: [network, rulesVersion, rules, recommendedContentType, allowedContentTypes, tiers, minDimensionPx, maxDimensionPx,
+                 maxUploadBytes, titleMaxChars, descriptionMaxChars, displayNameMaxChars, siwb, session, payoutMessageTemplate,
+                 payoutAddressKinds, visionReview]
+      properties:
+        network: { $ref: '#/components/schemas/Network' }
+        rulesVersion: { type: string, examples: ['1.0.0'] }
+        rules: { type: array, items: { $ref: '#/components/schemas/DegentRule' } }
+        recommendedContentType: { type: string, examples: [image/jpeg] }
+        allowedContentTypes: { type: array, items: { type: string } }
+        tiers: { type: array, items: { $ref: '#/components/schemas/TierRule' } }
+        minDimensionPx: { type: integer }
+        maxDimensionPx: { type: integer }
+        maxUploadBytes: { type: integer, examples: [4194304] }
+        titleMaxChars: { type: integer, examples: [80] }
+        descriptionMaxChars: { type: integer, examples: [500] }
+        displayNameMaxChars: { type: integer, examples: [40] }
+        siwb:
+          type: object
+          additionalProperties: false
+          required: [domain, uri, ttlSeconds]
+          properties:
+            domain: { type: string, examples: [studio.degent.club] }
+            uri: { type: string, examples: ['https://studio.degent.club'] }
+            ttlSeconds: { type: integer }
+        session:
+          type: object
+          additionalProperties: false
+          required: [ttlSeconds, audience, scopes]
+          properties:
+            ttlSeconds: { type: integer }
+            audience: { type: string, examples: [degent] }
+            scopes: { type: array, items: { type: string } }
+        payoutMessageTemplate:
+          type: string
+          description: Text the payout address signs (BIP-322 simple), with `<address>` and `<sessionSub>` substituted.
+          examples: ['degent.club payout address <address> for <sessionSub>']
+        payoutAddressKinds: { type: array, items: { type: string, enum: [p2wpkh, p2tr] } }
+        visionReview: { type: string, enum: [claude, none], description: '`none` means every submission needs a human for the design rules.' }
+    ChallengeRequest:
+      type: object
+      additionalProperties: false
+      required: [address, network]
+      properties:
+        address: { type: string, minLength: 14, maxLength: 90 }
+        network: { $ref: '#/components/schemas/Network' }
+    ChallengeResponse:
+      type: object
+      additionalProperties: false
+      required: [message, nonce, address, network, issuedAt, expiresAt]
+      properties:
+        message: { type: string, description: The exact SIWB text the wallet must sign. }
+        nonce: { type: string, pattern: '^[A-Za-z0-9]{16,64}$' }
+        address: { type: string }
+        network: { $ref: '#/components/schemas/Network' }
+        issuedAt: { $ref: '#/components/schemas/Timestamp' }
+        expiresAt: { $ref: '#/components/schemas/Timestamp' }
+    VerifyRequest:
+      type: object
+      additionalProperties: false
+      required: [message, signature, address]
+      properties:
+        message: { type: string, maxLength: 4096 }
+        signature: { type: string, maxLength: 4096, description: 'base64: BIP-322 simple witness, or a 65-byte legacy signmessage signature.' }
+        address: { type: string, minLength: 14, maxLength: 90 }
+    SessionResponse:
+      type: object
+      additionalProperties: false
+      required: [token, expiresAt, method, artist]
+      properties:
+        token: { type: string, description: Bearer session JWT (EdDSA). }
+        expiresAt: { $ref: '#/components/schemas/Timestamp' }
+        method: { type: string, enum: [bip322-simple, legacy] }
+        artist: { $ref: '#/components/schemas/Artist' }
+    ArtworkCounts:
+      type: object
+      additionalProperties: false
+      required: [total, approved]
+      properties:
+        total: { type: integer, minimum: 0 }
+        approved: { type: integer, minimum: 0 }
+    Artist:
+      type: object
+      additionalProperties: false
+      required: [address, network, displayName, payoutAddress, payoutVerifiedAt, artworks, joinedAt, updatedAt]
+      properties:
+        address: { type: string, description: The signed-in address (session `sub`); the artist's identity. }
+        network: { $ref: '#/components/schemas/Network' }
+        displayName: { type: [string, 'null'], maxLength: 40 }
+        payoutAddress: { type: [string, 'null'], description: Segwit or taproot address proven by BIP-322; receives the royalty output. }
+        payoutVerifiedAt: { oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }] }
+        artworks: { $ref: '#/components/schemas/ArtworkCounts' }
+        joinedAt: { $ref: '#/components/schemas/Timestamp' }
+        updatedAt: { $ref: '#/components/schemas/Timestamp' }
+    UpdateArtistRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        displayName: { type: [string, 'null'], maxLength: 40, description: Null clears it. }
+        payout:
+          type: object
+          additionalProperties: false
+          required: [address, signature]
+          properties:
+            address: { type: string, minLength: 14, maxLength: 90 }
+            signature: { type: string, maxLength: 4096, description: BIP-322 simple signature (base64) over the payout message. }
+    PublicArtist:
+      type: object
+      additionalProperties: false
+      required: [address, displayName, artworks, joinedAt]
+      properties:
+        address: { type: string }
+        displayName: { type: [string, 'null'] }
+        artworks: { type: integer, minimum: 0, description: Approved artworks. }
+        joinedAt: { $ref: '#/components/schemas/Timestamp' }
+    ReviewCheck:
+      type: object
+      additionalProperties: false
+      required: [id, passed, detail]
+      properties:
+        id: { type: string }
+        passed: { type: boolean }
+        detail: { type: string }
+    AutomatedReview:
+      type: object
+      additionalProperties: false
+      required: [approved, needsHuman, reasons, checks, reviewer]
+      properties:
+        approved: { type: boolean }
+        needsHuman: { type: boolean, description: True when a check was skipped; never auto-approved. }
+        reasons: { type: array, items: { type: string } }
+        checks: { type: array, items: { $ref: '#/components/schemas/ReviewCheck' } }
+        reviewer: { type: string, examples: [rules+vision] }
+    HouseReview:
+      type: object
+      additionalProperties: false
+      required: [decision, reasons, reviewerId, at]
+      properties:
+        decision: { type: string, enum: [approve, reject] }
+        reasons: { type: array, items: { type: string } }
+        reviewerId: { type: string, description: API key id (never the key). }
+        at: { $ref: '#/components/schemas/Timestamp' }
+    ArtworkReview:
+      type: object
+      additionalProperties: false
+      required: [automated, house, reviewedAt]
+      properties:
+        automated: { oneOf: [{ $ref: '#/components/schemas/AutomatedReview' }, { type: 'null' }] }
+        house: { oneOf: [{ $ref: '#/components/schemas/HouseReview' }, { type: 'null' }] }
+        reviewedAt: { $ref: '#/components/schemas/Timestamp' }
+    ArtworkEvent:
+      type: object
+      additionalProperties: false
+      required: [status, at]
+      properties:
+        status: { $ref: '#/components/schemas/ArtworkStatus' }
+        at: { $ref: '#/components/schemas/Timestamp' }
+        detail: { type: string }
+    Artwork:
+      type: object
+      additionalProperties: false
+      required: [id, artist, network, title, description, contentType, contentLength, contentSha256, status, needsHuman, review,
+                 featured, featuredAt, contentUrl, timeline, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        artist: { type: string, description: Artist address. }
+        network: { $ref: '#/components/schemas/Network' }
+        title: { type: string, maxLength: 80 }
+        description: { type: [string, 'null'], maxLength: 500 }
+        contentType: { type: string }
+        contentLength: { type: integer }
+        contentSha256: { oneOf: [{ $ref: '#/components/schemas/Hex32' }, { type: 'null' }], description: Null until the bytes are uploaded. }
+        status: { $ref: '#/components/schemas/ArtworkStatus' }
+        needsHuman: { type: boolean }
+        review: { oneOf: [{ $ref: '#/components/schemas/ArtworkReview' }, { type: 'null' }] }
+        featured: { type: boolean }
+        featuredAt: { oneOf: [{ $ref: '#/components/schemas/Timestamp' }, { type: 'null' }] }
+        contentUrl: { type: [string, 'null'], description: '`/v1/artworks/{id}/content` while approved, else null.' }
+        timeline: { type: array, items: { $ref: '#/components/schemas/ArtworkEvent' } }
+        createdAt: { $ref: '#/components/schemas/Timestamp' }
+        updatedAt: { $ref: '#/components/schemas/Timestamp' }
+    CreateArtworkRequest:
+      type: object
+      additionalProperties: false
+      required: [title, contentType, contentLength]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 80 }
+        description: { type: string, maxLength: 500 }
+        contentType: { type: string, maxLength: 100 }
+        contentLength: { type: integer, minimum: 1 }
+    CreateArtworkResponse:
+      type: object
+      additionalProperties: false
+      required: [artwork, uploadToken]
+      properties:
+        artwork: { $ref: '#/components/schemas/Artwork' }
+        uploadToken:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: 256-bit base64url bearer secret, returned once.
+    ArtworkList:
+      type: object
+      additionalProperties: false
+      required: [items, page, pageSize, total]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Artwork' } }
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1 }
+        total: { type: integer, minimum: 0 }
+    HouseReviewRequest:
+      type: object
+      additionalProperties: false
+      required: [decision]
+      properties:
+        decision: { type: string, enum: [approve, reject] }
+        reasons: { type: array, maxItems: 10, items: { type: string, maxLength: 200 } }
+    FeatureRequest:
+      type: object
+      additionalProperties: false
+      required: [featured]
+      properties:
+        featured: { type: boolean }
+    RoyaltyRecordRequest:
+      type: object
+      additionalProperties: false
+      required: [orderId, artworkId, royaltySats, fundingTxid, vout, at]
+      properties:
+        orderId: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$', description: The mint order id (idempotency key). }
+        artworkId: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' }
+        minterAddress: { type: [string, 'null'], maxLength: 90 }
+        royaltySats: { $ref: '#/components/schemas/Sats' }
+        fundingTxid: { $ref: '#/components/schemas/Hex32' }
+        vout: { type: integer, minimum: 0, description: Output index of the royalty in the funding tx (1 per ADR-0007). }
+        at: { $ref: '#/components/schemas/Timestamp' }
+    RoyaltyRecord:
+      type: object
+      additionalProperties: false
+      required: [orderId, artworkId, artist, minterAddress, royaltySats, fundingTxid, vout, at, recordedAt]
+      properties:
+        orderId: { type: string }
+        artworkId: { type: string }
+        artist: { type: string }
+        minterAddress: { type: [string, 'null'] }
+        royaltySats: { $ref: '#/components/schemas/Sats' }
+        fundingTxid: { $ref: '#/components/schemas/Hex32' }
+        vout: { type: integer, minimum: 0 }
+        at: { $ref: '#/components/schemas/Timestamp' }
+        recordedAt: { $ref: '#/components/schemas/Timestamp' }
+    RoyaltyRecordResponse:
+      type: object
+      additionalProperties: false
+      required: [record, created]
+      properties:
+        record: { $ref: '#/components/schemas/RoyaltyRecord' }
+        created: { type: boolean }
+    RoyaltiesResponse:
+      type: object
+      additionalProperties: false
+      required: [items, totals, page, pageSize, total]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/RoyaltyRecord' } }
+        totals:
+          type: object
+          additionalProperties: false
+          required: [records, royaltySats]
+          properties:
+            records: { type: integer, minimum: 0 }
+            royaltySats: { $ref: '#/components/schemas/Sats' }
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1 }
+        total: { type: integer, minimum: 0 }
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, network, version, time, checks]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        network: { $ref: '#/components/schemas/Network' }
+        version: { type: string }
+        time: { $ref: '#/components/schemas/Timestamp' }
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            required: [ok]
+            properties:
+              ok: { type: boolean }
+              detail: { type: string }
+    ErrorCode:
+      type: string
+      enum:
+        [bad_request, unauthorized, forbidden, not_found, method_not_allowed, not_acceptable, request_timeout, conflict, gone,
+         payload_too_large, unsupported_media_type, unprocessable_entity, rate_limited, internal_error, bad_gateway, unavailable,
+         gateway_timeout, error, cors_origin_denied, missing_api_key, invalid_api_key, insufficient_scope, quota_exceeded,
+         validation_failed, network_mismatch, sign_in_failed, payout_address_legacy, payout_proof_invalid, content_mismatch,
+         illegal_transition, review_unavailable]
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, requestId]
+          properties:
+            code: { $ref: '#/components/schemas/ErrorCode' }
+            message: { type: string }
+            requestId: { type: [string, 'null'] }
+            details: {}

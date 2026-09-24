@@ -1,0 +1,17 @@
+name: degent-studio
+package: "@bsh/degent-studio"
+kind: service
+product: degent
+owner: team-degent
+summary: Artist Studio for degent.club - Sign-in-with-Bitcoin artist identity, BIP-322-proven payout address, artwork submission reviewed once against the Degent rules, public gallery, royalty view.
+lifecycle: experimental
+depends_on: ["@bsh/degent-mint-sdk", "@bsh/identity", "@bsh/edge", "@bsh/events"]
+provides: [contracts/openapi/degent-studio.yaml, contracts/asyncapi/degent-studio.yaml]
+consumes: [contracts/schemas/degent-rules.json]
+stores: ["sqlite:degent_studio"]
+secrets: ["services/degent-studio/session-signing-key", "services/degent-studio/vision-review-api-key", "services/degent-studio/api-keys"]
+env_schema: ./env.schema.json
+slo: { availability: "99.5", p95_ms: 300 }
+runbook: ./RUNBOOK.md
+docs: ./README.md
+commands: { dev: dev, test: test, typecheck: typecheck }

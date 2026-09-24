@@ -13,5 +13,9 @@ export default defineConfig({
     setupFiles: ['./test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}', 'test/**/*.test.{ts,tsx}'],
     restoreMocks: true,
+    // The pay sequence and the demo e2e sign real reveals in jsdom; under the parallel
+    // workspace run (`pnpm -r test`) they exceed vitest's 5 s default. They pass in isolation.
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
   },
 });

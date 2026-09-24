@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://blockspace.holdings/contracts/schemas/degent-rules.json",
+  "title": "Degent submission rules",
+  "description": "Metadata of a submission that complies with the published degent.club Minting Rules (products/degent/docs/site-spec.md, 'Mint process'). Provided by @bsh/degent-mint-sdk (src/degent-rules.ts, DEGENT_RULES) and enforced by the studio at PUT /v1/artworks/{id}/content; the mint re-checks the same bytes. Rules a schema cannot express (the picture itself, width == height) are listed under x-vision and x-constraints and are checked by code, a vision model or a human.",
+  "x-rules-version": "1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contentType", "bytes", "width", "height"],
+  "properties": {
+    "contentType": {
+      "type": "string",
+      "enum": ["image/png", "image/jpeg", "image/webp", "image/avif", "image/gif"],
+      "x-recommended": "image/jpeg",
+      "description": "Real type from the magic bytes, never the declared one. JPEG is recommended; the others are accepted."
+    },
+    "bytes": {
+      "type": "integer",
+      "description": "Exact content length. The range picks the tier (ADR-0005 §3).",
+      "oneOf": [
+        { "minimum": 200000, "maximum": 400000, "x-tier": "standard", "x-label": "Standard Degent" },
+        { "minimum": 400001, "maximum": 3499999, "x-tier": "large", "x-label": "Large Degent" },
+        { "minimum": 3500000, "maximum": 3900000, "x-tier": "fullblock", "x-label": "Full Block Degent" }
+      ]
+    },
+    "width": { "type": "integer", "minimum": 256, "maximum": 4096, "description": "Pixels, read from the image header." },
+    "height": { "type": "integer", "minimum": 256, "maximum": 4096 }
+  },
+  "x-constraints": [
+    { "rule": "square", "check": "automated", "statement": "width == height" },
+    { "rule": "quantity", "check": "automated", "statement": "no per-wallet cap: any number of submissions per artist" }
+  ],
+  "x-vision": [
+    { "rule": "design", "statement": "Pepe character wearing a tuxedo with a mandatory bowtie." },
+    { "rule": "framing", "statement": "Must be framed and include a placard that says \"DEGEN\", \"DEGENT\", or \"REGEN\".", "placards": ["DEGEN", "DEGENT", "REGEN"] }
+  ]
+}

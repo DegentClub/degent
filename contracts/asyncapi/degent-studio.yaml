@@ -1,0 +1,123 @@
+asyncapi: 3.0.0
+info:
+  title: degent.club Artist Studio events
+  version: 0.1.0
+  description: |
+    Artwork lifecycle events published by `@bsh/degent-studio` (products/degent/services/studio) on every
+    artwork state transition (ADR-0007). Exactly one event per transition, emitted after the transition is
+    persisted, in timeline order per artwork. Delivery is at-least-once: consumers deduplicate on `eventId`
+    (`<artworkId>:<timeline index>`, stable across redeliveries).
+
+    Event type == routing key == `degent.artwork.{status}`. Payloads never contain upload tokens, session
+    tokens, API keys or image bytes; `contentSha256` identifies the bytes (`GET /v1/artworks/{id}/content`
+    once approved).
+
+    Transport: in-process bus in dev/tests; on the platform bus (`@bsh/events`) every message is a CloudEvents
+    1.0 envelope with `source = urn:bsh:degent-studio`, `subject = artworkId`, `id = eventId`. Production binds
+    the RabbitMQ topic exchange `degent.studio` (persistent messages, `message_id` = eventId).
+  license: { name: Proprietary, identifier: LicenseRef-Proprietary }
+defaultContentType: application/json
+
+servers:
+  production:
+    host: rabbitmq.internal:5672
+    protocol: amqp
+    protocolVersion: 0.9.1
+    description: Fleet RabbitMQ (exchange `degent.studio`, type topic, durable).
+
+channels:
+  artworkStatus:
+    address: 'degent.artwork.{status}'
+    description: One routing key per artwork status.
+    parameters:
+      status:
+        description: The status the artwork just entered.
+        enum:
+          - submitted
+          - reviewing
+          - approved
+          - rejected
+          - delisted
+    messages:
+      artworkStatusChanged:
+        $ref: '#/components/messages/ArtworkStatusChanged'
+    bindings:
+      amqp:
+        is: routingKey
+        exchange:
+          name: degent.studio
+          type: topic
+          durable: true
+          autoDelete: false
+          vhost: /
+        bindingVersion: 0.3.0
+
+operations:
+  publishArtworkStatus:
+    action: send
+    channel:
+      $ref: '#/channels/artworkStatus'
+    summary: Emitted by the studio on every persisted artwork transition.
+    messages:
+      - $ref: '#/channels/artworkStatus/messages/artworkStatusChanged'
+    bindings:
+      amqp:
+        deliveryMode: 2
+        mandatory: false
+        bindingVersion: 0.3.0
+
+components:
+  messages:
+    ArtworkStatusChanged:
+      name: ArtworkStatusChanged
+      title: Artwork status changed
+      contentType: application/json
+      correlationId:
+        location: '$message.payload#/artworkId'
+      payload:
+        $ref: '#/components/schemas/ArtworkStatusEvent'
+      examples:
+        - name: approved
+          payload:
+            type: degent.artwork.approved
+            eventId: 'art_4f1c2a9b0e6d7c8a1b2c3d4e:3'
+            artworkId: art_4f1c2a9b0e6d7c8a1b2c3d4e
+            artist: bc1p5d7rjq7g6rdk2yhzks9smlaqtedr4dekq08ge8ztwac72sfr9rusxg3297
+            network: mainnet
+            status: approved
+            previousStatus: reviewing
+            at: '2026-09-24T12:00:00.000Z'
+            contentSha256: 9f2c0e3d5b6a79880c1d2e3f405162738495a6b7c8d9e0f1a2b3c4d5e6f70819
+            detail: approved by rules+vision
+
+  schemas:
+    ArtworkStatus:
+      type: string
+      enum: [submitted, reviewing, approved, rejected, delisted]
+    ArtworkStatusEvent:
+      type: object
+      additionalProperties: false
+      required: [type, eventId, artworkId, artist, status, previousStatus, at]
+      properties:
+        type:
+          type: string
+          pattern: '^degent\.artwork\.[a-z_]+$'
+          description: '`degent.artwork.<status>`; equals the routing key.'
+        eventId:
+          type: string
+          description: '`<artworkId>:<1-based timeline index>`. Idempotency key.'
+        artworkId: { type: string }
+        artist: { type: string, description: The artist's address (session subject). }
+        network: { type: string, enum: [mainnet, testnet, signet, regtest] }
+        status: { $ref: '#/components/schemas/ArtworkStatus' }
+        previousStatus:
+          oneOf:
+            - $ref: '#/components/schemas/ArtworkStatus'
+            - type: 'null'
+          description: Null only for the creation event (`submitted`).
+        at: { type: string, format: date-time }
+        contentSha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Present once the bytes have been uploaded.
+        detail: { type: string, description: Human-readable context (never secrets). }

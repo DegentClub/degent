@@ -171,8 +171,50 @@ export function validateContentMeta(meta: ContentMeta, config: CollectionConfig 
     });
   }
 
+  if (config.requireSquare && meta.width !== undefined && meta.height !== undefined) {
+    const square = Number.isInteger(meta.width) && meta.width === meta.height;
+    checks.push({
+      id: 'square',
+      passed: square,
+      detail: square ? `square (${meta.width}x${meta.height}px)` : `not square (${meta.width}x${meta.height}px); width must equal height`,
+    });
+  }
+
   const reasons = checks.filter((c) => !c.passed).map((c) => c.detail);
   return { ok: reasons.length === 0, tier, checks, reasons };
+}
+
+/**
+ * The format the collection recommends (site rule 1: "Square JPEG format with a minimum size of
+ * 200KB"). The other `allowedContentTypes` are accepted; `formatAdvice` phrases the difference.
+ */
+export const recommendedContentType = 'image/jpeg';
+
+export interface FormatAdvice {
+  contentType: string;
+  /** `recommended` (JPEG), `accepted` (another allowed type) or `refused`. */
+  level: 'recommended' | 'accepted' | 'refused';
+  /** One line for the UI. */
+  advice: string;
+}
+
+/** Advice for a declared content type: JPEG is recommended; PNG/WebP/AVIF/GIF are accepted; anything else refused. */
+export function formatAdvice(contentType: string, config: CollectionConfig = DEFAULT_CONFIG): FormatAdvice {
+  const type = (contentType ?? '').toLowerCase().trim();
+  const others = config.allowedContentTypes.filter((t) => t !== recommendedContentType);
+  if (type === recommendedContentType)
+    return { contentType: type, level: 'recommended', advice: 'JPEG is the recommended format for a Degent.' };
+  if (config.allowedContentTypes.includes(type))
+    return {
+      contentType: type,
+      level: 'accepted',
+      advice: `${type} is accepted; JPEG (${recommendedContentType}) is the recommended format.`,
+    };
+  return {
+    contentType: type,
+    level: 'refused',
+    advice: `${contentType || '(none)'} is not accepted; use ${recommendedContentType} (recommended) or ${others.join(', ')}.`,
+  };
 }
 
 /** Lowercase hex SHA-256, identical in browser and Node. */

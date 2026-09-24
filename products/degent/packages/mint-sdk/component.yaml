@@ -6,6 +6,6 @@ owner: team-degent
 summary: Shared degent.club mint rules (tiers, content validation), domain types and typed API client.
 lifecycle: beta
 depends_on: []
-provides: [contracts/openapi/degent-mint.yaml]
+provides: [contracts/openapi/degent-mint.yaml, contracts/schemas/degent-rules.json]
 docs: ./README.md
 commands: { test: test, typecheck: typecheck }

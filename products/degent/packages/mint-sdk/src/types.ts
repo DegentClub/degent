@@ -65,6 +65,12 @@ export interface CollectionConfig {
   tiers: TierRule[];
   maxDimensionPx: number;
   minDimensionPx: number;
+  /**
+   * Require width === height when dimensions are known (Degent rule 1, "Square JPEG"). Optional and
+   * off in DEFAULT_CONFIG so existing callers keep their behaviour; the studio turns it on
+   * (`DEGENT_RULES_CONFIG`). When on, `validateContentMeta` adds a `square` check.
+   */
+  requireSquare?: boolean;
   postageSats: number;
   serviceFeeSats: Record<Tier, number>;
   minFeeRate: number; // sat/vB

@@ -22,11 +22,17 @@ signs or broadcasts.
  │  connect wallet, validate,   │─────────────▶│  order state machine, art review,     │
  │  preview, quote, half-sign   │ contracts/   │  policy signer (parent), lanes,       │
  │  reveal, pay, track, rescue  │ openapi/     │  verification; emits degent.mint.*    │
- └──────┬──────────┬────────────┘ degent-mint  └──────┬───────────────┬────────────────┘
-        │          │                                   │               │ contracts/asyncapi/degent-mint.yaml
-        ▼          ▼                                   ▼               ▼
- @bsh/wallet-kit  @bsh/degent-mint-sdk (packages/mint-sdk) ◀── shared rules, types, API client
+ │                              │ degent-mint  └──────┬───────────────┬──────┬─────────┘
+ │  studio: sign in with        │                     │               │      │ POST /v1/internal/royalties
+ │  Bitcoin, prove payout,      │  HTTP API    ┌──────┴───────────────┴──────▼─────────┐
+ │  submit, gallery, royalties  │─────────────▶│ @bsh/degent-studio (services/studio)  │
+ └──────┬──────────┬────────────┘ contracts/   │  SIWB artists, BIP-322 payout proof,  │
+        │          │              openapi/      │  artwork reviewed once, gallery,      │
+        │          │              degent-studio │  royalty view; emits degent.artwork.* │
+        ▼          ▼                            └───────────────────────────────────────┘
+ @bsh/wallet-kit  @bsh/degent-mint-sdk (packages/mint-sdk) ◀── shared rules (DEGENT_RULES), types, API client
  (platform)       @bsh/inscription (platform) ◀── envelope, commit/reveal, exact weight + fee maths
+                  @bsh/identity, @bsh/edge, @bsh/events (platform) ◀── SIWB / BIP-322 / sessions, edge middleware, event bus
 ```
 
 ## Components
@@ -37,9 +43,11 @@ signs or broadcasts.
 | `degent-mint` | `@bsh/degent-mint` | service | [`services/mint`](services/mint) | Order state machine, automated art review, parent co-signing, lane broadcaster |
 | `degent-mint-sdk` | `@bsh/degent-mint-sdk` | library | [`packages/mint-sdk`](packages/mint-sdk) | Mint rules (three tiers, lane-by-weight, block-lane packing, content validation), domain types, typed API client |
 | `degent-market` | `@bsh/degent-market` | library | [`packages/market`](packages/market) | Non-custodial marketplace txs: seller 0x83 listings, buyer purchases with padding inputs so the inscription lands with the buyer (ordinal FIFO proved in tests) |
+| `degent-studio` | `@bsh/degent-studio` | service | [`services/studio`](services/studio) | Artist Studio (ADR-0007): Sign-in-with-Bitcoin artists, BIP-322-proven payout address, artworks reviewed once against the Degent rules (rules + vision, a skipped check never approves), public gallery, royalty view fed by the mint |
 
 Platform dependencies: [`@bsh/inscription`](../../deps/scribbit/platform/inscription),
-[`@bsh/wallet-kit`](../../deps/scribbit/platform/wallet-kit) and [`@bsh/events`](../../deps/scribbit/platform/events),
+[`@bsh/wallet-kit`](../../deps/scribbit/platform/wallet-kit), [`@bsh/events`](../../deps/scribbit/platform/events),
+[`@bsh/identity`](../../deps/scribbit/platform/identity) and [`@bsh/edge`](../../deps/scribbit/platform/edge),
 from the `deps/scribbit` submodule (DegentClub/scribbit, pinned commit). Live, generated view:
 `jq '.products.degent' catalog/catalog.json`.
 
@@ -50,17 +58,27 @@ from the `deps/scribbit` submodule (DegentClub/scribbit, pinned commit). Live, g
   compatible with the platform-owned topic in `deps/scribbit/contracts/asyncapi/platform-events.yaml`
   (asserted in `services/mint/test/contract.test.ts`).
 - Consumes `events:block.indexed.{network}` from the chain indexers.
+- `contracts/openapi/degent-studio.yaml`: the Artist Studio HTTP API (provided by `degent-studio`; the web app and,
+  for royalty records, the mint service consume it).
+- `contracts/asyncapi/degent-studio.yaml`: `degent.artwork.{status}` events (provided by `degent-studio`).
+- `contracts/schemas/degent-rules.json`: the published Degent rules as a JSON Schema (provided by `degent-mint-sdk`,
+  mirrored by `DEGENT_RULES` in code).
 
 ## Where to start
 
 ```bash
 pnpm --filter @bsh/degent-web dev     # front end
 pnpm --filter @bsh/degent-mint dev    # service, in-memory adapters, regtest-safe
+pnpm --filter @bsh/degent-studio dev  # artist studio, in-memory adapters, dev API keys printed once
 pnpm --filter "./products/degent/**" test
 pnpm --filter @bsh/degent-web e2e     # real headless Chromium, screenshots in apps/web/docs/screenshots
 ```
 
 - Changing **rules** (sizes, MIME types, tiers): `packages/mint-sdk/src/rules.ts`; front end and service both use it.
+  The published rule list (text + who checks it) is `packages/mint-sdk/src/degent-rules.ts` and
+  `contracts/schemas/degent-rules.json` (kept equal by a test).
+- Changing the **studio** (artist identity, payout proof, artwork review, gallery, royalties): `services/studio`
+  (ADR-0007); its lifecycle is `services/studio/src/domain/artwork.ts`, then the AsyncAPI contract.
 - Changing **block-lane scheduling**: `packages/mint-sdk/src/queue.ts` (packing maths) + `services/mint/src/worker.ts` (dispatch).
 - Changing **marketplace transactions**: `packages/market` (prove placement with `simulateOrdinalTransfer`).
 - Changing **fees / weight / tx construction**: `deps/scribbit/platform/inscription` — a platform change in

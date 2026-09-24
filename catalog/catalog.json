@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-24T00:33:12.036Z",
+  "generatedAt": "2026-09-24T01:28:16.426Z",
   "schema": "schemas/component.schema.json",
   "components": [
     {
@@ -36,6 +36,58 @@
         "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
         "root": "deps/scribbit"
       }
+    },
+    {
+      "name": "degent-atelier",
+      "package": "@bsh/degent-atelier",
+      "kind": "service",
+      "product": "degent",
+      "owner": "team-degent",
+      "summary": "The Atelier - generates Degents that meet the minting rules by construction (prompt scaffold, gold frame + placard, tier-sized JPEG) and hands the exact bytes to the mint.",
+      "lifecycle": "experimental",
+      "depends_on": [
+        "@bsh/edge"
+      ],
+      "provides": [
+        "contracts/openapi/degent-atelier.yaml"
+      ],
+      "consumes": [
+        "contracts/openapi/degent-mint.yaml"
+      ],
+      "stores": [
+        "sqlite:degent_atelier"
+      ],
+      "secrets": [
+        "services/degent-atelier/openai-api-key",
+        "services/degent-atelier/http-provider-api-key",
+        "services/degent-atelier/vision-review-api-key"
+      ],
+      "env_schema": "./env.schema.json",
+      "slo": {
+        "availability": "99.5",
+        "p95_ms": 500
+      },
+      "runbook": "./RUNBOOK.md",
+      "docs": "./README.md",
+      "commands": {
+        "dev": "dev",
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "products/degent/services/atelier",
+      "version": "0.1.0",
+      "scripts": {
+        "dev": "ATELIER_MODE=${ATELIER_MODE:-fake} tsx watch src/main.ts",
+        "start": "tsx src/main.ts",
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "env_schema": "products/degent/services/atelier/env.schema.json",
+        "runbook": "products/degent/services/atelier/RUNBOOK.md",
+        "docs": "products/degent/services/atelier/README.md"
+      },
+      "dependents": []
     },
     {
       "name": "degent-market",
@@ -130,7 +182,8 @@
       "lifecycle": "beta",
       "depends_on": [],
       "provides": [
-        "contracts/openapi/degent-mint.yaml"
+        "contracts/openapi/degent-mint.yaml",
+        "contracts/schemas/degent-rules.json"
       ],
       "docs": "./README.md",
       "commands": {
@@ -148,8 +201,65 @@
       },
       "dependents": [
         "degent-mint",
+        "degent-studio",
         "degent-web"
       ]
+    },
+    {
+      "name": "degent-studio",
+      "package": "@bsh/degent-studio",
+      "kind": "service",
+      "product": "degent",
+      "owner": "team-degent",
+      "summary": "Artist Studio for degent.club - Sign-in-with-Bitcoin artist identity, BIP-322-proven payout address, artwork submission reviewed once against the Degent rules, public gallery, royalty view.",
+      "lifecycle": "experimental",
+      "depends_on": [
+        "@bsh/degent-mint-sdk",
+        "@bsh/identity",
+        "@bsh/edge",
+        "@bsh/events"
+      ],
+      "provides": [
+        "contracts/openapi/degent-studio.yaml",
+        "contracts/asyncapi/degent-studio.yaml"
+      ],
+      "consumes": [
+        "contracts/schemas/degent-rules.json"
+      ],
+      "stores": [
+        "sqlite:degent_studio"
+      ],
+      "secrets": [
+        "services/degent-studio/session-signing-key",
+        "services/degent-studio/vision-review-api-key",
+        "services/degent-studio/api-keys"
+      ],
+      "env_schema": "./env.schema.json",
+      "slo": {
+        "availability": "99.5",
+        "p95_ms": 300
+      },
+      "runbook": "./RUNBOOK.md",
+      "docs": "./README.md",
+      "commands": {
+        "dev": "dev",
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "products/degent/services/studio",
+      "version": "0.1.0",
+      "scripts": {
+        "dev": "NETWORK=${NETWORK:-regtest} tsx watch src/main.ts",
+        "start": "tsx src/main.ts",
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "env_schema": "products/degent/services/studio/env.schema.json",
+        "runbook": "products/degent/services/studio/RUNBOOK.md",
+        "docs": "products/degent/services/studio/README.md"
+      },
+      "dependents": []
     },
     {
       "name": "degent-web",
@@ -216,7 +326,10 @@
       "files": {
         "docs": "deps/scribbit/platform/edge/README.md"
       },
-      "dependents": [],
+      "dependents": [
+        "degent-atelier",
+        "degent-studio"
+      ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
         "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
@@ -251,6 +364,7 @@
       },
       "dependents": [
         "degent-mint",
+        "degent-studio",
         "notify"
       ],
       "external": {
@@ -285,7 +399,9 @@
       "files": {
         "docs": "deps/scribbit/platform/identity/README.md"
       },
-      "dependents": [],
+      "dependents": [
+        "degent-studio"
+      ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
         "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
@@ -400,9 +516,11 @@
     "degent": {
       "path": "products/degent",
       "components": [
+        "degent-atelier",
         "degent-market",
         "degent-mint",
         "degent-mint-sdk",
+        "degent-studio",
         "degent-web"
       ],
       "owners": [
@@ -411,7 +529,7 @@
       "kinds": {
         "app": 1,
         "library": 2,
-        "service": 1
+        "service": 3
       }
     },
     "platform": {
@@ -461,10 +579,21 @@
       "consumers": []
     },
     {
+      "path": "contracts/asyncapi/degent-studio.yaml",
+      "kind": "asyncapi",
+      "exists": true,
+      "providers": [
+        "degent-studio"
+      ],
+      "consumers": []
+    },
+    {
       "path": "contracts/openapi/degent-atelier.yaml",
       "kind": "openapi",
       "exists": true,
-      "providers": [],
+      "providers": [
+        "degent-atelier"
+      ],
       "consumers": []
     },
     {
@@ -476,7 +605,28 @@
         "degent-mint-sdk"
       ],
       "consumers": [
+        "degent-atelier",
         "degent-web"
+      ]
+    },
+    {
+      "path": "contracts/openapi/degent-studio.yaml",
+      "kind": "openapi",
+      "exists": true,
+      "providers": [
+        "degent-studio"
+      ],
+      "consumers": []
+    },
+    {
+      "path": "contracts/schemas/degent-rules.json",
+      "kind": "json-schema",
+      "exists": true,
+      "providers": [
+        "degent-mint-sdk"
+      ],
+      "consumers": [
+        "degent-studio"
       ]
     },
     {
@@ -502,6 +652,11 @@
   ],
   "edges": [
     {
+      "from": "degent-atelier",
+      "to": "contracts/openapi/degent-mint.yaml",
+      "type": "consumes"
+    },
+    {
       "from": "degent-mint",
       "to": "deps/scribbit/contracts/asyncapi/platform-events.yaml",
       "type": "consumes"
@@ -512,9 +667,19 @@
       "type": "consumes"
     },
     {
+      "from": "degent-studio",
+      "to": "contracts/schemas/degent-rules.json",
+      "type": "consumes"
+    },
+    {
       "from": "degent-web",
       "to": "contracts/openapi/degent-mint.yaml",
       "type": "consumes"
+    },
+    {
+      "from": "degent-atelier",
+      "to": "edge",
+      "type": "depends_on"
     },
     {
       "from": "degent-mint",
@@ -529,6 +694,26 @@
     {
       "from": "degent-mint",
       "to": "inscription",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-studio",
+      "to": "degent-mint-sdk",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-studio",
+      "to": "edge",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-studio",
+      "to": "events",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-studio",
+      "to": "identity",
       "type": "depends_on"
     },
     {
@@ -552,6 +737,11 @@
       "type": "depends_on"
     },
     {
+      "from": "degent-atelier",
+      "to": "contracts/openapi/degent-atelier.yaml",
+      "type": "provides"
+    },
+    {
       "from": "degent-mint",
       "to": "contracts/asyncapi/degent-mint.yaml",
       "type": "provides"
@@ -564,6 +754,21 @@
     {
       "from": "degent-mint-sdk",
       "to": "contracts/openapi/degent-mint.yaml",
+      "type": "provides"
+    },
+    {
+      "from": "degent-mint-sdk",
+      "to": "contracts/schemas/degent-rules.json",
+      "type": "provides"
+    },
+    {
+      "from": "degent-studio",
+      "to": "contracts/asyncapi/degent-studio.yaml",
+      "type": "provides"
+    },
+    {
+      "from": "degent-studio",
+      "to": "contracts/openapi/degent-studio.yaml",
       "type": "provides"
     },
     {
