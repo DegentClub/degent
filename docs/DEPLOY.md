@@ -20,6 +20,7 @@ Signet rehearsal: [`REHEARSAL.md`](./REHEARSAL.md). Architecture: [ADR-0002](./a
 | `products/degent/deploy/backup.sh` | sqlite online backup + content blobs, `--loop`, `--check`, `--restore` |
 | `flake.nix`, `products/degent/deploy/nix/` | `packages.<system>.degent-mint`, `packages.<system>.degent-web`, `nixosModules.degent-mint`, `nixosModules.degent-web` |
 | `scripts/rehearsal/` | Rehearsal checklist runner + scenarios ([`REHEARSAL.md`](./REHEARSAL.md)) |
+| `products/degent/deploy/compose.server.yaml`, `server/` | **Release 1 on one server** (mint.degent.club mainnet read-only, degent.club 301, signet.degent.club): compose, Caddy edge, `bootstrap.sh`, `deploy.sh`, deployed by `.github/workflows/deploy.yml`. Guide: [`SERVER.md`](./SERVER.md) |
 | `test/deploy.test.ts` | Static checks of all of the above (part of `pnpm test:root`, so of `pnpm check`) |
 
 ## Architecture
@@ -131,6 +132,10 @@ and commit. The workspace includes the `deps/scribbit` submodule: the flake sets
 `test/deploy.test.ts` checks the modules statically (option ↔ schema mapping, hardening, placeholders).
 
 ## Environments
+
+> **Release 1 (single server, [`SERVER.md`](./SERVER.md))**: `compose.server.yaml` runs mainnet and public signet with
+> `MINT_MODE=readonly` on public APIs (mempool.space, ordinals.com); no parent key, signer or node. The table below is the
+> fleet/rehearsal plan.
 
 | | Regtest dev | Signet rehearsal | Mainnet soft launch | Mainnet public |
 |---|---|---|---|---|

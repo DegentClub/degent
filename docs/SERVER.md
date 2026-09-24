@@ -104,5 +104,5 @@ The mint calls esplora `GET /blocks/tip/height`, `/fee-estimates`, `/tx/:txid`, 
 signet.ordinals.com on current ord versions. The browser calls the same hosts (CSP `connect-src`/`img-src` list them).
 Limits: public rate limits and outages degrade `/v1/health` (still 200, `status: degraded`), holder lookups and
 fees; no SLA. Move to own nodes (a pruned bitcoind + esplora + ord; the disk has room for signet) before minting opens
-on mainnet at volume. Deferred (roadmap p4.20–p4.23): backups of the SQLite volumes, the host-key pin as default,
+on mainnet at volume. Deferred (roadmap p1.40–p1.42): backups of the SQLite volumes, the host-key pin as default,
 the launch limits (`MAX_PAID_ORDERS_PER_DAY=25`, the "Beta: real bitcoin, unaudited" acknowledgement), own nodes.
