@@ -83,7 +83,27 @@ node scripts/blockspace-query.mjs --collection collection.json --compare compare
 
 `scripts/blockspace-query.mjs` sums `content_length` over every id from ord's recursive endpoint, caches results, and prints a markdown table. Publish the table and the `compare.json` ids monthly so the comparison is reproducible.
 
-### 2.1 What counts as "blockspace"
+### 2.1 One certified count
+
+The site has shown three conflicting figures (site-spec "Known defects"): 4,027 minted / 1,470 MB on the site, 4,112 in
+`collection.json`, 4,113 / 1,508 MB in an internal analysis. `products/degent/services/mint/scripts/reconcile-count.mjs`
+settles them:
+
+```sh
+node products/degent/services/mint/scripts/reconcile-count.mjs --ord https://<your-ord> --export magic-eden-ids.json --out count-report
+```
+
+It counts unique, well-formed ids in the roster (numbers 1..N contiguous), sums ord `content_length` when a URL is given
+(cached; otherwise it labels the roster's `sizeKb`×1024 as an estimate), diffs an exported id list, and writes
+`count-report.json` + `.md` with one explanation per discrepancy class: `stale-count` / `over-count`, `unit-mismatch`
+(MiB or KiB labelled MB), `duplicate-in-roster`, `roster-numbering`, `missing-from-export`, `extra-in-export`,
+`export-hygiene`, `size-mismatch-vs-ord`, `ord-unavailable`. From the committed roster alone: **4,112 Degents,
+1,544,701,318 bytes = 1,544.7 MB = 1,473.1 MiB** (estimate until re-run against ord). The site's 4,027 is a stale
+snapshot (85 members, #4028–#4112, are missing) and its "1,470 MB" is the MiB total of all 4,112; the internal
+1,508 "MB" is the KiB sum divided by 1000, and its 4,113 counts one row that is not a Degent. Always publish bytes
+with the unit (MB = 10^6) and the source.
+
+### 2.2 What counts as "blockspace"
 Content bytes of the reveal transaction's inscription envelope. This undercounts total weight (envelope overhead, commit tx) by a few percent but is the same measure for every collection, which is what makes the comparison fair. State it that way in public.
 
 ## 3. Custody
