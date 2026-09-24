@@ -138,23 +138,34 @@ export function createMintClient(opts: MintClientOptions): MintClient {
     return parsed as T;
   }
 
-  const id = (orderId: string) => encodeURIComponent(orderId);
+  /**
+   * One encoded path segment. encodeURIComponent leaves `.` alone, so an id of `.` or `..` (e.g. taken from a
+   * page URL) would be a dot-segment that URL resolution collapses, sending the order's bearer token to
+   * another endpoint; those and the empty id are refused before any request is made.
+   */
+  const id = (orderId: string) => {
+    if (typeof orderId !== 'string' || orderId === '' || orderId === '.' || orderId === '..') throw new ApiError(0, 'invalid_request', 'not an order id');
+    return encodeURIComponent(orderId);
+  };
+  /** Build the path inside the promise chain, so a refused id rejects instead of throwing synchronously. */
+  const orderCall = <T>(method: string, orderId: string, suffix: string, body?: { json: unknown } | { bytes: Uint8Array }, token?: string): Promise<T> =>
+    Promise.resolve().then(() => call<T>(method, `/v1/orders/${id(orderId)}${suffix}`, body, token));
   return {
     health: () => call('GET', '/v1/health'),
     config: () => call('GET', '/v1/config'),
     fees: () => call('GET', '/v1/fees'),
     queue: () => call('GET', '/v1/queue'),
     createOrder: (req) => call('POST', '/v1/orders', { json: req }),
-    uploadContent: (orderId, token, bytes) => call('PUT', `/v1/orders/${id(orderId)}/content`, { bytes }, token),
-    submitReveal: (orderId, token, req) => call('POST', `/v1/orders/${id(orderId)}/reveal`, { json: req }, token),
-    getOrder: (orderId) => call('GET', `/v1/orders/${id(orderId)}`),
-    getRescue: (orderId, token) => call('GET', `/v1/orders/${id(orderId)}/rescue`, undefined, token),
-    subscribeOrder: (orderId, token, req) => call('POST', `/v1/orders/${id(orderId)}/subscriptions`, { json: req }, token),
+    uploadContent: (orderId, token, bytes) => orderCall('PUT', orderId, '/content', { bytes }, token),
+    submitReveal: (orderId, token, req) => orderCall('POST', orderId, '/reveal', { json: req }, token),
+    getOrder: (orderId) => orderCall('GET', orderId, ''),
+    getRescue: (orderId, token) => orderCall('GET', orderId, '/rescue', undefined, token),
+    subscribeOrder: (orderId, token, req) => orderCall('POST', orderId, '/subscriptions', { json: req }, token),
     authChallenge: (req) => call('POST', '/v1/auth/challenge', { json: req }),
     authVerify: (req) => call('POST', '/v1/auth/verify', { json: req }),
     reviewQueue: (token) => call('GET', '/v1/review', undefined, token),
-    castVote: (orderId, token, req) => call('POST', `/v1/orders/${id(orderId)}/votes`, { json: req }, token),
-    getVotes: (orderId) => call('GET', `/v1/orders/${id(orderId)}/votes`),
+    castVote: (orderId, token, req) => orderCall('POST', orderId, '/votes', { json: req }, token),
+    getVotes: (orderId) => orderCall('GET', orderId, '/votes'),
     register: () => call('GET', '/v1/register'),
     registerMember: (n) => call('GET', `/v1/register/${encodeURIComponent(String(n))}`),
     registerHolder: (address) => call('GET', `/v1/register/holder/${encodeURIComponent(address)}`),

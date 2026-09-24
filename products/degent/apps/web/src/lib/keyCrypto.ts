@@ -11,6 +11,8 @@
 import { hex } from '@scure/base';
 
 export const KDF_ITERATIONS = 600_000;
+/** A bundle (possibly re-selected from a file) asking for more than this is refused rather than freezing the tab. */
+export const MAX_KDF_ITERATIONS = 10_000_000;
 export const MIN_PASSPHRASE_LENGTH = 8;
 
 export interface EncryptedRevealKey {
@@ -102,6 +104,8 @@ export async function decryptRevealKey(
 ): Promise<Uint8Array> {
   if (enc_.alg !== 'AES-256-GCM' || enc_.kdf !== 'PBKDF2-SHA256') throw new Error(`unsupported key encryption ${enc_.alg}/${enc_.kdf}`);
   if (enc_.aad !== aadFor(bind.orderId, bind.revealPubkey)) throw new PassphraseError('This encrypted key belongs to another order.');
+  if (!Number.isSafeInteger(enc_.iterations) || enc_.iterations < 1 || enc_.iterations > MAX_KDF_ITERATIONS)
+    throw new Error(`unsupported PBKDF2 iteration count in the recovery bundle (${enc_.iterations})`);
   const key = await deriveKey(passphrase, hex.decode(enc_.salt), enc_.iterations);
   try {
     const pt = await subtle().decrypt(

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { hex } from '@scure/base';
-import { checkPassphrase, decryptRevealKey, encryptRevealKey, KDF_ITERATIONS, PassphraseError } from './keyCrypto';
+import { checkPassphrase, decryptRevealKey, encryptRevealKey, KDF_ITERATIONS, MAX_KDF_ITERATIONS, PassphraseError } from './keyCrypto';
 
 // Low iteration count for speed; the format records it, so decryption uses whatever was stored.
 const IT = 1_000;
@@ -30,6 +30,12 @@ describe('reveal key encryption (ADR-0005)', () => {
     await expect(decryptRevealKey({ ...e, aad: `degent.club/recovery|dgt_2|${revealPubkey}` }, 'correct horse battery', { ...bind, orderId: 'dgt_2' })).rejects.toThrow(/Wrong/);
     const flipped = (e.ciphertext[0] === '0' ? '1' : '0') + e.ciphertext.slice(1);
     await expect(decryptRevealKey({ ...e, ciphertext: flipped }, 'correct horse battery', bind)).rejects.toThrow(/Wrong/);
+  });
+
+  it('refuses a bundle whose KDF parameters would freeze the tab or are not a count (DGT-SEC-010)', async () => {
+    const e = await encryptRevealKey(privkey, 'correct horse battery', bind, IT);
+    for (const iterations of [0, -1, 1.5, Number.NaN, MAX_KDF_ITERATIONS + 1, 2 ** 31])
+      await expect(decryptRevealKey({ ...e, iterations }, 'correct horse battery', bind)).rejects.toThrow(/iteration count/);
   });
 
   it('requires a passphrase of at least 8 characters', async () => {

@@ -94,6 +94,21 @@ describe('createMintClient', () => {
     expect(err).toMatchObject({ status: 409, code: 'rescue_unavailable', message: 'not yet', details: { status: 'queued' } });
   });
 
+  it('never sends a bearer token to a path an order id could escape into (DGT-SEC-009)', async () => {
+    const { f, calls } = fakeFetch(() => json(200, { ok: true }));
+    const c = createMintClient({ baseUrl: 'https://degent.example/api', fetch: f });
+    for (const bad of ['..', '.', '']) {
+      await expect(c.getRescue(bad, 'tok')).rejects.toMatchObject({ status: 0, code: 'invalid_request' });
+      await expect(c.uploadContent(bad, 'tok', new Uint8Array(1))).rejects.toMatchObject({ code: 'invalid_request' });
+      await expect(c.getOrder(bad)).rejects.toMatchObject({ code: 'invalid_request' });
+    }
+    expect(calls).toHaveLength(0);
+    await c.getRescue('dgt_0a1B-2', 'tok');
+    await c.getRescue('../../evil', 'tok');
+    // A fetch resolves dot-segments; an encoded one stays a single segment under /v1/orders/.
+    expect(calls.map((x) => new URL(x.url).pathname)).toEqual(['/api/v1/orders/dgt_0a1B-2/rescue', '/api/v1/orders/..%2F..%2Fevil/rescue']);
+  });
+
   it('raises ApiError for non-JSON errors and network failures', async () => {
     const c1 = createMintClient({ baseUrl: 'http://x', fetch: async () => new Response('boom', { status: 502 }) });
     await expect(c1.health()).rejects.toMatchObject({ status: 502, code: 'http_error' });
