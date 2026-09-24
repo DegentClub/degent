@@ -45,7 +45,7 @@ import type { ArtReview } from '../ports/art-review.js';
 import type { ChainPort, ChainTx } from '../ports/chain.js';
 import type { Clock } from '../ports/clock.js';
 import type { ContentStore } from '../ports/content-store.js';
-import type { EditionStore } from '../ports/edition-store.js';
+import { EditionsSoldOutError, type EditionStore } from '../ports/edition-store.js';
 import type { CollectionMintedEvent, EventBus } from '../ports/event-bus.js';
 import type { FeePort } from '../ports/fees.js';
 import { LedgerClientError, type LedgerClient } from '../ports/ledger-client.js';
@@ -85,6 +85,16 @@ const ARTWORK_ID = /^[A-Za-z0-9_-]{1,64}$/;
 /** The payout script types the studio accepts (ADR-0007 §3) and the dust table knows. */
 function payoutScriptTypeOf(kind: ReturnType<typeof addressKind>): PayoutScriptType | null {
   return kind === 'tr' ? 'p2tr' : kind === 'wpkh' ? 'p2wpkh' : null;
+}
+
+/** 409 `artwork_not_mintable` for an artwork whose edition cap is reached (ADR-0012). */
+function soldOut(artworkId: string, maxEditions: number, held: number): DomainError {
+  return new DomainError('artwork_not_mintable', 409, `artwork ${artworkId} is sold out (${maxEditions} editions)`, {
+    status: 'approved',
+    soldOut: true,
+    maxEditions,
+    held,
+  });
 }
 
 const INITIAL_ROYALTY_REPORT: RoyaltyReportState = { emittedAt: null, reportedAt: null, attempts: 0, nextAttemptAt: null, lastError: null, gaveUp: false };
@@ -415,6 +425,9 @@ export class OrderService {
     if (!art) throw new DomainError('artwork_not_found', 404, `artwork ${artworkId} not found in the studio`);
     if (art.status !== 'approved' || !art.contentSha256)
       throw new DomainError('artwork_not_mintable', 409, `artwork ${artworkId} is ${art.status}, not approved`, { status: art.status });
+    // Edition cap (ADR-0012), cheap early refusal from the studio's count; the binding check is the
+    // reservation below, which also counts this service's live quotes.
+    if (art.maxEditions != null && (art.mintedEditions ?? 0) >= art.maxEditions) throw soldOut(artworkId, art.maxEditions, art.mintedEditions ?? 0);
     if (!art.payoutAddress) throw new DomainError('artist_payout_missing', 409, 'the artist has not proven a payout address yet; the royalty cannot be paid');
     const scriptType = payoutScriptTypeOf(addressKind(art.payoutAddress, this.d.settings.network));
     if (!scriptType)
@@ -451,8 +464,16 @@ export class OrderService {
     const now = this.now();
     const expiresAt = new Date(now.getTime() + s.collection.quoteTtlSeconds * 1000);
     const id = this.newId();
-    // Reserve the edition first: it is signed into the envelope, so the quote depends on it (§3.4).
-    const edition = await this.d.editions.reserve(artworkId, id, expiresAt, now);
+    // Reserve the edition first: it is signed into the envelope, so the quote depends on it (§3.4). The cap
+    // is enforced inside the reservation (ADR-0012), so two concurrent quotes for the last edition cannot
+    // both succeed.
+    let edition: number;
+    try {
+      edition = await this.d.editions.reserve(artworkId, id, expiresAt, now, { maxEditions: art.maxEditions ?? null });
+    } catch (e) {
+      if (e instanceof EditionsSoldOutError) throw soldOut(artworkId, e.maxEditions, e.held);
+      throw e;
+    }
     let quote: NonNullable<OrderRecord['quote']>;
     try {
       quote = await this.quoteForNew({
@@ -475,7 +496,9 @@ export class OrderService {
       reasons: [],
       checks: [{ id: 'artwork', passed: true, detail: `artwork ${artworkId} reviewed at submission by the studio` }],
     };
+    // The record takes the id the edition was reserved under, so the reservation never changes hands.
     const created = await this.createRecord({ ...req, contentType: art.contentType }, quote, now, {
+      id,
       artworkId,
       artistAddress: art.payoutAddress,
       artistRoyaltySats: quote.artistRoyaltySats ?? 0,
@@ -484,13 +507,8 @@ export class OrderService {
       royaltyReport: null,
       ledger: null,
     });
-    // The override of newId above: createRecord minted its own id, so re-key the reservation to the record.
     const { token, ...record0 } = created;
     let r: OrderRecord = record0;
-    if (r.id !== id) {
-      await this.d.editions.release(artworkId, id);
-      await this.d.editions.reserve(artworkId, r.id, expiresAt, now);
-    }
     r = await this.transition(r, 'reviewing', { detail: `artwork ${artworkId} reviewed at submission`, patch: { review } });
     r = await this.transition(r, 'approved', { detail: 'binding quote issued' });
     r = await this.recordLedger(r);
@@ -638,6 +656,7 @@ export class OrderService {
         fundingTxid: royaltyPaid.txid,
         vout: royaltyPaid.vout,
         at: r.paidAt ?? at,
+        ...(r.edition !== undefined ? { edition: r.edition } : {}),
       });
       this.log.info('royalty recorded in the studio', { orderId: r.id, artworkId: r.artworkId, created: res.created });
       return await this.patch(r, { royaltyReport: { ...st, reportedAt: at, attempts: st.attempts + 1, nextAttemptAt: null, lastError: null } });

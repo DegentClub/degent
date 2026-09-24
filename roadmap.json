@@ -337,7 +337,9 @@
           "id": "p5.1",
           "repo": "degent",
           "title": "Policy signer behind @bsh/signer (remote, HSM port); mainnet refusal lifted for the remote signer only",
-          "status": "todo",
+          "status": "done",
+          "verify": "pnpm --filter @bsh/degent-mint test -- remote-policy-signer production-config",
+          "doc": "products/degent/services/mint/RUNBOOK.md",
           "depends_on": [
             "p3.4"
           ]
@@ -346,13 +348,16 @@
           "id": "p5.2",
           "repo": "degent",
           "title": "Parent UTXO procedure in the RUNBOOK; alert on lease changes",
-          "status": "todo"
+          "status": "done",
+          "verify": "pnpm --filter @bsh/degent-mint test -- parent-lease-alert",
+          "doc": "products/degent/services/mint/RUNBOOK.md"
         },
         {
           "id": "p5.3",
           "repo": "degent",
-          "title": "Durable stores by default; RabbitMQ via connectAmqpBus; artist notifications on royalty.paid",
-          "status": "todo",
+          "title": "Durable stores by default; RabbitMQ via connectAmqpBus (artist notifications landed with p5.4 via @bsh/notify)",
+          "status": "done",
+          "verify": "pnpm --filter @bsh/degent-mint test -- production-config",
           "depends_on": [
             "p3.4"
           ]
@@ -360,11 +365,13 @@
         {
           "id": "p5.4",
           "repo": "degent",
-          "title": "Edition caps (maxEditions), curation, appeal workflow (ADR-0010)",
-          "status": "todo",
+          "title": "Edition caps (maxEditions), curation (featuredRank), appeal workflow, artist notifications via @bsh/notify (ADR-0012)",
+          "status": "done",
           "depends_on": [
             "p3.6"
-          ]
+          ],
+          "doc": "docs/adr/0012-edition-caps-curation-appeals.md",
+          "verify": "pnpm --filter @bsh/degent-studio test && pnpm --filter @bsh/degent-mint test -- artwork-orders"
         },
         {
           "id": "p5.5",

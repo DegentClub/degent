@@ -1,12 +1,15 @@
 /**
  * Environment -> typed config. Mirrors env.schema.json. Fails fast with every problem listed,
- * and refuses unsafe combinations (mainnet with the in-memory dev signer, dev defaults off regtest).
+ * and refuses unsafe combinations (mainnet with the in-memory dev signer, dev defaults off regtest,
+ * in-memory stores off regtest, mainnet without the event bus).
  */
+import { API_KEY_RE, type ApiKeyEnv, type ApiKeyRecord } from '@bsh/edge';
 import type { CollectionConfig, Network } from '@bsh/degent-mint-sdk';
 import { DEFAULT_CLUB_FEE_BPS, DEFAULT_CONFIG, DEFAULT_ROYALTY_BPS, MAX_UPLOAD_BYTES } from '@bsh/degent-mint-sdk';
 import { DEFAULT_POLICY } from './domain/policy.js';
 import { addressKind } from './domain/address.js';
 import type { MintSettings } from './application/settings.js';
+import { SCOPE_MINT_ADMIN } from './admin.js';
 
 export interface MintConfig {
   settings: MintSettings;
@@ -19,7 +22,9 @@ export interface MintConfig {
   libre: { url: string; user: string; password: string } | null;
   slipstream: { url: string; apiKey: string | null } | null;
   parentOutpoint: { txid: string; vout: number } | null;
-  signer: 'memory' | 'kms';
+  signer: 'memory' | 'remote';
+  /** `SIGNER=remote`: the platform signer service (@bsh/signer). */
+  remoteSigner: { url: string; apiKey: string; keyId: string; timeoutMs: number; retries: number } | null;
   parentKeyFile: string | null;
   revealEncryptionKey: string | null; // null => regtest dev key
   corsOrigins: string[];
@@ -32,7 +37,16 @@ export interface MintConfig {
   studio: { url: string; apiKey: string | null } | null;
   /** Open Studio: the platform ledger (plan §3.5). null => not recorded (regtest wires an in-memory fake). */
   ledger: { url: string; apiKey: string | null } | null;
+  /** `POST /v1/admin/*` keys (hash-only @bsh/edge records, scope `mint:admin`). Empty = admin endpoints refuse everyone. */
+  adminApiKeys: ApiKeyRecord[];
+  adminApiKeyEnvironment: ApiKeyEnv;
+  /** RabbitMQ through @bsh/events `connectAmqpBus`. null => events stay in-process (regtest; warned on signet/testnet; refused on mainnet). */
+  bus: { url: string; exchange: string; connectTimeoutMs: number } | null;
+  /** Non-fatal findings main.ts logs at startup. */
+  warnings: string[];
 }
+
+const KEY_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 export class ConfigError extends Error {
   constructor(readonly problems: string[]) {
@@ -93,8 +107,12 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
     return v;
   };
 
-  const databasePath = need('DATABASE_PATH');
-  const contentDir = need('CONTENT_DIR');
+  // Durable by default (p5.3): off regtest the stores are node:sqlite (orders, encrypted reveals, editions,
+  // parent state) and the content store is the filesystem. There is no in-memory fallback to fall into.
+  const databasePath = str('DATABASE_PATH');
+  if (!databasePath && !dev) problems.push(`DATABASE_PATH is required on ${net}: production networks never run in-memory stores`);
+  const contentDir = str('CONTENT_DIR');
+  if (!contentDir && !dev) problems.push(`CONTENT_DIR is required on ${net}: production networks never run an in-memory content store`);
   const esploraUrl = url('ESPLORA_URL', dev ? 'http://127.0.0.1:3002' : null);
   if (!esploraUrl && !dev) problems.push('ESPLORA_URL is required');
   const ordUrl = url('ORD_URL', dev ? 'http://127.0.0.1:8080' : null);
@@ -121,19 +139,41 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
   }
 
   const signerRaw = str('SIGNER') ?? 'memory';
-  if (signerRaw !== 'memory' && signerRaw !== 'kms') problems.push('SIGNER must be "memory" or "kms"');
-  const signer = signerRaw === 'kms' ? 'kms' : 'memory';
-  if (signer === 'kms') problems.push('SIGNER=kms is not implemented yet (see adapters/kms-policy-signer.ts)');
+  if (signerRaw === 'kms')
+    problems.push('SIGNER=kms is retired: use SIGNER=remote (the platform signer service @bsh/signer fronts the KMS/HSM; RUNBOOK section 7)');
+  else if (signerRaw !== 'memory' && signerRaw !== 'remote') problems.push('SIGNER must be "memory" (dev) or "remote"');
+  const signer: MintConfig['signer'] = signerRaw === 'remote' ? 'remote' : 'memory';
   if (net === 'mainnet' && signer === 'memory')
     problems.push('refusing to start on mainnet with the in-memory dev policy signer (SIGNER=memory)');
   const parentKeyFile = str('PARENT_KEY_FILE');
   if (parentKeyFile && net === 'mainnet') problems.push('PARENT_KEY_FILE is dev-only and not accepted on mainnet');
+  if (parentKeyFile && signer === 'remote') problems.push('PARENT_KEY_FILE is only read with SIGNER=memory; with SIGNER=remote the key stays in the signer service');
   if (!parentKeyFile && signer === 'memory' && !dev && net !== 'mainnet') problems.push(`PARENT_KEY_FILE is required on ${net} with SIGNER=memory`);
+  let remoteSigner: MintConfig['remoteSigner'] = null;
+  const signerUrl = url('SIGNER_URL', null);
+  const signerApiKey = str('SIGNER_API_KEY');
+  const signerKeyId = str('SIGNER_KEY_ID');
+  const signerTimeoutMs = int('SIGNER_TIMEOUT_MS', 10_000, 500, 120_000);
+  const signerRetries = int('SIGNER_RETRIES', 2, 0, 10);
+  if (signer === 'remote') {
+    if (!signerUrl) problems.push('SIGNER_URL is required with SIGNER=remote (base URL of the platform signer service)');
+    if (!signerApiKey) problems.push('SIGNER_API_KEY is required with SIGNER=remote (API key with scope sign:<SIGNER_KEY_ID>)');
+    else {
+      const m = API_KEY_RE.exec(signerApiKey);
+      if (!m) problems.push('SIGNER_API_KEY must be a @bsh/edge API key (bsh_live_... or bsh_test_...)');
+      else if (net === 'mainnet' && m[1] !== 'live') problems.push('SIGNER_API_KEY must be a live key (bsh_live_...) on mainnet');
+    }
+    if (!signerKeyId) problems.push('SIGNER_KEY_ID is required with SIGNER=remote (the signer key id holding the collection key)');
+    else if (!KEY_ID_RE.test(signerKeyId)) problems.push('SIGNER_KEY_ID must be alphanumerics, ".", "_" or "-" (max 64)');
+    if (signerUrl && signerApiKey && signerKeyId)
+      remoteSigner = { url: signerUrl, apiKey: signerApiKey, keyId: signerKeyId, timeoutMs: signerTimeoutMs, retries: signerRetries };
+  }
 
   const collectionAddress = str('COLLECTION_ADDRESS');
   if (collectionAddress && addressKind(collectionAddress, net) !== 'tr')
     problems.push(`COLLECTION_ADDRESS must be a taproot address on ${net}`);
   if (!collectionAddress && !dev) problems.push(`COLLECTION_ADDRESS is required on ${net}`);
+  else if (!collectionAddress && signer === 'remote') problems.push('COLLECTION_ADDRESS is required with SIGNER=remote (checked against the signer key at startup)');
 
   const revealEncryptionKey = str('REVEAL_ENCRYPTION_KEY');
   if (revealEncryptionKey && !/^[0-9a-fA-F]{64}$/.test(revealEncryptionKey))
@@ -164,6 +204,58 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
   };
   if (studioUrl && (clubFeeBps.standard > 0 || clubFeeBps.large > 0 || clubFeeBps.fullblock > 0) && !serviceFeeAddress)
     problems.push('SERVICE_FEE_ADDRESS is required for artwork orders when a club fee is set (CLUB_FEE_BPS_*)');
+
+  // Admin API keys (p5.2): hash-only @bsh/edge records, like the other services' API_KEYS.
+  const adminApiKeyEnvironment: ApiKeyEnv = net === 'mainnet' ? 'live' : 'test';
+  const adminApiKeys: ApiKeyRecord[] = [];
+  const adminRaw = str('MINT_ADMIN_API_KEYS_JSON');
+  if (adminRaw) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(adminRaw);
+    } catch {
+      problems.push('MINT_ADMIN_API_KEYS_JSON must be a JSON array');
+    }
+    if (parsed !== undefined && !Array.isArray(parsed)) problems.push('MINT_ADMIN_API_KEYS_JSON must be a JSON array');
+    else if (Array.isArray(parsed))
+      parsed.forEach((k: unknown, i: number) => {
+        const r = k as Record<string, unknown>;
+        if (typeof r !== 'object' || r === null) return problems.push(`MINT_ADMIN_API_KEYS_JSON[${i}] must be an object`);
+        if ('key' in r) return problems.push(`MINT_ADMIN_API_KEYS_JSON[${i}] contains a plaintext key; configure the SHA-256 hash only`);
+        if (typeof r.id !== 'string' || typeof r.hash !== 'string' || !/^[0-9a-f]{64}$/.test(r.hash))
+          return problems.push(`MINT_ADMIN_API_KEYS_JSON[${i}] needs id and hash (lower-case sha256 hex of the key)`);
+        const scopes = Array.isArray(r.scopes) ? r.scopes.filter((x): x is string => typeof x === 'string') : [];
+        if (scopes.length === 0 || scopes.some((x) => x !== SCOPE_MINT_ADMIN)) return problems.push(`MINT_ADMIN_API_KEYS_JSON[${i}].scopes must be ["${SCOPE_MINT_ADMIN}"]`);
+        const envv = r.env ?? adminApiKeyEnvironment;
+        if (envv !== adminApiKeyEnvironment) return problems.push(`MINT_ADMIN_API_KEYS_JSON[${i}].env must be ${adminApiKeyEnvironment} on ${net}`);
+        adminApiKeys.push({ id: r.id, hash: r.hash, env: adminApiKeyEnvironment, scopes, ...(typeof r.name === 'string' ? { name: r.name } : {}) });
+      });
+  }
+  const warnings: string[] = [];
+  if (!dev && adminApiKeys.length === 0) warnings.push('no MINT_ADMIN_API_KEYS_JSON: a parent value change cannot be acknowledged without a redeploy');
+
+  // Event bus (p5.3): RabbitMQ via @bsh/events connectAmqpBus. Events are how block.space and the studio
+  // learn about mints, so mainnet refuses to run without it.
+  let bus: MintConfig['bus'] = null;
+  const amqpUrl = str('AMQP_URL');
+  const amqpExchange = str('AMQP_EXCHANGE') ?? 'bsh.events';
+  const amqpConnectTimeoutMs = int('AMQP_CONNECT_TIMEOUT_MS', 10_000, 500, 120_000);
+  if (!/^[A-Za-z0-9._-]{1,127}$/.test(amqpExchange)) problems.push('AMQP_EXCHANGE must be an exchange name (letters, digits, ".", "_", "-")');
+  if (amqpUrl) {
+    let ok = false;
+    try {
+      const u = new URL(amqpUrl);
+      ok = (u.protocol === 'amqp:' || u.protocol === 'amqps:') && !!u.hostname;
+    } catch {
+      ok = false;
+    }
+    if (!ok) problems.push('AMQP_URL must be an amqp:// or amqps:// URL');
+    else bus = { url: amqpUrl, exchange: amqpExchange, connectTimeoutMs: amqpConnectTimeoutMs };
+  } else if (net === 'mainnet') {
+    problems.push('AMQP_URL is required on mainnet: events (degent.mint.order.*, collection.minted, royalty.paid) are how block.space and the studio learn about mints');
+  } else if (!dev) {
+    warnings.push(`AMQP_URL unset on ${net}: events stay in this process; block.space and the studio will not hear about mints`);
+  }
 
   const corsOrigins = (str('CORS_ORIGINS') ?? '')
     .split(',')
@@ -224,6 +316,7 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
     slipstream,
     parentOutpoint,
     signer,
+    remoteSigner,
     parentKeyFile,
     revealEncryptionKey,
     corsOrigins,
@@ -234,6 +327,10 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
     trustProxy: str('TRUST_PROXY') === 'true',
     studio: studioUrl ? { url: studioUrl, apiKey: studioApiKey } : null,
     ledger: ledgerUrl ? { url: ledgerUrl, apiKey: ledgerApiKey } : null,
+    adminApiKeys,
+    adminApiKeyEnvironment,
+    bus,
+    warnings,
   };
   if (problems.length) throw new ConfigError(problems);
   return out;

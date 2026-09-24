@@ -31,6 +31,13 @@ describe('loadConfig', () => {
     expect(c.settings.maxUploadBytes).toBe(4 * 1024 * 1024);
   });
 
+  it('TELEGRAM_BOT_TOKEN is optional and shape-checked (ADR-0012)', () => {
+    expect(loadConfig({ NETWORK: 'regtest' }).telegramBotToken).toBeNull();
+    const token = `123456789:${'A'.repeat(35)}`;
+    expect(loadConfig({ NETWORK: 'regtest', TELEGRAM_BOT_TOKEN: token }).telegramBotToken).toBe(token);
+    expect(problems({ NETWORK: 'regtest', TELEGRAM_BOT_TOKEN: 'not-a-token' })).toEqual(['TELEGRAM_BOT_TOKEN must look like <bot id>:<secret> (from @BotFather)']);
+  });
+
   it('NETWORK is required and validated', () => {
     expect(problems({})).toContain('NETWORK is required: one of mainnet, testnet, signet, regtest');
     expect(problems({ NETWORK: 'liquid' })[0]).toContain('NETWORK');

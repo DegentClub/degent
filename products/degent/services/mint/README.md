@@ -53,10 +53,10 @@ flowchart LR
   FE -.-> ESPF["esplora /fee-estimates / static"]
   BR -.-> STD["standard: esplora POST /tx"]
   BR -.-> BLK["block: Libre Relay sendrawtransaction<br/>+ MARA Slipstream (fan-out)"]
-  PS -.-> MEM["in-memory key (dev/test only)<br/>KMS/HSM (TODO)"]
+  PS -.-> MEM["in-memory key (dev/test only)<br/>remote: @bsh/signer service (HSM port)"]
   AR -.-> RULES["rules: magic bytes + header dims"]
   AR -.-> VIS["vision: Claude (optional)"]
-  EB -.-> BUS["in-memory / RabbitMQ (TODO)"]
+  EB -.-> BUS["in-memory + RabbitMQ<br/>(@bsh/events connectAmqpBus)"]
 ```
 
 Layout:
@@ -67,10 +67,11 @@ Layout:
 | `src/ports/` | Interfaces only |
 | `src/adapters/` | Implementations: stores, vault, esplora chain/fees, broadcasters, signers, reviewers, bus |
 | `src/application/` | `OrderService` (API use cases, every transition), settings, logger |
-| `src/app.ts` | HTTP API |
+| `src/app.ts`, `src/admin.ts` | HTTP API; operator endpoints (`/v1/admin/*`, scope `mint:admin`) |
 | `src/worker.ts` | Order progression |
 | `src/config.ts`, `env.schema.json` | Env -> typed config, fail-fast |
-| `src/wiring.ts`, `src/main.ts` | Composition root and entry point |
+| `src/wiring.ts`, `src/main.ts` | Composition root (`startRuntime`: bus connect + signer preflight) and entry point |
+| `src/reinit-parent.ts` | Operator one-off: re-lease the parent to a checked outpoint (RUNBOOK section 8) |
 | `test/fakes/` | Fake chain + ord, clock, broadcasters, reviewer, test harness and "browser" |
 
 ## Order lifecycle
@@ -194,7 +195,7 @@ Known gaps: the studio does not expose the artist's payout address on `GET /v1/a
 
 | Method | Path | Auth | Result |
 |---|---|---|---|
-| GET | `/v1/health` | - | status + checks (store, chain, parent) |
+| GET | `/v1/health` | - | status + checks (store, chain, parent, bus, signer; `parentValue` while the value breaker is open) |
 | GET | `/v1/config` | - | collection rules, three tiers, collection address, `parentValueSats`, upload limit |
 | GET | `/v1/fees` | - | sat/vB per lane |
 | GET | `/v1/queue` | - | lane waiting / in-flight / capacity / ETA; block lane `weightBudget` + `inFlightWeight` |
@@ -203,6 +204,7 @@ Known gaps: the studio does not expose the artist's payout address on `GET /v1/a
 | POST | `/v1/orders/{id}/reveal` | Bearer | `SubmitRevealRequest` -> `awaiting_payment` |
 | GET | `/v1/orders/{id}` | - | public order (no PSBT, no token) |
 | GET | `/v1/orders/{id}/rescue` | Bearer | `RescueInputs` when `rescue_available` (never a tx), else 409 |
+| POST | `/v1/admin/parent/ack` | admin API key (`mint:admin`) | close the parent value circuit breaker for the named parent (RUNBOOK section 8); 409 on a stale parent |
 
 Errors are always `{ "error": { "code", "message", "details"? } }`. 401 = no/malformed token, 403 = wrong
 token or disallowed origin, 413 body too large, 415 wrong content type, 422 validation, 429 rate limited.
@@ -219,7 +221,7 @@ See [`env.schema.json`](./env.schema.json) for every variable. Essentials:
 | `LIBRE_RPC_URL/USER/PASS`, `SLIPSTREAM_URL/API_KEY` | block lane (mainnet needs at least one; both = fan-out) |
 | `PARENT_INSCRIPTION_ID`, `PARENT_OUTPOINT`, `COLLECTION_ADDRESS` | parent identity, initial location, key address |
 | `PARENT_VALUE_SATS` | constant parent UTXO value (default 10,000); browsers sign output 0 with it; startup refuses a `PARENT_OUTPOINT` of another value |
-| `SIGNER`, `PARENT_KEY_FILE` | `memory` + key file is dev-only; **mainnet refuses to start** with it (KMS adapter TODO) |
+| `SIGNER`, `PARENT_KEY_FILE` | `memory` + key file is dev-only; **mainnet refuses to start** with it. `remote` = platform signer (below) |
 | `REVEAL_ENCRYPTION_KEY` | 32-byte hex AES key for stored reveals (required off regtest) |
 | `CORS_ORIGINS` | exact origins, comma-separated; empty = deny all |
 | `ART_REVIEW_API_KEY` | enables the Claude vision review (`claude-opus-5`); unset = rules only |
@@ -229,6 +231,24 @@ See [`env.schema.json`](./env.schema.json) for every variable. Essentials:
 | `ROYALTY_BPS`, `CLUB_FEE_BPS_{STANDARD,LARGE,FULLBLOCK}` | artist royalty (of the mint price) and club fee (of the network cost) in basis points; defaults 1000 |
 
 Config errors are listed all at once and the process exits non-zero.
+
+### Production configuration
+
+Off regtest the service is durable by default and there is no in-memory fallback; mainnet adds the remote
+signer and the event bus. Startup (`startRuntime`) refuses to serve until the bus answers and the signer is
+verified.
+
+| Concern | Variables | signet / testnet | mainnet |
+|---|---|---|---|
+| Orders, encrypted reveals, editions, parent state + value alert | `DATABASE_PATH` (node:sqlite) | required | required |
+| Artwork/content blobs | `CONTENT_DIR` (filesystem, sha256-addressed) | required | required |
+| Parent co-signer | `SIGNER=remote`, `SIGNER_URL`, `SIGNER_API_KEY` (secret `services/degent-mint/signer-api-key`, scope `sign:<keyId>`), `SIGNER_KEY_ID`, `SIGNER_TIMEOUT_MS`, `SIGNER_RETRIES` | `remote` recommended (`memory` + `PARENT_KEY_FILE` allowed) | **`remote` only**; live API key; preflight checks network + `COLLECTION_ADDRESS`. Signer-side policy: RUNBOOK section 7 |
+| Event bus | `AMQP_URL` (secret `services/degent-mint/amqp-url`), `AMQP_EXCHANGE` (`bsh.events`), `AMQP_CONNECT_TIMEOUT_MS` | optional (warning when unset: events stay in-process) | **required**; startup health check; exit on connection loss (supervisor restarts) |
+| Operator endpoints | `MINT_ADMIN_API_KEYS_JSON` (secret `services/degent-mint/admin-api-key-hashes`, hash-only, scope `mint:admin`) | `test` keys | `live` keys; warning when unset (a parent value change then needs a redeploy to clear) |
+| Parent | `PARENT_INSCRIPTION_ID`, `PARENT_OUTPOINT`, `PARENT_VALUE_SATS`, `COLLECTION_ADDRESS` | required | required; `parent.lease.changed` / `parent.value.changed` alerting (RUNBOOK section 8) |
+
+`amqplib` is the platform's optional peer of `@bsh/events`; it is installed next to `@bsh/events` in this
+workspace and `connectAmqpBus` loads it from there, so the mint declares no npm dependency of its own.
 
 ## Run locally
 
@@ -249,7 +269,13 @@ Operations: [RUNBOOK.md](./RUNBOOK.md).
 
 ## Known gaps
 
-- KMS/HSM `PolicySigner` is an interface only (`src/adapters/kms-policy-signer.ts`); mainnet cannot start until it exists.
-- RabbitMQ `EventBus` adapter is an interface only; events currently go to the in-process bus.
+- The remote signer's env policies cannot pin output 0 (collection address, same value); the mint's own policy and
+  the browser's 0x81 signature do. Follow-up: a `parentReturn` taproot policy in the platform signer.
+- `RemotePolicySigner` uses the global `fetch`; mTLS to the signer needs an injected client-certificate `fetch`
+  (`RuntimeDeps.signerFetch`) or a private network / sidecar that terminates it.
+- The event backlog is in memory: events unpublished at shutdown are logged (`event.publish.lost`) for replay from
+  the order timeline, not persisted. A durable outbox (`@bsh/events` `OutboxPublisher` over SQLite) is future work.
+- Artist notifications on `royalty.paid` and persisted notify subscriptions (the rest of plan p5.3) are not in this
+  service.
 - The rate limiter is per process; run one API replica or put a shared limiter in front.
 - The service trusts one esplora; a second backend for cross-checking payment detection is future work.

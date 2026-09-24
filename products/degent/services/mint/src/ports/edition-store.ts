@@ -1,8 +1,12 @@
 /**
- * Edition reservations per artwork (plan §3.4, §3.7; ADR-0010 to come). An artwork order reserves the next
+ * Edition reservations per artwork (plan §3.4, §3.7; ADR-0012). An artwork order reserves the next
  * edition number at quote time for the quote's TTL; the reservation is consumed when the order reaches
  * `paid` (it becomes `Order.edition`), released when the quote expires, and an expired number may be handed
  * to a later order. Numbers are 1-based and never shared between two consumed reservations.
+ *
+ * Edition caps (ADR-0012): `reserve` takes the artwork's `maxEditions` and refuses, inside the same
+ * per-artwork critical section that picks the number, once active + consumed reservations reach it. That is
+ * what keeps two concurrent quotes for the last edition from both succeeding.
  */
 export interface EditionReservation {
   orderId: string;
@@ -11,12 +15,31 @@ export interface EditionReservation {
   consumed: boolean;
 }
 
+/** Thrown by `reserve` when the artwork's cap is reached (active + consumed reservations >= maxEditions). */
+export class EditionsSoldOutError extends Error {
+  constructor(
+    readonly artworkId: string,
+    readonly maxEditions: number,
+    /** Active (unexpired) plus consumed reservations when the reservation was refused. */
+    readonly held: number,
+  ) {
+    super(`artwork ${artworkId} is sold out (${held} of ${maxEditions} editions minted or reserved)`);
+    this.name = 'EditionsSoldOutError';
+  }
+}
+
+export interface ReserveOptions {
+  /** The artwork's edition cap; null / absent = open edition. */
+  maxEditions?: number | null;
+}
+
 export interface EditionStore {
   /**
    * Reserve the lowest edition not held by an active (unexpired) or consumed reservation. Idempotent per
-   * order: a second call for the same order returns its existing number (refreshing the expiry).
+   * order: a second call for the same order returns its existing number (refreshing the expiry), even at the
+   * cap. A NEW reservation throws EditionsSoldOutError when active + consumed >= `opts.maxEditions`.
    */
-  reserve(artworkId: string, orderId: string, expiresAt: Date, now: Date): Promise<number>;
+  reserve(artworkId: string, orderId: string, expiresAt: Date, now: Date, opts?: ReserveOptions): Promise<number>;
   /**
    * Turn the order's reservation into its edition. Idempotent. `edition` is the number the order was quoted
    * (and signed into its reveal): when the reservation was released after expiry, the number is re-claimed
@@ -29,4 +52,6 @@ export interface EditionStore {
   reservation(artworkId: string, orderId: string): Promise<EditionReservation | null>;
   /** Editions consumed so far for the artwork (the studio's "editions minted"). */
   consumedCount(artworkId: string): Promise<number>;
+  /** Consumed plus unexpired reservations at `now`: what counts against `maxEditions`. */
+  countActive(artworkId: string, now: Date): Promise<number>;
 }

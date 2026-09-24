@@ -1,10 +1,10 @@
 /** In-memory stores (dev, tests). Records are deep-copied in and out. */
 import type { ArtistRecord, ArtworkCounts } from '../domain/artist.js';
-import type { ArtworkRecord } from '../domain/artwork.js';
+import { isSoldOut, type AppealRecord, type ArtworkRecord } from '../domain/artwork.js';
 import { StaleWriteError } from '../domain/errors.js';
 import type { RoyaltyRecord } from '../domain/royalty.js';
 import type { ArtistStore } from '../ports/artist-store.js';
-import type { ArtworkPage, ArtworkQuery, ArtworkStore } from '../ports/artwork-store.js';
+import type { AppealPage, AppealQuery, ArtworkPage, ArtworkQuery, ArtworkStore } from '../ports/artwork-store.js';
 import type { RoyaltyPage, RoyaltyStore } from '../ports/royalty-store.js';
 
 export { InMemoryNonceStore as MemoryNonceStore } from '@bsh/identity';
@@ -31,9 +31,28 @@ export class MemoryArtistStore implements ArtistStore {
   }
 }
 
-/** Gallery order: featured first, then newest (createdAt desc), id desc as the tiebreak. */
+/** The curation rank that counts: only a featured artwork's rank orders the gallery. */
+const rankOf = (r: ArtworkRecord): number | null => (r.featured ? (r.featuredRank ?? null) : null);
+
+/**
+ * Gallery order (ADR-0012): featuredRank ascending with unranked last, then featured first, then newest
+ * (createdAt desc), id desc as the tiebreak.
+ */
 export function galleryOrder(a: ArtworkRecord, b: ArtworkRecord): number {
-  return Number(b.featured) - Number(a.featured) || b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id);
+  const ra = rankOf(a);
+  const rb = rankOf(b);
+  return (
+    Number(ra === null) - Number(rb === null) ||
+    (ra ?? 0) - (rb ?? 0) ||
+    Number(b.featured) - Number(a.featured) ||
+    b.createdAt.localeCompare(a.createdAt) ||
+    b.id.localeCompare(a.id)
+  );
+}
+
+/** Appeal queue order: oldest first, id as the tiebreak. */
+export function appealOrder(a: AppealRecord, b: AppealRecord): number {
+  return a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
 }
 
 export class MemoryArtworkStore implements ArtworkStore {
@@ -59,7 +78,12 @@ export class MemoryArtworkStore implements ArtworkStore {
 
   async list(q: ArtworkQuery): Promise<ArtworkPage> {
     const all = [...this.rows.values()]
-      .filter((r) => (q.status === undefined || r.status === q.status) && (q.artist === undefined || r.artist === q.artist))
+      .filter(
+        (r) =>
+          (q.status === undefined || r.status === q.status) &&
+          (q.artist === undefined || r.artist === q.artist) &&
+          (q.available === undefined || q.available !== isSoldOut(r)),
+      )
       .sort(galleryOrder);
     const start = (q.page - 1) * q.pageSize;
     return { items: all.slice(start, start + q.pageSize).map((r) => structuredClone(r)), total: all.length };
@@ -74,6 +98,15 @@ export class MemoryArtworkStore implements ArtworkStore {
       if (r.status === 'approved') approved++;
     }
     return { total, approved };
+  }
+
+  async listAppeals(q: AppealQuery): Promise<AppealPage> {
+    const all = [...this.rows.values()]
+      .flatMap((r) => r.appeals ?? [])
+      .filter((a) => q.status === undefined || a.status === q.status)
+      .sort(appealOrder);
+    const start = (q.page - 1) * q.pageSize;
+    return { items: all.slice(start, start + q.pageSize).map((a) => structuredClone(a)), total: all.length };
   }
 }
 
@@ -100,5 +133,11 @@ export class MemoryRoyaltyStore implements RoyaltyStore {
       total: all.length,
       totals: { records: all.length, royaltySats: all.reduce((s, r) => s + r.royaltySats, 0) },
     };
+  }
+
+  async countByArtwork(artworkId: string): Promise<number> {
+    let n = 0;
+    for (const r of this.rows.values()) if (r.artworkId === artworkId) n++;
+    return n;
   }
 }

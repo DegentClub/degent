@@ -17,7 +17,7 @@ a tier.
 | `services/mint` | `@bsh/degent-mint` | service (Hono, ports and adapters) |
 | `packages/mint-sdk` | `@bsh/degent-mint-sdk` | library (rules, tiers, lane/queue maths, types, API client) |
 | `packages/market` | `@bsh/degent-market` | library (seller 0x83 listings, padded buyer purchases, ordinal FIFO simulator) |
-| `services/studio` | `@bsh/degent-studio` | service (Hono on `@bsh/edge`; SIWB artists via `@bsh/identity`, BIP-322 payout proof, artwork reviewed once, gallery, royalty view; ADR-0007) |
+| `services/studio` | `@bsh/degent-studio` | service (Hono on `@bsh/edge`; SIWB artists via `@bsh/identity`, BIP-322 payout proof, artwork reviewed once, gallery, royalty view; ADR-0007; edition caps, curation, appeals, artist notifications via `@bsh/notify`; ADR-0012) |
 
 Query `catalog/catalog.json` (`.products.degent`, `.components[] | select(.product=="degent")`) for the current
 dependency and contract graph instead of reading package.json files.
@@ -36,7 +36,7 @@ dependency and contract graph instead of reading package.json files.
 4. **Contract first.** API or event changes start in `contracts/openapi/degent-mint.yaml` /
    `contracts/asyncapi/degent-mint.yaml`. The order-status topic is shared and owned by the platform
    (`deps/scribbit/contracts/asyncapi/platform-events.yaml`); keep `OrderStatusEvent` compatible with it.
-5. **Imports:** only `@bsh/inscription`, `@bsh/wallet-kit`, `@bsh/degent-mint-sdk`, `@bsh/events`, `@bsh/identity`, `@bsh/edge`,
+5. **Imports:** only `@bsh/inscription`, `@bsh/wallet-kit`, `@bsh/degent-mint-sdk`, `@bsh/events`, `@bsh/identity`, `@bsh/edge`, `@bsh/notify`, `@bsh/signer` (mint only: the remote policy signer client),
    each only where declared in that component's `depends_on`. Platform packages come from the `deps/scribbit` submodule; never edit them in
    place. Never import `blockspace` or `scribbit` code; `pnpm lint:boundaries` fails.
 6. **Tests with fakes.** Service tests use the in-memory adapters (`memory-order-store`, `in-memory-policy-signer`,

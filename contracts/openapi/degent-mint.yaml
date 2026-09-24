@@ -45,6 +45,8 @@ servers:
 tags:
   - name: service
   - name: orders
+  - name: admin
+    description: Operator endpoints (API key with scope `mint:admin`; never called by browsers).
 security: []
 paths:
   /v1/health:
@@ -52,6 +54,11 @@ paths:
       tags: [service]
       operationId: getHealth
       summary: Liveness plus dependency checks (always 200; see `status`).
+      description: |
+        `checks` always has `store`, and `chain` / `parent` when wired. Production adds `bus` (RabbitMQ bridge:
+        connected, pending backlog; `in-process only` when AMQP_URL is unset), `signer` (SIGNER=remote: the
+        platform signer answers on this network) and, only while the parent value circuit breaker is open,
+        `parentValue` (`ok: false`; co-signing is paused until `POST /v1/admin/parent/ack`).
       responses:
         '200':
           description: Health report
@@ -107,7 +114,10 @@ paths:
         the rescue timeout.
 
         With `artworkId` (Open Studio): the artwork must exist in the studio (404 `artwork_not_found`), be
-        `approved` (409 `artwork_not_mintable` for any other status, e.g. delisted) and its artist must have a
+        `approved` (409 `artwork_not_mintable` for any other status, e.g. delisted), not sold out (409
+        `artwork_not_mintable` with `details.soldOut: true` once the studio's `maxEditions` is reached by minted
+        editions plus live quotes, ADR-0012; checked inside the edition reservation, so two concurrent orders for
+        the last edition cannot both be quoted) and its artist must have a
         proven P2WPKH / P2TR payout address (409 `artist_payout_missing`); the declared content facts must
         equal the artwork record's (422 `content_mismatch`). The order is created, walked through
         `awaiting_content -> reviewing -> approved` (timeline detail `artwork <id> reviewed at submission`)
@@ -132,7 +142,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '409':
-          description: Open Studio - the artwork is not `approved` (code `artwork_not_mintable`) or its artist has no proven payout address (code `artist_payout_missing`)
+          description: Open Studio - the artwork is not `approved` or is sold out (code `artwork_not_mintable`, `details.soldOut`) or its artist has no proven payout address (code `artist_payout_missing`)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -258,6 +268,39 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+  /v1/admin/parent/ack:
+    post:
+      tags: [admin]
+      operationId: acknowledgeParentValueChange
+      summary: Acknowledge a parent value change and resume co-signing (closes the circuit breaker).
+      description: |
+        When the stored parent UTXO's VALUE changes (a re-initialisation with another value), every stored 0x81
+        reveal is signed for a parent return that can no longer be built, and the worker stops co-signing
+        (log `parent.value.changed`, health check `parentValue`). An operator follows the RUNBOOK ("Re-leasing or
+        re-initialising the parent"), then acknowledges here naming the parent they checked. A mismatch with the
+        current parent is 409 `conflict` (`details.current` is what is there now). With no open alert the call
+        succeeds with `acknowledged: null` (idempotent). Acknowledging does not relax the value check itself:
+        the worker still refuses a parent whose value differs from `PARENT_VALUE_SATS`.
+      security:
+        - adminApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ParentAckRequest' }
+      responses:
+        '200':
+          description: Breaker closed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ParentAckResponse' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
 
 components:
   securitySchemes:
@@ -267,6 +310,13 @@ components:
       description: |
         The `orderToken` returned once by `POST /v1/orders`. Missing or malformed -> 401 `unauthorized`;
         wrong token for the order -> 403 `forbidden`. Compared in constant time against a stored SHA-256.
+    adminApiKey:
+      type: http
+      scheme: bearer
+      description: |
+        An `@bsh/edge` API key (`bsh_live_…` on mainnet) with scope `mint:admin`, as `Authorization: Bearer` or
+        `X-API-Key`. The service stores only its SHA-256 (MINT_ADMIN_API_KEYS_JSON). Missing/invalid -> 401
+        `unauthorized`; missing scope -> 403 `forbidden`.
   parameters:
     OrderId:
       name: id
@@ -609,8 +659,8 @@ components:
       type: string
       description: |
         Open set (`x-extensible-enum`, the platform ledger convention): clients must tolerate codes they do not
-        know. Open Studio (plan §3.1) added `artwork_not_found`, `artwork_not_mintable` (not approved or
-        delisted) and `artist_payout_missing`.
+        know. Open Studio (plan §3.1) added `artwork_not_found`, `artwork_not_mintable` (not approved,
+        delisted, or sold out per ADR-0012) and `artist_payout_missing`.
       x-extensible-enum:
         [bad_request, unauthorized, forbidden, validation_failed, not_found, conflict, quote_expired, payload_too_large,
          unsupported_media_type, rate_limited, forbidden_origin, content_mismatch, reveal_invalid,
@@ -629,3 +679,46 @@ components:
             code: { $ref: '#/components/schemas/ErrorCode' }
             message: { type: string }
             details: {}
+    ParentLocation:
+      type: object
+      additionalProperties: false
+      required: [outpoint, valueSats]
+      properties:
+        outpoint: { type: string, pattern: '^[0-9a-f]{64}:[0-9]+$' }
+        valueSats: { $ref: '#/components/schemas/Sats' }
+    ParentAckRequest:
+      type: object
+      additionalProperties: false
+      required: [outpoint, valueSats]
+      properties:
+        outpoint: { type: string, pattern: '^[0-9a-f]{64}:[0-9]+$', description: The current parent outpoint the operator verified on chain. }
+        valueSats: { allOf: [{ $ref: '#/components/schemas/Sats' }], description: The value the operator verified (sats). }
+        note: { type: string, maxLength: 500, description: Free text for the audit trail (e.g. the change ticket). }
+    ParentValueAlert:
+      type: object
+      additionalProperties: false
+      required: [at, reason, previous, current]
+      properties:
+        at: { $ref: '#/components/schemas/Timestamp' }
+        reason: { type: string, enum: [initialise, advance] }
+        previous: { $ref: '#/components/schemas/ParentLocation' }
+        current: { $ref: '#/components/schemas/ParentLocation' }
+    ParentAckResponse:
+      type: object
+      additionalProperties: false
+      required: [circuit, parent, acknowledged]
+      properties:
+        circuit: { type: string, const: closed }
+        parent: { $ref: '#/components/schemas/ParentLocation' }
+        acknowledged:
+          description: The alert that was closed, or null when none was open.
+          oneOf:
+            - type: 'null'
+            - type: object
+              additionalProperties: false
+              required: [alert, acknowledgedAt, acknowledgedBy]
+              properties:
+                alert: { $ref: '#/components/schemas/ParentValueAlert' }
+                acknowledgedAt: { $ref: '#/components/schemas/Timestamp' }
+                acknowledgedBy: { type: string, description: Admin API key id. }
+                note: { type: string }

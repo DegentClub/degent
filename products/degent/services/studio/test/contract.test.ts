@@ -12,7 +12,7 @@ import { parse } from 'yaml';
 import { sha256Hex } from '@bsh/degent-mint-sdk';
 import { ARTWORK_STATUSES } from '../src/domain/artwork.js';
 import { api, declare, makeHarness, payoutProof, signIn, submit, upload, wallet } from './fakes/harness.js';
-import { FakeVisionReview, needsHuman } from './fakes/misc.js';
+import { FakeVisionReview, needsHuman, reject } from './fakes/misc.js';
 import { jpeg } from './fakes/images.js';
 
 const root = new URL('../../../../../', import.meta.url).pathname;
@@ -120,6 +120,62 @@ describe('OpenAPI contract: degent-studio.yaml', () => {
     await expectOk('get', '/v1/artists/me/royalties', '/v1/artists/me/royalties', 200, { token });
     await expectOk('delete', `/v1/artworks/${sub.artworkId}`, '/v1/artworks/{id}', 200, { token });
     expect(errs).toEqual([]);
+  });
+
+  it('live responses validate for the ADR-0012 endpoints (editions, curation rank, appeals, notify, royalty edition)', async () => {
+    const h = makeHarness({ vision: new FakeVisionReview(reject('rule 2: no bow tie')) });
+    const errs: string[] = [];
+    const expectOk = async (method: string, path: string, template: string, status: number, init = {}) => {
+      const r = await api(h, method.toUpperCase(), path, init);
+      expect(r.status, `${method} ${path}: ${JSON.stringify(r.body)}`).toBe(status);
+      errs.push(...validate(responseSchemaRef(template, method, status), r.body));
+      return r;
+    };
+    const s = await signIn(h, 51);
+    const notify = await expectOk('put', '/v1/artists/me', '/v1/artists/me', 200, { token: s.token, json: { notify: { webhookUrl: 'https://hooks.example.com/x', telegramChatId: '123456' } } });
+    expect(notify.body.notifyWebhookSecret).toBeDefined();
+    await expectOk('get', '/v1/artists/me', '/v1/artists/me', 200, { token: s.token });
+    const created = await api(h, 'POST', '/v1/artworks', { token: s.token, json: { title: 'Capped', contentType: 'image/jpeg', contentLength: 250_000, maxEditions: 5 } });
+    errs.push(...validate('studio.yaml#/components/schemas/CreateArtworkResponse', created.body));
+    await expectOk('put', `/v1/artworks/${created.body.artwork.id}/editions`, '/v1/artworks/{id}/editions', 200, { token: s.token, json: { maxEditions: null } });
+    const sub = await submit(h, s); // rejected by the fake vision reviewer
+    const ap = await expectOk('post', `/v1/artworks/${sub.artworkId}/appeal`, '/v1/artworks/{id}/appeal', 201, { token: s.token, json: { message: 'Please look again.' } });
+    expect(ap.body.artwork.appeals).toHaveLength(1);
+    await expectOk('get', '/v1/appeals', '/v1/appeals', 200, { apiKey: h.reviewerKey });
+    await expectOk('get', `/v1/artworks/${sub.artworkId}`, '/v1/artworks/{id}', 200, { token: s.token });
+    await expectOk('post', `/v1/artworks/${sub.artworkId}/review`, '/v1/artworks/{id}/review', 200, { apiKey: h.reviewerKey, json: { decision: 'approve' } });
+    await expectOk('get', '/v1/appeals?status=granted', '/v1/appeals', 200, { apiKey: h.reviewerKey });
+    await expectOk('post', `/v1/artworks/${sub.artworkId}/feature`, '/v1/artworks/{id}/feature', 200, { apiKey: h.reviewerKey, json: { featured: true, rank: 1 } });
+    await expectOk('put', `/v1/artworks/${sub.artworkId}/editions`, '/v1/artworks/{id}/editions', 200, { token: s.token, json: { maxEditions: 1 } });
+    const roy = { orderId: 'dgt_c1', artworkId: sub.artworkId, minterAddress: null, royaltySats: 1_000, fundingTxid: 'cd'.repeat(32), vout: 1, at: '2026-09-24T13:00:00.000Z', edition: 1 };
+    await expectOk('post', '/v1/internal/royalties', '/v1/internal/royalties', 201, { apiKey: h.mintKey, json: roy });
+    const sold = await expectOk('get', '/v1/artworks?available=false', '/v1/artworks', 200);
+    expect(sold.body.items[0]).toMatchObject({ id: sub.artworkId, soldOut: true, mintedEditions: 1, featuredRank: 1 });
+    await expectOk('get', '/v1/artworks?available=true', '/v1/artworks', 200);
+    await expectOk('get', '/v1/artists/me/royalties', '/v1/artists/me/royalties', 200, { token: s.token });
+    await expectOk('get', '/v1/config', '/v1/config', 200);
+    // errors on the new routes use the Error shape
+    const other = await signIn(h, 52);
+    for (const [method, path, status, init] of [
+      ['POST', `/v1/artworks/${sub.artworkId}/appeal`, 409, { token: s.token, json: { message: 'again' } }],
+      ['PUT', `/v1/artworks/${sub.artworkId}/editions`, 422, { token: s.token, json: { maxEditions: 1, x: 1 } }],
+      ['PUT', `/v1/artworks/${sub.artworkId}/editions`, 403, { token: other.token, json: { maxEditions: 2 } }],
+      ['GET', '/v1/appeals?status=nope', 422, { apiKey: h.reviewerKey }],
+      ['GET', '/v1/appeals', 403, { apiKey: h.mintKey }],
+    ] as Array<[string, string, number, Parameters<typeof api>[3]]>) {
+      const r = await api(h, method, path, init);
+      expect(r.status, `${method} ${path}`).toBe(status);
+      errs.push(...validate('studio.yaml#/components/schemas/Error', r.body));
+    }
+    await h.service.notificationsIdle();
+    expect(h.webhooks.received.length).toBeGreaterThan(0);
+    expect(errs).toEqual([]);
+  });
+
+  it('the ArtistNotification kinds in the contract are the ones the service sends', async () => {
+    const { NOTIFICATION_KINDS } = await import('../src/domain/notifications.js');
+    expect(schemas.ArtistNotification.properties.kind.enum).toEqual([...NOTIFICATION_KINDS]);
+    expect(schemas.AppealStatus.enum).toEqual(['open', 'granted', 'denied']);
   });
 
   it('content bytes match the declared headers in the contract', async () => {

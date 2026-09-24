@@ -14,8 +14,11 @@ This service is the studio's back office (design: [ADR-0007](../../../../docs/ad
   `degent.club payout address <address> for <sessionSub>`. Legacy addresses are refused.
 - **Artworks reviewed once, at submission**: rules on the real bytes, then the vision model against the
   Degent design rules. A skipped check never approves; the house resolves it.
-- **Public gallery** (`featured` first, then newest) and immutable content bytes for approved pieces.
+- **Public gallery** (`featuredRank`, then featured, then newest) and immutable content bytes for approved pieces.
 - **Royalty view**: mint records the mint service posts after each funding transaction, with totals.
+- **Edition caps, curation, appeals, notifications** ([ADR-0012](../../../../docs/adr/0012-edition-caps-curation-appeals.md)):
+  `maxEditions` per artwork, `featuredRank` for the front room, appeals of rejections to a human, and webhook /
+  Telegram notifications to the artist through `@bsh/notify`.
 
 Contracts: [`contracts/openapi/degent-studio.yaml`](../../../../contracts/openapi/degent-studio.yaml) (HTTP) and
 [`contracts/asyncapi/degent-studio.yaml`](../../../../contracts/asyncapi/degent-studio.yaml) (`degent.artwork.{status}` events).
@@ -28,18 +31,21 @@ Contracts: [`contracts/openapi/degent-studio.yaml`](../../../../contracts/openap
 | `POST /v1/auth/challenge` | none | SIWB message for `{ address, network }` (nonce bound to domain + address, single use) |
 | `POST /v1/auth/verify` | none | `{ message, signature, address }` -> session JWT + artist profile (artist created on first sign-in) |
 | `GET /v1/artists/me` | session | Private profile: display name, payout address, artwork counts |
-| `PUT /v1/artists/me` | session | `displayName` (<= 40) and/or `payout: { address, signature }` (BIP-322 proof) |
+| `PUT /v1/artists/me` | session | `displayName` (<= 40), `payout: { address, signature }` (BIP-322 proof), `notify: { webhookUrl?, telegramChatId?, rotateWebhookSecret? } \| null` |
 | `GET /v1/artists/me/royalties` | session | Royalty records newest first + `totals` |
 | `GET /v1/artists/{address}` | none | Public profile: display name, approved count, joinedAt |
-| `POST /v1/artworks` | session | Declare `{ title <= 80, description? <= 500, contentType, contentLength }` -> `submitted` + one-time `uploadToken` |
+| `POST /v1/artworks` | session | Declare `{ title <= 80, description? <= 500, contentType, contentLength, maxEditions? }` -> `submitted` + one-time `uploadToken` |
 | `PUT /v1/artworks/{id}/content` | upload token | Exact bytes (octet-stream, <= 4 MiB); review runs here, once |
-| `GET /v1/artworks` | optional | Gallery: `status` (default `approved`), `artist`, `page`, `pageSize` |
+| `GET /v1/artworks` | optional | Gallery: `status` (default `approved`), `artist`, `available` (`true` hides sold-out), `page`, `pageSize` |
 | `GET /v1/artworks/{id}` | optional | Public once approved; owner / API key see every status |
 | `GET /v1/artworks/{id}/content` | none | Approved bytes only; `ETag: "<sha256>"`, `public, max-age=31536000, immutable`, 304 on `If-None-Match` |
 | `DELETE /v1/artworks/{id}` | session | Artist delists (`approved -> delisted`) |
+| `PUT /v1/artworks/{id}/editions` | session | Artist sets `{ maxEditions }` (1-10000 or null; never below `mintedEditions`) |
+| `POST /v1/artworks/{id}/appeal` | session | Artist appeals a rejection `{ message <= 1000 }` -> `reviewing` + `needsHuman` (1 open, 3 max) |
 | `POST /v1/artworks/{id}/review` | API key `studio:review` | House verdict `{ decision: approve\|reject, reasons? }` |
-| `POST /v1/artworks/{id}/feature` | API key `studio:review` | `{ featured }` on approved artworks (gallery curation) |
-| `POST /v1/internal/royalties` | API key `studio:internal` | The mint service records a royalty payment (idempotent on `orderId`) |
+| `POST /v1/artworks/{id}/feature` | API key `studio:review` | `{ featured, rank? }` on approved artworks (gallery curation; rank 1-1000, lower first) |
+| `GET /v1/appeals` | API key `studio:review` | The appeal queue: `status` (`open` default, `granted`, `denied`), oldest first |
+| `POST /v1/internal/royalties` | API key `studio:internal` | The mint service records a royalty payment (idempotent on `orderId`; optional `edition`); counts one minted edition |
 
 Errors are the `@bsh/edge` shape `{ error: { code, message, requestId, details? } }`; the code list is
 `ErrorCode` in the contract. Mutating requests are rate limited per client IP; JSON bodies are capped at
@@ -85,8 +91,47 @@ A skipped check never approves. The house resolves with `POST /v1/artworks/{id}/
 down an approved piece (`approved -> rejected`) or reinstate a rejected one.
 
 Transitions (`src/domain/artwork.ts`): `submitted -> reviewing -> approved | rejected`; `approved -> delisted`
-(artist) or `rejected` (house); `rejected -> approved` (house); `delisted` is terminal. Every transition is
-persisted with a timestamp and emitted as `degent.artwork.<status>` (`eventId = <artworkId>:<timeline index>`).
+(artist) or `rejected` (house); `rejected -> approved` (house) or `reviewing` (artist's appeal); `delisted` is
+terminal. Every transition is persisted with a timestamp and emitted as `degent.artwork.<status>`
+(`eventId = <artworkId>:<timeline index>`).
+
+## Editions, curation and appeals (ADR-0012)
+
+- **Edition caps.** `maxEditions` (1-10000, null = open edition) is set at declaration or later with
+  `PUT /v1/artworks/{id}/editions`. Before the first mint anything goes; afterwards the cap can be raised, opened
+  or lowered, never below `mintedEditions`. `mintedEditions` counts the royalty records the mint posted (replays
+  do not count); `soldOut` = cap reached. The mint refuses new quotes for a sold-out artwork (409
+  `artwork_not_mintable`, `details.soldOut`) and enforces the cap inside its edition reservation, counting its own
+  live quotes, so two concurrent orders for the last edition get one quote and one 409. A quote issued before the
+  cap was lowered still mints and is recorded.
+- **Curation.** `featuredRank` (1-1000, lower first) on featured artworks; the gallery is rank ascending with
+  unranked last, then featured, then newest.
+- **Appeals.** A `rejected` artwork (automated rejection or house takedown) can be appealed by its artist:
+  `rejected -> reviewing` with `needsHuman`, event detail `appeal`, one open appeal at a time and three per
+  artwork. `POST /v1/artworks/{id}/review` resolves it (`granted` / `denied`); the house queue is
+  `GET /v1/appeals`. Appeals appear on the artwork for the owner and API keys only.
+
+## Artist notifications (ADR-0012)
+
+Artists register targets with `PUT /v1/artists/me` `notify`: a webhook URL (validated by `@bsh/notify`'s
+`validateWebhookTarget`: https, no credentials, no localhost / private literal IPs; regtest also allows http and
+private hosts) and, when `TELEGRAM_BOT_TOKEN` is set, a Telegram chat id. The first webhook (or
+`rotateWebhookSecret: true`) returns the artist's signing secret ONCE as `notifyWebhookSecret`.
+
+| When | `kind` | Text |
+|---|---|---|
+| automated or house approval | `artwork.approved` | Your Degent '<title>' was approved and hangs in the gallery. |
+| automated or house rejection | `artwork.rejected` | Your Degent '<title>' was rejected: <reasons>. |
+| waiting for a human (skipped check, appeal) | `artwork.needs_human` | Your Degent '<title>' is waiting for a house reviewer. |
+| new royalty record | `royalty.recorded` | Your Degent '<title>' was minted, edition #n, <sats> sats paid in <txid>:<vout> |
+
+Webhooks receive the CloudEvents envelope (`type = degent.studio.notify.<sha256(address)[0..32]>.<kind>`,
+`id` = `<artworkId>:<timeline index>` or `royalty:<orderId>`) signed with `Bsh-Signature` and an
+`Idempotency-Key` (verify with `verifyWebhookSignature` from `@bsh/notify`); Telegram receives the text.
+`BshArtistNotifier` (`src/adapters/bsh-artist-notifier.ts`) wires `@bsh/notify`'s `Notifier`, `WebhookChannel`
+and `TelegramChannel` with in-memory subscription and delivery-log stores; the artist record is re-read before
+every delivery, so nothing is lost across restarts except in-flight retries. Delivery runs after the request's
+own work is persisted and never fails it.
 
 ## How the mint consumes artworks and posts royalties (next wave)
 
@@ -96,7 +141,7 @@ persisted with a timestamp and emitted as `degent.artwork.<status>` (`eventId = 
 3. The funding PSBT the minter signs carries the royalty as **output [1]** (10% of the mint price, to the
    artist's proven `payoutAddress`) and the club fee as output [2] (ADR-0007 §5); the reveal is untouched.
 4. When the mint sees the funding transaction, it calls `POST /v1/internal/royalties` with
-   `{ orderId, artworkId, minterAddress?, royaltySats, fundingTxid, vout: 1, at }` (API key scope
+   `{ orderId, artworkId, minterAddress?, royaltySats, fundingTxid, vout: 1, at, edition? }` (API key scope
    `studio:internal`; idempotent on `orderId`). The artist sees it at `GET /v1/artists/me/royalties`.
 5. Inscription metadata attributes the artwork (artist address, artwork id, sha256).
 
@@ -106,8 +151,9 @@ persisted with a timestamp and emitted as `degent.artwork.<status>` (`eventId = 
 |---|---|
 | `src/app.ts` | Hono API on `@bsh/edge` (requestId, jsonErrors, securityHeaders, corsAllowlist, trustProxy, rateLimit, bodyLimit, apiKeys) |
 | `src/application/studio-service.ts` | Use cases: challenge / verify / sessions, profile + payout proof, artworks, house review, royalties |
-| `src/domain/` | Artist, artwork (record, transition table, public view), royalty, events, vision guidelines, errors |
-| `src/ports/` | `ArtReview`, `ArtistStore`, `ArtworkStore`, `RoyaltyStore`, `ContentStore`, `EventBus`, `Clock`, `NonceStore` (from `@bsh/identity`) |
+| `src/domain/` | Artist, artwork (record, transition table, public view, appeals, edition cap), royalty, events, notifications, vision guidelines, errors |
+| `src/ports/` | `ArtReview`, `ArtistStore`, `ArtworkStore`, `RoyaltyStore`, `ContentStore`, `EventBus`, `ArtistNotifier`, `Clock`, `NonceStore` (from `@bsh/identity`) |
+| `src/adapters/bsh-artist-notifier.ts` | `ArtistNotifier` over `@bsh/notify` (signed webhooks, Telegram, retries, per-artist topics) |
 | `src/adapters/memory-stores.ts`, `sqlite-store.ts` | In-memory stores; `node:sqlite` store (JSON row + version, optimistic writes) for artists, artworks, royalties, nonces |
 | `src/adapters/content-stores.ts` | `FsContentStore` (`<dir>/<aa>/<sha256>`, temp + rename) and `MemoryContentStore` |
 | `src/adapters/rules-art-review.ts` | `RulesArtReview`, `CompositeArtReview` (never approves on a skip), `HumanGateReview` |

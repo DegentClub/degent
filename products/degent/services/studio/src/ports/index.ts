@@ -6,3 +6,4 @@ export type * from './content-store.js';
 export type * from './event-bus.js';
 export type * from './clock.js';
 export type { NonceStore, NonceRecord, NonceConsumeResult } from '@bsh/identity';
+export type * from './artist-notifier.js';

@@ -80,7 +80,7 @@ describe('worker: the studio split in the funding transaction', () => {
     });
     // studio record (idempotent on orderId): exactly one, with the funding txid and output 1
     expect(h.studio!.royalties).toEqual([
-      { orderId: b.orderId, artworkId: art.id, minterAddress: b.recipientAddress, royaltySats: b.order.quote!.artistRoyaltySats, fundingTxid: b.commitTxid, vout: 1, at: expect.any(String) },
+      { orderId: b.orderId, artworkId: art.id, minterAddress: b.recipientAddress, royaltySats: b.order.quote!.artistRoyaltySats, fundingTxid: b.commitTxid, vout: 1, at: expect.any(String), edition: 1 },
     ]);
     await h.worker.tick();
     await h.worker.tick();

@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { hexToBytes } from '@noble/hashes/utils.js';
 import { InMemoryApiKeyStore, generateApiKey, type ApiKeyRecord } from '@bsh/edge';
 import { InMemoryNonceStore, SessionKeyRing, generateSigningKey, type NonceStore, type SigningKey, type VerificationKey } from '@bsh/identity';
+import { HttpTelegramClient, type FetchLike } from '@bsh/notify';
 import type { Hono } from 'hono';
 import { createApp } from './app.js';
 import type { StudioConfig } from './config.js';
@@ -17,6 +18,7 @@ import { SqliteStudioStore } from './adapters/sqlite-store.js';
 import { CompositeArtReview, HumanGateReview, RulesArtReview } from './adapters/rules-art-review.js';
 import { ClaudeVisionReview } from './adapters/claude-vision-review.js';
 import { MemoryEventBus, systemClock } from './adapters/system.js';
+import { BshArtistNotifier } from './adapters/bsh-artist-notifier.js';
 import type { ArtReview } from './ports/art-review.js';
 import type { ArtistStore } from './ports/artist-store.js';
 import type { ArtworkStore } from './ports/artwork-store.js';
@@ -28,6 +30,8 @@ export interface Runtime {
   events: MemoryEventBus;
   keys: SessionKeyRing;
   apiKeys: InMemoryApiKeyStore;
+  /** Artist notifications over @bsh/notify (in-memory subscriptions and delivery log). */
+  notifier: BshArtistNotifier;
   /** Dev-only API keys generated on regtest when none are configured (shown once at startup). */
   devApiKeys: Array<{ id: string; key: string; scopes: string[] }>;
   close(): void;
@@ -89,7 +93,22 @@ export function buildRuntime(cfg: StudioConfig, log: Logger = jsonLogger()): Run
   const review = new CompositeArtReview([new RulesArtReview(cfg.settings.rules), vision]);
 
   const events = new MemoryEventBus();
-  const service = new StudioService({ settings: cfg.settings, artists, artworks, royalties, nonces, content, review, events, keys, clock: systemClock });
+  // Artist notifications (ADR-0012): webhooks always, Telegram with a bot token. Subscriptions and the
+  // delivery log are in memory: the artist record is the source of truth and is re-read before each send.
+  const fetchLike = globalThis.fetch as unknown as FetchLike;
+  const notifier = new BshArtistNotifier({
+    artists,
+    fetch: fetchLike,
+    telegram: cfg.telegramBotToken ? new HttpTelegramClient({ botToken: cfg.telegramBotToken, fetch: fetchLike }) : null,
+    // http:// and private-address webhooks only on regtest (a local receiver while developing).
+    allowInsecureWebhooks: dev,
+    onOutcome: (o) => {
+      if (o.status === 'failed' || o.status === 'retrying')
+        log.warn('artist notification delivery', { channel: o.channel, status: o.status, attempt: o.attempt, error: o.error, artist: o.subscriberId });
+    },
+  });
+  log.info('artist notifications', { channels: notifier.channels });
+  const service = new StudioService({ settings: cfg.settings, artists, artworks, royalties, nonces, content, review, events, keys, clock: systemClock, notifier, log });
   const app = createApp({
     service,
     apiKeyStore: apiKeys,
@@ -100,5 +119,17 @@ export function buildRuntime(cfg: StudioConfig, log: Logger = jsonLogger()): Run
     rateLimitPerMinute: cfg.rateLimitPerMinute,
     log,
   });
-  return { app, service, events, keys, apiKeys, devApiKeys, close };
+  return {
+    app,
+    service,
+    events,
+    keys,
+    apiKeys,
+    notifier,
+    devApiKeys,
+    close: () => {
+      notifier.stop();
+      close();
+    },
+  };
 }

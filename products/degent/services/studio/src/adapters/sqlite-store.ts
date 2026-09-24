@@ -2,16 +2,23 @@
  * node:sqlite store (Node >= 22.5) implementing every persistence port of the studio: artists,
  * artworks, royalties and SIWB nonces. One row per record with the record as JSON plus indexed
  * columns; WAL mode; optimistic concurrency via `WHERE version = ?` (same pattern as the mint).
+ * ADR-0012 fields (edition cap, curation rank, appeals) live in the JSON and are queried with
+ * `json_extract` / `json_each`, so databases created before them need no migration.
  */
 import { DatabaseSync } from 'node:sqlite';
 import type { NonceConsumeResult, NonceRecord, NonceStore } from '@bsh/identity';
 import type { ArtistRecord, ArtworkCounts } from '../domain/artist.js';
-import type { ArtworkRecord } from '../domain/artwork.js';
+import type { AppealRecord, ArtworkRecord } from '../domain/artwork.js';
 import { StaleWriteError } from '../domain/errors.js';
 import type { RoyaltyRecord } from '../domain/royalty.js';
 import type { ArtistStore } from '../ports/artist-store.js';
-import type { ArtworkPage, ArtworkQuery, ArtworkStore } from '../ports/artwork-store.js';
+import type { AppealPage, AppealQuery, ArtworkPage, ArtworkQuery, ArtworkStore } from '../ports/artwork-store.js';
 import type { RoyaltyPage, RoyaltyStore } from '../ports/royalty-store.js';
+
+/** Only a featured artwork's rank orders the gallery (NULL = unranked). */
+const RANK_SQL = "CASE WHEN featured = 1 THEN json_extract(data, '$.featuredRank') END";
+const SOLD_OUT_SQL =
+  "(json_extract(data, '$.maxEditions') IS NOT NULL AND COALESCE(json_extract(data, '$.mintedEditions'), 0) >= json_extract(data, '$.maxEditions'))";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS artists (
@@ -39,6 +46,7 @@ CREATE TABLE IF NOT EXISTS royalties (
   data         TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS royalties_artist ON royalties(artist, at);
+CREATE INDEX IF NOT EXISTS royalties_artwork ON royalties(json_extract(data, '$.artworkId'));
 CREATE TABLE IF NOT EXISTS nonces (
   nonce       TEXT PRIMARY KEY,
   domain      TEXT NOT NULL,
@@ -68,8 +76,14 @@ export class SqliteStudioStore {
       save: (r) => this.saveArtwork(r),
       list: (q) => this.list(q),
       countByArtist: (a) => this.countByArtist(a),
+      listAppeals: (q) => this.listAppeals(q),
     };
-    this.royalties = { create: (r) => this.createRoyalty(r), getByOrder: (o) => this.getByOrder(o), listByArtist: (a, p, s) => this.listByArtist(a, p, s) };
+    this.royalties = {
+      create: (r) => this.createRoyalty(r),
+      getByOrder: (o) => this.getByOrder(o),
+      listByArtist: (a, p, s) => this.listByArtist(a, p, s),
+      countByArtwork: (id) => this.countByArtwork(id),
+    };
     this.nonces = { issue: (r) => this.issue(r), consume: (n, b, now) => this.consume(n, b, now) };
   }
 
@@ -124,10 +138,11 @@ export class SqliteStudioStore {
       where.push('artist = ?');
       args.push(q.artist);
     }
+    if (q.available !== undefined) where.push(q.available ? `NOT ${SOLD_OUT_SQL}` : SOLD_OUT_SQL);
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = (this.db.prepare(`SELECT COUNT(*) AS n FROM artworks ${w}`).get(...args) as { n: number }).n;
     const rows = this.db
-      .prepare(`SELECT data FROM artworks ${w} ORDER BY featured DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`)
+      .prepare(`SELECT data FROM artworks ${w} ORDER BY (${RANK_SQL}) IS NULL, ${RANK_SQL} ASC, featured DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`)
       .all(...args, q.pageSize, (q.page - 1) * q.pageSize) as Array<{ data: string }>;
     return { items: rows.map((r) => JSON.parse(r.data) as ArtworkRecord), total: Number(total) };
   }
@@ -137,6 +152,17 @@ export class SqliteStudioStore {
       .prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved FROM artworks WHERE artist = ?")
       .get(address) as { total: number; approved: number | null };
     return { total: Number(row.total), approved: Number(row.approved ?? 0) };
+  }
+
+  async listAppeals(q: AppealQuery): Promise<AppealPage> {
+    const from = "FROM artworks, json_each(artworks.data, '$.appeals') AS a";
+    const w = q.status !== undefined ? "WHERE json_extract(a.value, '$.status') = ?" : '';
+    const args = q.status !== undefined ? [q.status] : [];
+    const total = (this.db.prepare(`SELECT COUNT(*) AS n ${from} ${w}`).get(...args) as { n: number }).n;
+    const rows = this.db
+      .prepare(`SELECT a.value AS v ${from} ${w} ORDER BY json_extract(a.value, '$.createdAt') ASC, json_extract(a.value, '$.id') ASC LIMIT ? OFFSET ?`)
+      .all(...args, q.pageSize, (q.page - 1) * q.pageSize) as Array<{ v: string }>;
+    return { items: rows.map((r) => JSON.parse(r.v) as AppealRecord), total: Number(total) };
   }
 
   // ------------------------------------------------------------------ royalties
@@ -158,6 +184,11 @@ export class SqliteStudioStore {
       .prepare('SELECT data FROM royalties WHERE artist = ? ORDER BY at DESC, order_id DESC LIMIT ? OFFSET ?')
       .all(address, pageSize, (page - 1) * pageSize) as Array<{ data: string }>;
     return { items: rows.map((r) => JSON.parse(r.data) as RoyaltyRecord), total: Number(t.n), totals: { records: Number(t.n), royaltySats: Number(t.sats) } };
+  }
+
+  async countByArtwork(artworkId: string): Promise<number> {
+    const row = this.db.prepare("SELECT COUNT(*) AS n FROM royalties WHERE json_extract(data, '$.artworkId') = ?").get(artworkId) as { n: number };
+    return Number(row.n);
   }
 
   // ------------------------------------------------------------------ nonces (@bsh/identity NonceStore)

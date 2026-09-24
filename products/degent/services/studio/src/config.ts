@@ -21,6 +21,8 @@ export interface StudioConfig {
   apiKeyEnvironment: 'live' | 'test';
   visionReviewApiKey: string | null;
   visionReviewGuidelinesFile: string | null;
+  /** Telegram Bot API token for artist notifications (ADR-0012); null = webhook notifications only. */
+  telegramBotToken: string | null;
   corsOrigins: string[];
   trustedProxies: string[];
   rateLimitPerMinute: number;
@@ -154,6 +156,8 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
   }
 
   const visionReviewApiKey = str('VISION_REVIEW_API_KEY');
+  const telegramBotToken = str('TELEGRAM_BOT_TOKEN');
+  if (telegramBotToken && !/^\d{1,20}:[A-Za-z0-9_-]{20,100}$/.test(telegramBotToken)) problems.push('TELEGRAM_BOT_TOKEN must look like <bot id>:<secret> (from @BotFather)');
 
   const out: StudioConfig = {
     settings: {
@@ -177,6 +181,7 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
     apiKeyEnvironment,
     visionReviewApiKey,
     visionReviewGuidelinesFile: str('VISION_REVIEW_GUIDELINES_FILE'),
+    telegramBotToken,
     corsOrigins,
     trustedProxies,
     rateLimitPerMinute: int('RATE_LIMIT_PER_MINUTE', 60, 1, 100_000),

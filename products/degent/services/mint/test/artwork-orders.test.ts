@@ -338,6 +338,84 @@ describe('edition reservation (plan §3.4)', () => {
   });
 });
 
+describe('edition caps (ADR-0012)', () => {
+  it('the studio already counts maxEditions minted -> 409 artwork_not_mintable (sold out), nothing reserved', async () => {
+    const h = artHarness();
+    await h.ready;
+    const art = studioArtwork(h, { maxEditions: 3, mintedEditions: 3 });
+    const { res } = await browserCreateArtwork(h, art.id);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatchObject({ code: 'artwork_not_mintable', details: { status: 'approved', soldOut: true, maxEditions: 3, held: 3 } });
+    expect(res.body.error.message).toMatch(/sold out/);
+    expect(await h.editions.countActive(art.id, h.clock.now())).toBe(0);
+    expect(await h.store.listByStatus(['awaiting_content', 'reviewing', 'approved'])).toEqual([]); // no order either
+  });
+
+  it('live quotes count against the cap; an expired quote frees its edition for the next order', async () => {
+    const h = artHarness();
+    await h.ready;
+    const art = studioArtwork(h, { maxEditions: 2 });
+    expect((await browserCreateArtwork(h, art.id, { recipientSeed: 1 })).b!.order.quote!.edition).toBe(1);
+    expect((await browserCreateArtwork(h, art.id, { recipientSeed: 2 })).b!.order.quote!.edition).toBe(2);
+    const third = (await browserCreateArtwork(h, art.id, { recipientSeed: 3 })).res;
+    expect(third.status).toBe(409);
+    expect(third.body.error).toMatchObject({ code: 'artwork_not_mintable', details: { soldOut: true, maxEditions: 2, held: 2 } });
+    expect(await h.editions.countActive(art.id, h.clock.now())).toBe(2);
+    h.clock.advance(901);
+    await h.worker.tick(); // both quotes expire and release their editions
+    expect(await h.editions.countActive(art.id, h.clock.now())).toBe(0);
+    expect((await browserCreateArtwork(h, art.id, { recipientSeed: 4 })).b!.order.quote!.edition).toBe(1);
+  });
+
+  it('two concurrent orders for the last edition: exactly one is quoted, the other is 409 sold out', async () => {
+    const h = artHarness();
+    await h.ready;
+    const art = studioArtwork(h, { maxEditions: 1 });
+    const results = await Promise.all([browserCreateArtwork(h, art.id, { recipientSeed: 1 }), browserCreateArtwork(h, art.id, { recipientSeed: 2 })]);
+    const statuses = results.map((r) => r.res.status).sort();
+    expect(statuses).toEqual([201, 409]);
+    const won = results.find((r) => r.res.status === 201)!.b!;
+    const lost = results.find((r) => r.res.status === 409)!.res;
+    expect(won.order.quote!.edition).toBe(1);
+    expect(lost.body.error).toMatchObject({ code: 'artwork_not_mintable', details: { soldOut: true, maxEditions: 1 } });
+    expect(await h.editions.countActive(art.id, h.clock.now())).toBe(1);
+    expect(await h.editions.reservation(art.id, won.orderId)).toMatchObject({ edition: 1, consumed: false });
+  });
+
+  it('many concurrent orders against a cap of 3: exactly 3 quotes with distinct editions 1..3', async () => {
+    const h = artHarness();
+    await h.ready;
+    const art = studioArtwork(h, { maxEditions: 3 });
+    const results = await Promise.all(Array.from({ length: 8 }, (_, i) => browserCreateArtwork(h, art.id, { recipientSeed: 10 + i })));
+    const quoted = results.filter((r) => r.res.status === 201).map((r) => r.b!.order.quote!.edition!);
+    expect(quoted.sort()).toEqual([1, 2, 3]);
+    expect(results.filter((r) => r.res.status === 409)).toHaveLength(5);
+  });
+
+  it('consumed editions count too: a paid order plus a live quote fill a cap of 2; the studio hears the edition', async () => {
+    const h = artHarness();
+    const art = studioArtwork(h, { maxEditions: 2 });
+    const paid = await browserArtworkToPayment(h, art.id, { recipientSeed: 1 });
+    fundArtwork(h, paid);
+    await h.worker.tick();
+    expect((await getOrder(h, paid.orderId)).edition).toBe(1);
+    expect(await h.editions.consumedCount(art.id)).toBe(1);
+    expect(h.studio!.royalties.map((r) => [r.orderId, r.edition])).toEqual([[paid.orderId, 1]]);
+    expect(h.studio!.artworks.get(art.id)!.mintedEditions).toBe(1);
+    expect((await browserCreateArtwork(h, art.id, { recipientSeed: 2 })).b!.order.quote!.edition).toBe(2);
+    const full = (await browserCreateArtwork(h, art.id, { recipientSeed: 3 })).res;
+    expect(full.status).toBe(409);
+    expect(full.body.error.details).toMatchObject({ soldOut: true, held: 2 });
+  });
+
+  it('an open edition (maxEditions null) is never refused for being sold out', async () => {
+    const h = artHarness();
+    await h.ready;
+    const art = studioArtwork(h, { maxEditions: null, mintedEditions: 5_000 });
+    expect((await browserCreateArtwork(h, art.id)).b!.order.quote!.edition).toBe(1);
+  });
+});
+
 // tiny helper: encode the attribution as the platform does, for the decode round-trip above
 import { encodeAttribution } from '@bsh/inscription';
 function encodeOf(a: NonNullable<Awaited<ReturnType<typeof browserCreateArtwork>>['b']>['attribution']) {

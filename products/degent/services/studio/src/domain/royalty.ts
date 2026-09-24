@@ -15,6 +15,8 @@ export interface RoyaltyRecord {
   /** When the funding transaction was seen. */
   at: string;
   recordedAt: string;
+  /** The edition number the mint assigned (ADR-0012); absent when the mint did not say. */
+  edition?: number;
 }
 
 export interface RoyaltyTotals {
@@ -22,7 +24,11 @@ export interface RoyaltyTotals {
   royaltySats: number;
 }
 
-/** The facts that must agree for a replayed record to count as the same one. */
+/**
+ * The facts that must agree for a replayed record to count as the same one. The edition only counts when
+ * both carry it (a replay from a mint that did not send it yet is the same record).
+ */
 export function sameRoyaltyFacts(a: RoyaltyRecord, b: RoyaltyRecord): boolean {
-  return a.artworkId === b.artworkId && a.royaltySats === b.royaltySats && a.fundingTxid === b.fundingTxid && a.vout === b.vout;
+  const sameEdition = a.edition === undefined || b.edition === undefined || a.edition === b.edition;
+  return a.artworkId === b.artworkId && a.royaltySats === b.royaltySats && a.fundingTxid === b.fundingTxid && a.vout === b.vout && sameEdition;
 }

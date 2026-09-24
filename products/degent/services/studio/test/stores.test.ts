@@ -9,7 +9,7 @@ import { FsContentStore, MemoryContentStore } from '../src/adapters/content-stor
 import { MemoryArtistStore, MemoryArtworkStore, MemoryRoyaltyStore, galleryOrder } from '../src/adapters/memory-stores.js';
 import { SqliteStudioStore } from '../src/adapters/sqlite-store.js';
 import type { ArtistRecord } from '../src/domain/artist.js';
-import type { ArtworkRecord } from '../src/domain/artwork.js';
+import type { AppealRecord, ArtworkRecord } from '../src/domain/artwork.js';
 import { StaleWriteError } from '../src/domain/errors.js';
 import type { RoyaltyRecord } from '../src/domain/royalty.js';
 import type { ArtistStore } from '../src/ports/artist-store.js';
@@ -116,6 +116,62 @@ describe.each(makers)('ArtworkStore contract: %s', (_n, make) => {
     expect(await s.countByArtist('nobody')).toEqual({ total: 0, approved: 0 });
   });
 
+  it('ADR-0012 gallery order: featuredRank asc (featured only, unranked last), then featured, then newest', async () => {
+    const s = make().artworks;
+    await s.create(artwork('old', { createdAt: T(1) })); // a row from before ADR-0012 (no rank / edition fields)
+    await s.create(artwork('r2', { createdAt: T(2), featured: true, featuredRank: 2 }));
+    await s.create(artwork('r1', { createdAt: T(3), featured: true, featuredRank: 1 }));
+    await s.create(artwork('r2b', { createdAt: T(4), featured: true, featuredRank: 2 }));
+    await s.create(artwork('f', { createdAt: T(5), featured: true, featuredRank: null }));
+    await s.create(artwork('stale', { createdAt: T(6), featured: false, featuredRank: 1 })); // a rank without featured does not count
+    await s.create(artwork('new', { createdAt: T(7) }));
+    const all = await s.list({ status: 'approved', page: 1, pageSize: 10 });
+    expect(all.items.map((r) => r.id)).toEqual(['r1', 'r2b', 'r2', 'f', 'new', 'stale', 'old']);
+    expect((await s.list({ status: 'approved', page: 2, pageSize: 3 })).items.map((r) => r.id)).toEqual(['f', 'new', 'stale']);
+  });
+
+  it('filters by availability (sold out = maxEditions set and mintedEditions >= it)', async () => {
+    const s = make().artworks;
+    await s.create(artwork('legacy'));
+    await s.create(artwork('open', { maxEditions: null, mintedEditions: 50 }));
+    await s.create(artwork('room', { maxEditions: 3, mintedEditions: 2 }));
+    await s.create(artwork('full', { maxEditions: 3, mintedEditions: 3 }));
+    await s.create(artwork('over', { maxEditions: 1, mintedEditions: 2 }));
+    const ids = async (available?: boolean) =>
+      (await s.list({ status: 'approved', page: 1, pageSize: 10, ...(available !== undefined ? { available } : {}) })).items.map((r) => r.id).sort();
+    expect(await ids()).toEqual(['full', 'legacy', 'open', 'over', 'room']);
+    expect(await ids(true)).toEqual(['legacy', 'open', 'room']);
+    expect(await ids(false)).toEqual(['full', 'over']);
+    expect((await s.list({ status: 'approved', available: true, page: 1, pageSize: 1 })).total).toBe(3);
+  });
+
+  it('lists appeals across artworks: oldest first, by status, paged; rows without appeals contribute none', async () => {
+    const s = make().artworks;
+    const ap = (artworkId: string, n: number, status: AppealRecord['status'], at: number): AppealRecord => ({
+      id: `${artworkId}:appeal:${n}`,
+      artworkId,
+      artist: 'bcrt1alice',
+      message: `m${n}`,
+      status,
+      createdAt: T(at),
+      resolvedAt: status === 'open' ? null : T(at + 1),
+      resolution: status === 'open' ? null : { decision: status === 'granted' ? 'approve' : 'reject', reasons: [], reviewerId: 'h', at: T(at + 1) },
+    });
+    await s.create(artwork('none'));
+    await s.create(artwork('x', { status: 'reviewing', appeals: [ap('x', 1, 'denied', 1), ap('x', 2, 'open', 5)] }));
+    await s.create(artwork('y', { status: 'reviewing', appeals: [ap('y', 1, 'open', 3)] }));
+    await s.create(artwork('z', { status: 'approved', appeals: [ap('z', 1, 'granted', 2)] }));
+    const open = await s.listAppeals({ status: 'open', page: 1, pageSize: 10 });
+    expect(open.items.map((a) => a.id)).toEqual(['y:appeal:1', 'x:appeal:2']);
+    expect(open.total).toBe(2);
+    expect(open.items[0]).toEqual(ap('y', 1, 'open', 3));
+    expect((await s.listAppeals({ page: 1, pageSize: 10 })).items.map((a) => a.id)).toEqual(['x:appeal:1', 'z:appeal:1', 'y:appeal:1', 'x:appeal:2']);
+    const p2 = await s.listAppeals({ page: 2, pageSize: 3 });
+    expect(p2.items.map((a) => a.id)).toEqual(['x:appeal:2']);
+    expect(p2.total).toBe(4);
+    expect((await s.listAppeals({ status: 'denied', page: 1, pageSize: 10 })).items.map((a) => a.id)).toEqual(['x:appeal:1']);
+  });
+
   it('round-trips the full record (review, timeline, hashes)', async () => {
     const s = make().artworks;
     const rec = artwork('full', {
@@ -144,6 +200,18 @@ describe.each(makers)('RoyaltyStore contract: %s', (_n, make) => {
     expect(page.totals).toEqual({ records: 3, royaltySats: 400 });
     expect((await s.listByArtist('bcrt1alice', 2, 2)).items.map((r) => r.orderId)).toEqual(['o1']);
     expect(await s.listByArtist('nobody', 1, 10)).toEqual({ items: [], total: 0, totals: { records: 0, royaltySats: 0 } });
+  });
+
+  it('counts records per artwork and round-trips the edition', async () => {
+    const s = make().royalties;
+    await s.create(royalty('o1', { artworkId: 'art_a', edition: 1 }));
+    await s.create(royalty('o2', { artworkId: 'art_a', edition: 2 }));
+    await s.create(royalty('o3', { artworkId: 'art_b' }));
+    expect(await s.countByArtwork('art_a')).toBe(2);
+    expect(await s.countByArtwork('art_b')).toBe(1);
+    expect(await s.countByArtwork('art_none')).toBe(0);
+    expect((await s.getByOrder('o2'))!.edition).toBe(2);
+    expect(await s.getByOrder('o3')).not.toHaveProperty('edition');
   });
 });
 
@@ -192,6 +260,11 @@ describe('galleryOrder', () => {
   it('is featured desc, createdAt desc, id desc', () => {
     const rows = [artwork('b', { createdAt: T(1) }), artwork('a', { createdAt: T(1) }), artwork('c', { createdAt: T(0), featured: true }), artwork('d', { createdAt: T(2) })];
     expect([...rows].sort(galleryOrder).map((r) => r.id)).toEqual(['c', 'd', 'b', 'a']);
+  });
+
+  it('puts ranked featured artworks first, lowest rank first (ADR-0012)', () => {
+    const rows = [artwork('f', { featured: true, createdAt: T(9) }), artwork('r5', { featured: true, featuredRank: 5 }), artwork('r1', { featured: true, featuredRank: 1 }), artwork('n', { createdAt: T(10) })];
+    expect([...rows].sort(galleryOrder).map((r) => r.id)).toEqual(['r1', 'r5', 'f', 'n']);
   });
 });
 

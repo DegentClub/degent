@@ -10,6 +10,30 @@ export type ArtworkStatus = (typeof ARTWORK_STATUSES)[number];
 
 export const TITLE_MAX_CHARS = 80;
 export const DESCRIPTION_MAX_CHARS = 500;
+/** Largest accepted `maxEditions` (ADR-0012). */
+export const MAX_EDITIONS_LIMIT = 10_000;
+/** Largest accepted `featuredRank`. */
+export const FEATURED_RANK_MAX = 1_000;
+export const APPEAL_MESSAGE_MAX_CHARS = 1_000;
+/** Appeals an artwork may receive over its lifetime (one open at a time). */
+export const APPEALS_PER_ARTWORK = 3;
+
+export const APPEAL_STATUSES = ['open', 'granted', 'denied'] as const;
+export type AppealStatus = (typeof APPEAL_STATUSES)[number];
+
+/** An artist's request for a human review of a rejection (ADR-0012). Stored on the artwork record. */
+export interface AppealRecord {
+  /** `<artworkId>:appeal:<n>` (1-based per artwork). */
+  id: string;
+  artworkId: string;
+  artist: string;
+  message: string;
+  status: AppealStatus;
+  createdAt: string;
+  resolvedAt: string | null;
+  /** The house verdict that resolved it. */
+  resolution: HouseReview | null;
+}
 
 export interface AutomatedReview {
   approved: boolean;
@@ -61,6 +85,15 @@ export interface ArtworkRecord {
   version: number;
   /** SHA-256 hex of the one-time upload token. */
   uploadTokenHash: string;
+  // ADR-0012 fields. Optional so rows written before them read as an open edition, unranked, never appealed.
+  /** Edition cap; null / absent = open edition. */
+  maxEditions?: number | null;
+  /** Royalty records received for this artwork (one per minted edition). */
+  mintedEditions?: number;
+  /** House curation order, lower first; only while featured. */
+  featuredRank?: number | null;
+  /** Oldest first; at most one `open`. */
+  appeals?: AppealRecord[];
 }
 
 /** Public view: the record without secrets or storage bookkeeping, plus the content URL. */
@@ -82,18 +115,25 @@ export interface Artwork {
   timeline: ArtworkEvent[];
   createdAt: string;
   updatedAt: string;
+  maxEditions: number | null;
+  mintedEditions: number;
+  soldOut: boolean;
+  featuredRank: number | null;
+  /** Owner and API-key viewers only. */
+  appeals?: AppealRecord[];
 }
 
 /**
- * Allowed transitions (ADR-0007 §3). `submitted -> reviewing` happens on upload; `reviewing` resolves to
- * `approved` / `rejected` automatically or by the house; the artist can delist an approved piece; the house
- * can take down (`approved -> rejected`) or reinstate (`rejected -> approved`). `delisted` is terminal.
+ * Allowed transitions (ADR-0007 §3, ADR-0012). `submitted -> reviewing` happens on upload; `reviewing` resolves
+ * to `approved` / `rejected` automatically or by the house; the artist can delist an approved piece; the house
+ * can take down (`approved -> rejected`) or reinstate (`rejected -> approved`); the artist can appeal a
+ * rejection (`rejected -> reviewing`, needsHuman). `delisted` is terminal.
  */
 export const TRANSITIONS: Readonly<Record<ArtworkStatus, readonly ArtworkStatus[]>> = Object.freeze({
   submitted: ['reviewing'],
   reviewing: ['approved', 'rejected'],
   approved: ['rejected', 'delisted'],
-  rejected: ['approved'],
+  rejected: ['approved', 'reviewing'],
   delisted: [],
 });
 
@@ -115,8 +155,21 @@ export function transition(r: ArtworkRecord, to: ArtworkStatus, at: string, deta
 
 export const ARTWORK_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-export function toPublicArtwork(r: ArtworkRecord, contentUrl: (id: string) => string): Artwork {
-  return {
+/** True when the artwork has a cap and the minted editions reached it (ADR-0012). */
+export function isSoldOut(r: Pick<ArtworkRecord, 'maxEditions' | 'mintedEditions'>): boolean {
+  return r.maxEditions != null && (r.mintedEditions ?? 0) >= r.maxEditions;
+}
+
+export function openAppeal(r: Pick<ArtworkRecord, 'appeals'>): AppealRecord | null {
+  return r.appeals?.find((a) => a.status === 'open') ?? null;
+}
+
+/**
+ * Public view. `includePrivate` (the owner or an API key) adds the appeals: the artist's messages to the
+ * house are not for the public gallery.
+ */
+export function toPublicArtwork(r: ArtworkRecord, contentUrl: (id: string) => string, includePrivate = false): Artwork {
+  const view: Artwork = {
     id: r.id,
     artist: r.artist,
     network: r.network,
@@ -134,5 +187,11 @@ export function toPublicArtwork(r: ArtworkRecord, contentUrl: (id: string) => st
     timeline: r.timeline.map((e) => ({ ...e })),
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
+    maxEditions: r.maxEditions ?? null,
+    mintedEditions: r.mintedEditions ?? 0,
+    soldOut: isSoldOut(r),
+    featuredRank: r.featuredRank ?? null,
   };
+  if (includePrivate) view.appeals = (r.appeals ?? []).map((a) => structuredClone(a));
+  return view;
 }

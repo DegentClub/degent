@@ -14,4 +14,6 @@ export interface RoyaltyStore {
   getByOrder(orderId: string): Promise<RoyaltyRecord | null>;
   /** Newest first (at desc, orderId desc). */
   listByArtist(address: string, page: number, pageSize: number): Promise<RoyaltyPage>;
+  /** Records for one artwork: its minted editions (ADR-0012). */
+  countByArtwork(artworkId: string): Promise<number>;
 }

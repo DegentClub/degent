@@ -15,6 +15,7 @@
     "@bsh/edge": "workspace:*",
     "@bsh/events": "workspace:*",
     "@bsh/identity": "workspace:*",
+    "@bsh/notify": "workspace:*",
     "@hono/node-server": "^2.1.1",
     "@noble/hashes": "^2.4.0",
     "hono": "^4.13.8"

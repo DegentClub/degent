@@ -161,6 +161,8 @@ export function createApp(o: AppOptions): Hono {
   app.post('/v1/artworks', jsonBody, authed, async (c) => c.json(await svc.createArtwork(c.get('session').sub, await readJson(c)), 201));
   app.get('/v1/artworks/:id', optionalKey, async (c) => c.json(await svc.getArtwork(artworkId(c), await viewerOf(c))));
   app.delete('/v1/artworks/:id', authed, async (c) => c.json(await svc.delist(artworkId(c), c.get('session').sub)));
+  app.put('/v1/artworks/:id/editions', jsonBody, authed, async (c) => c.json(await svc.setEditions(artworkId(c), c.get('session').sub, await readJson(c))));
+  app.post('/v1/artworks/:id/appeal', jsonBody, authed, async (c) => c.json(await svc.appeal(artworkId(c), c.get('session').sub, await readJson(c)), 201));
 
   app.put('/v1/artworks/:id/content', bodyLimit(svc.settings.maxUploadBytes), async (c) => {
     const id = artworkId(c);
@@ -188,6 +190,9 @@ export function createApp(o: AppOptions): Hono {
 
   app.post('/v1/artworks/:id/review', jsonBody, reviewer, async (c) => c.json(await svc.houseReview(artworkId(c), c.get('apiKey').id, await readJson(c))));
   app.post('/v1/artworks/:id/feature', jsonBody, reviewer, async (c) => c.json(await svc.feature(artworkId(c), c.get('apiKey').id, await readJson(c))));
+
+  // ---------------------------------------------------------------- appeals (the house queue)
+  app.get('/v1/appeals', reviewer, async (c) => c.json(await svc.listAppeals(c.req.query())));
 
   // ---------------------------------------------------------------- internal (mint service)
   app.get('/v1/internal/artists/:address/payout', internal, async (c) => c.json(await svc.artistPayout(c.req.param('address'))));

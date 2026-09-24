@@ -15,6 +15,9 @@ interface StudioArtworkWire {
   contentLength: number;
   contentSha256: string | null;
   status: StudioArtwork['status'];
+  /** ADR-0012 (optional in the contract; absent from older studios). */
+  maxEditions?: number | null;
+  mintedEditions?: number;
 }
 
 const retryableStatus = (status: number) => status >= 500 || status === 429 || status === 408;
@@ -54,7 +57,7 @@ export class HttpStudioClient implements StudioClient {
       const p = (await artist.json()) as { payoutAddress?: unknown };
       if (typeof p.payoutAddress === 'string' && p.payoutAddress.length > 0) payoutAddress = p.payoutAddress;
     } else if (artist.status !== 404) throw new StudioClientError(`studio artist: HTTP ${artist.status}`, artist.status, retryableStatus(artist.status));
-    return {
+    const art: StudioArtwork = {
       id: a.id,
       artist: a.artist,
       payoutAddress,
@@ -64,6 +67,10 @@ export class HttpStudioClient implements StudioClient {
       contentSha256: a.contentSha256 ?? null,
       status: a.status,
     };
+    // Edition facts (ADR-0012), taken only when well-formed; a studio without them is an open edition.
+    if (a.maxEditions === null || (Number.isInteger(a.maxEditions) && (a.maxEditions as number) >= 1)) art.maxEditions = a.maxEditions ?? null;
+    if (Number.isInteger(a.mintedEditions) && (a.mintedEditions as number) >= 0) art.mintedEditions = a.mintedEditions as number;
+    return art;
   }
 
   async getContent(id: string): Promise<Uint8Array | null> {
@@ -113,7 +120,17 @@ export class MemoryStudioClient implements StudioClient {
     if (this.down) throw new StudioClientError('studio unreachable', null, true);
   }
 
-  addArtwork(a: { id: string; artist: string; payoutAddress: string | null; bytes: Uint8Array; contentType: string; status?: StudioArtwork['status']; title?: string }): MemoryArtwork {
+  addArtwork(a: {
+    id: string;
+    artist: string;
+    payoutAddress: string | null;
+    bytes: Uint8Array;
+    contentType: string;
+    status?: StudioArtwork['status'];
+    title?: string;
+    maxEditions?: number | null;
+    mintedEditions?: number;
+  }): MemoryArtwork {
     const art: MemoryArtwork = {
       id: a.id,
       artist: a.artist,
@@ -124,6 +141,8 @@ export class MemoryStudioClient implements StudioClient {
       contentSha256: sha256Hex(a.bytes),
       status: a.status ?? 'approved',
       bytes: a.bytes,
+      ...(a.maxEditions !== undefined ? { maxEditions: a.maxEditions } : {}),
+      ...(a.mintedEditions !== undefined ? { mintedEditions: a.mintedEditions } : {}),
     };
     this.artworks.set(a.id, art);
     return art;
@@ -157,11 +176,15 @@ export class MemoryStudioClient implements StudioClient {
     if (!this.artworks.has(record.artworkId)) throw new StudioClientError('studio royalties: HTTP 404 artwork_not_found', 404, false);
     const existing = this.royalties.find((r) => r.orderId === record.orderId);
     if (existing) {
-      const same = existing.artworkId === record.artworkId && existing.royaltySats === record.royaltySats && existing.fundingTxid === record.fundingTxid && existing.vout === record.vout;
+      const sameEdition = existing.edition === undefined || record.edition === undefined || existing.edition === record.edition;
+      const same = existing.artworkId === record.artworkId && existing.royaltySats === record.royaltySats && existing.fundingTxid === record.fundingTxid && existing.vout === record.vout && sameEdition;
       if (!same) throw new StudioClientError('studio royalties: HTTP 409 conflict', 409, false);
       return { created: false };
     }
     this.royalties.push({ ...record });
+    // Like the studio (ADR-0012): each new record is one minted edition.
+    const art = this.artworks.get(record.artworkId)!;
+    art.mintedEditions = (art.mintedEditions ?? 0) + 1;
     return { created: true };
   }
 }

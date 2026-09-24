@@ -98,7 +98,7 @@ describe('e2e: artwork order with royalty', () => {
     ]);
 
     // Studio: the royalty record, once.
-    expect(h.studio!.royalties).toEqual([{ orderId: b.orderId, artworkId: art.id, minterAddress: b.recipientAddress, royaltySats: q.artistRoyaltySats, fundingTxid: b.commitTxid, vout: 1, at: expect.any(String) }]);
+    expect(h.studio!.royalties).toEqual([{ orderId: b.orderId, artworkId: art.id, minterAddress: b.recipientAddress, royaltySats: q.artistRoyaltySats, fundingTxid: b.commitTxid, vout: 1, at: expect.any(String), edition: 1 }]);
     // Events: royalty.paid once, collection.minted once with the Open Studio fields (platform topic 1.1.0).
     expect(h.events.royaltyEvents.map((e) => e.orderId)).toEqual([b.orderId]);
     const minted = h.events.mintedEvents;

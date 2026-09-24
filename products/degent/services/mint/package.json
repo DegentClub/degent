@@ -19,7 +19,9 @@
     "@scure/btc-signer": "^2.4.1",
     "@scure/base": "^2.4.0",
     "@anthropic-ai/sdk": "^0.128.0",
-    "@bsh/events": "workspace:*"
+    "@bsh/events": "workspace:*",
+    "@bsh/signer": "workspace:*",
+    "@bsh/edge": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5",

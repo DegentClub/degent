@@ -15,6 +15,7 @@ import type { ChainPort } from './ports/chain.js';
 import type { FeePort } from './ports/fees.js';
 import type { ParentUtxoProvider } from './ports/parent-utxo.js';
 import type { Clock } from './ports/clock.js';
+import { registerAdminRoutes, type AdminOptions } from './admin.js';
 
 export interface AppOptions {
   orders: OrderService;
@@ -29,6 +30,10 @@ export interface AppOptions {
   clientIp?: (c: Context) => string;
   trustProxy?: boolean;
   log?: Logger;
+  /** Extra `GET /v1/health` checks (event bus, remote signer). A throwing check reports `ok: false`. */
+  healthChecks?: Record<string, () => Promise<{ ok: boolean; detail?: string }>>;
+  /** `/v1/admin/*` (scope mint:admin). Default: no keys, so every admin call is 401. */
+  admin?: AdminOptions;
 }
 
 export const JSON_BODY_LIMIT = 16 * 1024;
@@ -152,6 +157,19 @@ export function createApp(o: AppOptions): Hono {
     if (o.parents) {
       const p = await o.parents.current().catch(() => null);
       checks.parent = p ? { ok: true, detail: p.confirmed ? 'confirmed' : 'unconfirmed' } : { ok: false, detail: 'no parent UTXO' };
+      const alert = await o.parents.valueAlert().catch(() => null);
+      if (alert)
+        checks.parentValue = {
+          ok: false,
+          detail: `parent value changed at ${alert.at} (was ${alert.previous.valueSats} sats; now ${alert.current.valueSats} sats at ${alert.current.outpoint}); co-signing paused until POST /v1/admin/parent/ack`,
+        };
+    }
+    for (const [name, check] of Object.entries(o.healthChecks ?? {})) {
+      try {
+        checks[name] = await check();
+      } catch {
+        checks[name] = { ok: false, detail: 'check failed' };
+      }
     }
     const ok = Object.values(checks).every((x) => x.ok);
     const body: HealthResponse = {
@@ -235,6 +253,8 @@ export function createApp(o: AppOptions): Hono {
   app.get('/v1/orders/:id/rescue', async (c) =>
     c.json(await o.orders.getRescue(orderId(c), c.req.header('authorization'))),
   );
+
+  registerAdminRoutes(app, { ...(o.parents ? { parents: o.parents } : {}), clock: o.clock, log, ...(o.admin ? { admin: o.admin } : {}), readJson });
 
   return app;
 }

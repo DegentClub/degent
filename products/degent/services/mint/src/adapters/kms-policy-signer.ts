@@ -1,18 +1,13 @@
 /**
- * TODO(production): KMS/HSM-backed PolicySigner. Not implemented; the service refuses to start on
- * mainnet until this exists (config.ts). Intended shape:
- *
- *   1. evaluateParentPolicy(psbt, ctx) exactly as InMemoryPolicySigner does; refuse on violation.
- *   2. Compute the BIP341 SIGHASH_DEFAULT key-path digest for input 0 (both prevouts known from
- *      the PSBT's witnessUtxo fields).
- *   3. Ask the HSM for a BIP340 Schnorr signature over the digest with the TWEAKED key
- *      (tweak = H_TapTweak(P), no script tree) - either the HSM supports taproot tweaking or the
- *      tweaked private key is what is stored in the HSM.
- *   4. Put the 64-byte signature in input 0's tapKeySig and return the PSBT.
- *   5. Audit-log orderId, parent outpoint, digest and verdict for every request.
+ * RETIRED (Phase 5, p5.1): the KMS/HSM path is the platform signer service. `SIGNER=kms` is refused by
+ * config.ts with a pointer to `SIGNER=remote`: the mint talks to `@bsh/signer` through
+ * `RemotePolicySigner` (adapters/remote-policy-signer.ts), and the HSM sits behind the signer's
+ * `KeyProvider` port (platform/signer README, "HSM path"), so no key or HSM session ever lives in this
+ * process. The shapes below are kept only so older notes that reference them still resolve; nothing wires them.
  */
 import type { PolicySigner } from '../ports/policy-signer.js';
 
+/** @deprecated Use the platform signer's `KeyProvider` / `HsmKeyProvider` behind `SIGNER=remote`. */
 export interface SchnorrSigningBackend {
   /** Public x-only key of the (tweaked) signing key, for startup cross-checks. */
   publicKey(): Promise<Uint8Array>;
@@ -20,4 +15,5 @@ export interface SchnorrSigningBackend {
   signDigest(digest32: Uint8Array): Promise<Uint8Array>;
 }
 
+/** @deprecated See `RemotePolicySigner`. */
 export type KmsPolicySignerFactory = (backend: SchnorrSigningBackend) => PolicySigner;

@@ -16,6 +16,10 @@ export interface StudioArtwork {
   /** Null until the bytes were uploaded. */
   contentSha256: string | null;
   status: StudioArtworkStatus;
+  /** Edition cap (ADR-0012); null / absent = open edition. */
+  maxEditions?: number | null;
+  /** Royalty records the studio holds for the artwork (its minted editions). */
+  mintedEditions?: number;
 }
 
 /** Body of `POST /v1/internal/royalties` (RoyaltyRecordRequest). Idempotent on `orderId`. */
@@ -27,6 +31,8 @@ export interface RoyaltyRecordRequest {
   fundingTxid: string;
   vout: number;
   at: string;
+  /** The edition the order was assigned (ADR-0012); lets the studio count and name it. */
+  edition?: number;
 }
 
 /** Thrown by adapters; `retryable` says whether the worker should try again later. */

@@ -4,7 +4,7 @@
  * process (the mint runs one worker and one API replica per store; node:sqlite calls are synchronous, so a
  * file store never interleaves either).
  */
-import type { EditionReservation, EditionStore } from '../ports/edition-store.js';
+import { EditionsSoldOutError, type EditionReservation, type EditionStore, type ReserveOptions } from '../ports/edition-store.js';
 import type { OrderStore } from '../ports/order-store.js';
 
 interface EditionDoc {
@@ -47,7 +47,7 @@ export class MetaEditionStore implements EditionStore {
     return out;
   }
 
-  async reserve(artworkId: string, orderId: string, expiresAt: Date, now: Date): Promise<number> {
+  async reserve(artworkId: string, orderId: string, expiresAt: Date, now: Date, opts: ReserveOptions = {}): Promise<number> {
     return this.locked(artworkId, async (doc, save) => {
       MetaEditionStore.prune(doc, now);
       const mine = doc.reservations[orderId];
@@ -56,6 +56,9 @@ export class MetaEditionStore implements EditionStore {
         await save();
         return mine.edition;
       }
+      // The cap is checked in the same critical section that picks the number (ADR-0012).
+      const count = Object.keys(doc.reservations).length;
+      if (opts.maxEditions != null && count >= opts.maxEditions) throw new EditionsSoldOutError(artworkId, opts.maxEditions, count);
       const held = MetaEditionStore.held(doc);
       let edition = 1;
       while (held.has(edition)) edition++;
@@ -103,5 +106,12 @@ export class MetaEditionStore implements EditionStore {
     const raw = await this.store.getMeta(KEY(artworkId));
     if (!raw) return 0;
     return Object.values((JSON.parse(raw) as EditionDoc).reservations).filter((r) => r.consumed).length;
+  }
+
+  async countActive(artworkId: string, now: Date): Promise<number> {
+    const raw = await this.store.getMeta(KEY(artworkId));
+    if (!raw) return 0;
+    const t = now.getTime();
+    return Object.values((JSON.parse(raw) as EditionDoc).reservations).filter((r) => r.consumed || Date.parse(r.expiresAt) > t).length;
   }
 }

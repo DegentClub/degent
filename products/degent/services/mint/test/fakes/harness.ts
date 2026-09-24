@@ -329,6 +329,10 @@ export interface StudioArtworkOptions {
   /** Payout address: a P2TR (default, seed 60 + artistSeed) or explicit. `null` = not proven. */
   payoutAddress?: string | null;
   status?: 'submitted' | 'reviewing' | 'approved' | 'rejected' | 'delisted';
+  /** Edition cap (ADR-0012); absent = open edition. */
+  maxEditions?: number | null;
+  /** Editions the studio already counts. */
+  mintedEditions?: number;
 }
 
 let artworkN = 0;
@@ -345,6 +349,8 @@ export function studioArtwork(h: Harness, o: StudioArtworkOptions = {}) {
     bytes: o.bytes ?? standardArt(200_000, 1024, 1024),
     contentType: o.contentType ?? 'image/png',
     ...(o.status ? { status: o.status } : {}),
+    ...(o.maxEditions !== undefined ? { maxEditions: o.maxEditions } : {}),
+    ...(o.mintedEditions !== undefined ? { mintedEditions: o.mintedEditions } : {}),
   });
   return art;
 }

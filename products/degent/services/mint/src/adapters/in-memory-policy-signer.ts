@@ -1,6 +1,6 @@
 /**
- * Dev/test policy signer holding the collection key in process memory.
- * NEVER used on mainnet: config.ts refuses to start with it there.
+ * Dev/test policy signer holding the collection key in process memory (`SIGNER=memory`).
+ * NEVER used on mainnet: config.ts refuses to start with it there (mainnet needs `SIGNER=remote`).
  */
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { p2tr } from '@scure/btc-signer';

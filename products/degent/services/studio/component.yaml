@@ -3,13 +3,13 @@ package: "@bsh/degent-studio"
 kind: service
 product: degent
 owner: team-degent
-summary: Artist Studio for degent.club - Sign-in-with-Bitcoin artist identity, BIP-322-proven payout address, artwork submission reviewed once against the Degent rules, public gallery, royalty view.
+summary: Artist Studio for degent.club - SIWB artists, BIP-322-proven payout, artworks reviewed once against the Degent rules, edition caps, curated gallery, appeals, royalties, artist notifications.
 lifecycle: experimental
-depends_on: ["@bsh/degent-mint-sdk", "@bsh/identity", "@bsh/edge", "@bsh/events"]
+depends_on: ["@bsh/degent-mint-sdk", "@bsh/identity", "@bsh/edge", "@bsh/events", "@bsh/notify"]
 provides: [contracts/openapi/degent-studio.yaml, contracts/asyncapi/degent-studio.yaml]
 consumes: [contracts/schemas/degent-rules.json]
 stores: ["sqlite:degent_studio"]
-secrets: ["services/degent-studio/session-signing-key", "services/degent-studio/vision-review-api-key", "services/degent-studio/api-keys"]
+secrets: ["services/degent-studio/session-signing-key", "services/degent-studio/vision-review-api-key", "services/degent-studio/api-keys", "services/degent-studio/telegram-bot-token"]
 env_schema: ./env.schema.json
 slo: { availability: "99.5", p95_ms: 300 }
 runbook: ./RUNBOOK.md

@@ -78,6 +78,26 @@ describe('buildRuntime', () => {
     rt.close();
   });
 
+  it('wires artist notifications: webhook always, Telegram with a bot token; regtest accepts local webhook receivers', async () => {
+    const rt = buildRuntime(loadConfig({ NETWORK: 'regtest' }), silentLogger);
+    expect(rt.notifier.channels).toEqual(['webhook']);
+    expect(((await (await rt.app.request('/v1/config')).json()) as { notifyChannels: string[] }).notifyChannels).toEqual(['webhook']);
+    expect(() => rt.notifier.validateTarget('webhook', 'http://127.0.0.1:9999/hook')).not.toThrow();
+    expect(() => rt.notifier.validateTarget('telegram', '12345')).toThrow(/not enabled/);
+    rt.close();
+    const tg = buildRuntime(loadConfig({ NETWORK: 'regtest', TELEGRAM_BOT_TOKEN: `123456789:${'A'.repeat(35)}` }), silentLogger);
+    expect(tg.notifier.channels).toEqual(['webhook', 'telegram']);
+    tg.close();
+    // off regtest, webhooks must be public https (validated by @bsh/notify)
+    const cfg = loadConfig({ NETWORK: 'regtest', SESSION_SIGNING_KEY: '22'.repeat(32) });
+    cfg.settings.network = 'signet';
+    const signet = buildRuntime(cfg, silentLogger);
+    expect(() => signet.notifier.validateTarget('webhook', 'http://127.0.0.1:9999/hook')).toThrow(/https/);
+    expect(() => signet.notifier.validateTarget('webhook', 'https://127.0.0.1/hook')).toThrow(/private/);
+    expect(() => signet.notifier.validateTarget('webhook', 'https://hooks.example.com/hook')).not.toThrow();
+    signet.close();
+  });
+
   it('refuses to start off regtest without a session key', () => {
     const cfg = loadConfig({ NETWORK: 'regtest' });
     cfg.settings.network = 'signet';

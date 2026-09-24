@@ -147,8 +147,9 @@ per payee output. Receipts show payouts. The mint service is the ledger's client
 
 ### 3.7 Edition semantics
 
-Open editions by default (unbounded). **DECISION**: artists may set `maxEditions` on an artwork (Phase 5); when
-reached the artwork is `sold_out` and orders fail with `artwork_not_mintable`. Nothing prevents the same bytes
+Open editions by default (unbounded). **DECISION**: artists may set `maxEditions` on an artwork (Phase 5, ADR-0012);
+when reached the artwork reports `soldOut: true` (a flag, not a status) and orders fail with `artwork_not_mintable`
+(`details.soldOut`); the mint counts consumed plus live reservations inside the reservation itself. Nothing prevents the same bytes
 being inscribed twice on Bitcoin; the edition number in the metadata and the studio's records are what make an
 edition an edition.
 
@@ -183,8 +184,9 @@ Repository: `degent`, `scribbit` (platform signer, events).
 3. **Durable state.** SQLite stores everywhere by default in production configuration (orders, reveals, artworks,
    artists, nonces); `PlatformEventBusAdapter` wired to RabbitMQ through `connectAmqpBus` when `AMQP_URL` is set;
    notify subscriptions and delivery log persisted; artist notifications (email or Telegram) on `royalty.paid`.
-4. **Edition caps and curation.** `maxEditions` on artworks; house curation (`featured`) drives the gallery front
-   room; appeal workflow (artist requests a human review of a rejection).
+4. **Edition caps and curation** (done, ADR-0012). `maxEditions` on artworks, enforced inside the mint's edition
+   reservation; house curation (`featured` + `featuredRank`) drives the gallery front room; appeal workflow (artist
+   requests a human review of a rejection); artist notifications (webhook, Telegram) via `@bsh/notify`.
 5. **Security review** of the upload path (body limits, content sniffing, storage isolation), the royalty
    verification and the internal endpoints (API key scopes, replay).
 6. **Game day** on signet: forced signer failover, bus outage, parent re-lease; no stranded orders, no unpaid
@@ -209,7 +211,8 @@ Exit: first mainnet Studio mint with an artist paid on chain.
 - ADR-0007 Open Studio (this milestone; `docs/adr/0007-open-studio.md`).
 - ADR-0008 Attribution in certification (`DegentClub/blockspace`).
 - ADR-0009 Ledger payees and the PSBT payment method (`DegentClub/scribbit`, with Phase 3's pin bump).
-- ADR-0010 Edition reservations and caps (Phase 5, when `maxEditions` lands).
+- ADR-0012 Edition caps, curation and appeals (Phase 5; `docs/adr/0012-edition-caps-curation-appeals.md`). Planned
+  as ADR-0010, a number the platform took for the mesh accountability layer.
 
 ## Open decisions and their defaults
 
@@ -217,6 +220,6 @@ Exit: first mainnet Studio mint with an artist paid on chain.
 |---|---|---|
 | Royalty base and top-up | 10% of mint price, on top of the minter's total | Board (paper 01, decision 2) |
 | Club fee | 10% of network cost per tier | Board (decision 3) |
-| Edition reservation at quote time | Yes | Engineering, in ADR-0010 |
+| Edition reservation at quote time | Yes | Engineering, in ADR-0012 |
 | Artist eligibility | Any wallet with a proven payout address; no KYC | Board with counsel (decision 6) |
 | Launch sequence | Signet at Phase 3 exit, mainnet at Phase 6 | Board (decision 7) |

@@ -14,6 +14,7 @@ import { HttpStudioClient, MemoryStudioClient } from '../src/adapters/studio-cli
 import { isRbfSignalled } from '../src/adapters/esplora-chain.js';
 import { LedgerClientError } from '../src/ports/ledger-client.js';
 import { StudioClientError } from '../src/ports/studio-client.js';
+import { EditionsSoldOutError } from '../src/ports/edition-store.js';
 import { regtestAddress } from './fakes/harness.js';
 
 type Call = { url: string; init: RequestInit };
@@ -46,6 +47,30 @@ describe('HttpStudioClient', () => {
     expect(calls.map((x) => x.url)).toEqual(['http://studio.test/v1/artworks/art_1', `http://studio.test/v1/internal/artists/${ARTIST}/payout`]);
     expect((calls[0]!.init.headers as Record<string, string>)['x-api-key']).toBe('bsh_test_key');
     expect((calls[1]!.init.headers as Record<string, string>)['x-api-key']).toBe('bsh_test_key');
+  });
+
+  it('getArtwork carries the edition facts (ADR-0012) when the studio sends them, well-formed only', async () => {
+    const payout = () => json({ address: ARTIST, payoutAddress: PAYOUT, payoutVerifiedAt: null });
+    const { fetch } = fakeFetch({
+      'GET /v1/artworks/art_1': () => json({ ...artwork, maxEditions: 10, mintedEditions: 4, soldOut: false }),
+      'GET /v1/artworks/art_2': () => json({ ...artwork, id: 'art_2', maxEditions: null, mintedEditions: 0 }),
+      'GET /v1/artworks/art_3': () => json({ ...artwork, id: 'art_3', maxEditions: 0, mintedEditions: -1 }),
+      [`GET /v1/internal/artists/${ARTIST}/payout`]: payout,
+    });
+    const c = new HttpStudioClient({ studioUrl: 'http://studio.test', apiKey: 'k', fetch });
+    expect(await c.getArtwork('art_1')).toMatchObject({ maxEditions: 10, mintedEditions: 4 });
+    expect(await c.getArtwork('art_2')).toMatchObject({ maxEditions: null, mintedEditions: 0 });
+    const bad = (await c.getArtwork('art_3'))!;
+    expect(bad).not.toHaveProperty('maxEditions');
+    expect(bad).not.toHaveProperty('mintedEditions');
+  });
+
+  it('postRoyalty sends the edition when the order has one', async () => {
+    const { fetch, calls } = fakeFetch({ 'POST /v1/internal/royalties': () => json({ record: {}, created: true }, 201) });
+    const c = new HttpStudioClient({ studioUrl: 'http://studio.test', apiKey: 'k', fetch });
+    const rec = { orderId: 'dgt_1', artworkId: 'art_1', minterAddress: null, royaltySats: 330, fundingTxid: 'c'.repeat(64), vout: 1, at: '2026-09-24T00:00:00.000Z', edition: 7 };
+    await c.postRoyalty(rec);
+    expect(JSON.parse(calls[0]!.init.body as string)).toEqual(rec);
   });
 
   it('an artist who has not proven a payout address reads as not proven; 404 artwork -> null', async () => {
@@ -218,6 +243,38 @@ describe.each([
     expect(await e.reservation('art', 'late3')).toBeNull();
     expect(await e.consume('art', 'late3', 1, t(4000))).toBe(1);
     expect(await e.consumedCount('art')).toBe(2);
+  });
+
+  it('a cap refuses NEW reservations once active + consumed reach it; re-reserving is idempotent at the cap (ADR-0012)', async () => {
+    const e = new MetaEditionStore(make());
+    const cap = { maxEditions: 2 };
+    expect(await e.reserve('art', 'o1', t(900), t0, cap)).toBe(1);
+    expect(await e.reserve('art', 'o2', t(900), t0, cap)).toBe(2);
+    const err = await e.reserve('art', 'o3', t(900), t0, cap).catch((x: unknown) => x);
+    expect(err).toBeInstanceOf(EditionsSoldOutError);
+    expect(err).toMatchObject({ artworkId: 'art', maxEditions: 2, held: 2 });
+    expect(await e.reservation('art', 'o3')).toBeNull();
+    expect(await e.reserve('art', 'o1', t(950), t(1), cap)).toBe(1); // idempotent for an existing order
+    expect(await e.countActive('art', t(1))).toBe(2);
+    expect(await e.consume('art', 'o1', 1, t(2))).toBe(1);
+    expect(await e.countActive('art', t(2))).toBe(2);
+    // o2's quote expires: its slot frees, the consumed edition keeps counting
+    expect(await e.countActive('art', t(901))).toBe(1);
+    expect(await e.reserve('art', 'o4', t(1800), t(901), cap)).toBe(2);
+    await expect(e.reserve('art', 'o5', t(1800), t(902), cap)).rejects.toBeInstanceOf(EditionsSoldOutError);
+    // no cap / null cap: open edition
+    expect(await e.reserve('art', 'o6', t(1800), t(903), { maxEditions: null })).toBe(3);
+    expect(await e.reserve('art', 'o7', t(1800), t(903))).toBe(4);
+    expect(await e.countActive('none', t0)).toBe(0);
+  });
+
+  it('concurrent reservations against a cap: exactly maxEditions succeed, with distinct numbers', async () => {
+    const e = new MetaEditionStore(make());
+    const res = await Promise.allSettled(Array.from({ length: 12 }, (_, i) => e.reserve('art', `o${i}`, t(900), t0, { maxEditions: 5 })));
+    const ok = res.filter((r): r is PromiseFulfilledResult<number> => r.status === 'fulfilled').map((r) => r.value);
+    expect(ok.sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5]);
+    expect(res.filter((r) => r.status === 'rejected').every((r) => (r as PromiseRejectedResult).reason instanceof EditionsSoldOutError)).toBe(true);
+    expect(await e.countActive('art', t0)).toBe(5);
   });
 
   it('concurrent reservations for one artwork never collide', async () => {

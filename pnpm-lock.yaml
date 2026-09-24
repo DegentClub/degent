@@ -439,12 +439,18 @@ importers:
       '@bsh/degent-mint-sdk':
         specifier: workspace:*
         version: link:../../packages/mint-sdk
+      '@bsh/edge':
+        specifier: workspace:*
+        version: link:../../../../deps/scribbit/platform/edge
       '@bsh/events':
         specifier: workspace:*
         version: link:../../../../deps/scribbit/platform/events
       '@bsh/inscription':
         specifier: workspace:*
         version: link:../../../../deps/scribbit/platform/inscription
+      '@bsh/signer':
+        specifier: workspace:*
+        version: link:../../../../deps/scribbit/platform/signer
       '@hono/node-server':
         specifier: ^2.1.1
         version: 2.1.1(hono@4.13.8)
@@ -497,6 +503,9 @@ importers:
       '@bsh/identity':
         specifier: workspace:*
         version: link:../../../../deps/scribbit/platform/identity
+      '@bsh/notify':
+        specifier: workspace:*
+        version: link:../../../../deps/scribbit/platform/notify
       '@hono/node-server':
         specifier: ^2.1.1
         version: 2.1.1(hono@4.13.8)

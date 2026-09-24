@@ -361,6 +361,7 @@ export class MintWorker {
     const candidates = [...occ.standard.waiting, ...occ.block.waiting]
       .filter((o) => o.status === 'queued')
       .sort((a, b) => `${a.queuedAt}|${a.id}`.localeCompare(`${b.queuedAt}|${b.id}`));
+    if (candidates.length > 0 && (await this.parentCircuitOpen())) return;
     for (const o of candidates) {
       if (o.lane === 'standard') {
         if (standardInFlight >= this.s.standardConcurrency) continue;
@@ -395,6 +396,22 @@ export class MintWorker {
         this.log.error('dispatch failed', { orderId: o.id, error });
       }
     }
+  }
+
+  /**
+   * Parent-lease alert hook (p5.2): the parent's VALUE changed, so every stored 0x81 reveal is signed for a
+   * parent that no longer exists. No co-signing until an operator acknowledges (POST /v1/admin/parent/ack).
+   */
+  private async parentCircuitOpen(): Promise<boolean> {
+    const alert = await this.d.parents.valueAlert();
+    if (!alert) return false;
+    this.log.error('parent value changed; co-signing paused until an operator acknowledges (POST /v1/admin/parent/ack)', {
+      event: 'parent.value.changed',
+      previous: alert.previous,
+      current: alert.current,
+      since: alert.at,
+    });
+    return true;
   }
 
   private async reveal(o: OrderRecord): Promise<boolean> {

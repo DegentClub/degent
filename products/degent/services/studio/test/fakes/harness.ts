@@ -8,6 +8,7 @@ import { getAddress, type TEST_NETWORK } from '@scure/btc-signer';
 import { InMemoryApiKeyStore, generateApiKey } from '@bsh/edge';
 import { InMemoryNonceStore, SessionKeyRing, generateSigningKey, networkParams, signBip322Simple, signLegacyMessage, type BitcoinNetwork } from '@bsh/identity';
 import { DEGENT_RULES_CONFIG, MAX_UPLOAD_BYTES } from '@bsh/degent-mint-sdk';
+import { ManualClock } from '@bsh/events';
 import { createApp } from '../../src/app.js';
 import { StudioService } from '../../src/application/studio-service.js';
 import type { StudioSettings } from '../../src/application/settings.js';
@@ -15,10 +16,12 @@ import { MemoryContentStore } from '../../src/adapters/content-stores.js';
 import { MemoryArtistStore, MemoryArtworkStore, MemoryRoyaltyStore } from '../../src/adapters/memory-stores.js';
 import { CompositeArtReview, RulesArtReview } from '../../src/adapters/rules-art-review.js';
 import { MemoryEventBus } from '../../src/adapters/system.js';
+import { BshArtistNotifier } from '../../src/adapters/bsh-artist-notifier.js';
 import type { Artwork } from '../../src/domain/artwork.js';
 import { payoutMessage } from '../../src/domain/artist.js';
 import type { ArtReview } from '../../src/ports/art-review.js';
 import { FakeClock, FakeVisionReview } from './misc.js';
+import { FakeTelegram, FakeWebhookReceiver } from './notify.js';
 import { squareArt } from './images.js';
 
 export const NET: BitcoinNetwork = 'regtest';
@@ -36,6 +39,10 @@ export interface HarnessOptions {
   corsOrigins?: string[];
   rateLimitPerMinute?: number;
   settings?: Partial<StudioSettings>;
+  /** Wire the Telegram channel (default true). */
+  telegram?: boolean;
+  /** No notifier at all (notifications disabled). */
+  noNotifier?: boolean;
 }
 
 export function makeHarness(opts: HarnessOptions = {}) {
@@ -60,8 +67,35 @@ export function makeHarness(opts: HarnessOptions = {}) {
   const vision = opts.vision ?? new FakeVisionReview();
   const review = new CompositeArtReview([new RulesArtReview(settings.rules), vision]);
   const keys = new SessionKeyRing(generateSigningKey('test-1'));
+  // Artist notifications: the real @bsh/notify channels over fake transports; retries on a manual clock.
+  const webhooks = new FakeWebhookReceiver();
+  const telegram = new FakeTelegram();
+  const notifyClock = new ManualClock(clock.now());
+  const notifier = opts.noNotifier
+    ? undefined
+    : new BshArtistNotifier({
+        artists,
+        fetch: webhooks.fetch,
+        telegram: opts.telegram === false ? null : telegram,
+        clock: notifyClock,
+        nowSec: () => Math.floor(clock.now().getTime() / 1000),
+        random: () => 0.5,
+      });
   let n = 0;
-  const service = new StudioService({ settings, artists, artworks, royalties, nonces, content, review, events, keys, clock, newId: () => `art_test${String(++n).padStart(4, '0')}` });
+  const service = new StudioService({
+    settings,
+    artists,
+    artworks,
+    royalties,
+    nonces,
+    content,
+    review,
+    events,
+    keys,
+    clock,
+    ...(notifier ? { notifier } : {}),
+    newId: () => `art_test${String(++n).padStart(4, '0')}`,
+  });
 
   const apiKeys = new InMemoryApiKeyStore();
   const reviewerKey = generateApiKey('test');
@@ -79,7 +113,29 @@ export function makeHarness(opts: HarnessOptions = {}) {
     corsOrigins: opts.corsOrigins ?? ['https://degent.club'],
     rateLimitPerMinute: opts.rateLimitPerMinute ?? 10_000,
   });
-  return { clock, settings, artists, artworks, royalties, nonces, content, events, vision, review, keys, service, app, apiKeys, reviewerKey: reviewerKey.key, mintKey: mintKey.key, bothKey: bothKey.key };
+  return {
+    clock,
+    settings,
+    artists,
+    artworks,
+    royalties,
+    nonces,
+    content,
+    events,
+    vision,
+    review,
+    keys,
+    service,
+    app,
+    apiKeys,
+    reviewerKey: reviewerKey.key,
+    mintKey: mintKey.key,
+    bothKey: bothKey.key,
+    notifier,
+    webhooks,
+    telegram,
+    notifyClock,
+  };
 }
 
 export type Harness = ReturnType<typeof makeHarness>;

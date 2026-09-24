@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-24T02:12:53.248Z",
+  "generatedAt": "2026-09-24T02:43:33.664Z",
   "schema": "schemas/component.schema.json",
   "components": [
     {
@@ -33,7 +33,7 @@
       "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
         "root": "deps/scribbit"
       }
     },
@@ -125,7 +125,9 @@
       "depends_on": [
         "@bsh/inscription",
         "@bsh/degent-mint-sdk",
-        "@bsh/events"
+        "@bsh/events",
+        "@bsh/signer",
+        "@bsh/edge"
       ],
       "provides": [
         "contracts/openapi/degent-mint.yaml",
@@ -136,7 +138,8 @@
         "deps/scribbit/contracts/asyncapi/platform-events.yaml#/channels/degentMintOrderStatus",
         "deps/scribbit/contracts/asyncapi/platform-events.yaml#/channels/collectionMinted",
         "contracts/openapi/degent-studio.yaml",
-        "deps/scribbit/contracts/openapi/ledger.yaml"
+        "deps/scribbit/contracts/openapi/ledger.yaml",
+        "deps/scribbit/contracts/openapi/signer.yaml"
       ],
       "stores": [
         "sqlite:degent_mint"
@@ -148,7 +151,10 @@
         "services/degent-mint/libre-rpc-pass",
         "services/degent-mint/slipstream-api-key",
         "services/degent-mint/studio-api-key",
-        "services/degent-mint/ledger-api-key"
+        "services/degent-mint/ledger-api-key",
+        "services/degent-mint/signer-api-key",
+        "services/degent-mint/admin-api-key-hashes",
+        "services/degent-mint/amqp-url"
       ],
       "env_schema": "./env.schema.json",
       "slo": {
@@ -216,13 +222,14 @@
       "kind": "service",
       "product": "degent",
       "owner": "team-degent",
-      "summary": "Artist Studio for degent.club - Sign-in-with-Bitcoin artist identity, BIP-322-proven payout address, artwork submission reviewed once against the Degent rules, public gallery, royalty view.",
+      "summary": "Artist Studio for degent.club - SIWB artists, BIP-322-proven payout, artworks reviewed once against the Degent rules, edition caps, curated gallery, appeals, royalties, artist notifications.",
       "lifecycle": "experimental",
       "depends_on": [
         "@bsh/degent-mint-sdk",
         "@bsh/identity",
         "@bsh/edge",
-        "@bsh/events"
+        "@bsh/events",
+        "@bsh/notify"
       ],
       "provides": [
         "contracts/openapi/degent-studio.yaml",
@@ -237,7 +244,8 @@
       "secrets": [
         "services/degent-studio/session-signing-key",
         "services/degent-studio/vision-review-api-key",
-        "services/degent-studio/api-keys"
+        "services/degent-studio/api-keys",
+        "services/degent-studio/telegram-bot-token"
       ],
       "env_schema": "./env.schema.json",
       "slo": {
@@ -333,13 +341,14 @@
       },
       "dependents": [
         "degent-atelier",
+        "degent-mint",
         "degent-studio",
         "ledger",
         "signer"
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
         "root": "deps/scribbit"
       }
     },
@@ -377,7 +386,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
         "root": "deps/scribbit"
       }
     },
@@ -412,7 +421,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
         "root": "deps/scribbit"
       }
     },
@@ -445,7 +454,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
         "root": "deps/scribbit"
       }
     },
@@ -506,7 +515,7 @@
       "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
         "root": "deps/scribbit"
       }
     },
@@ -536,7 +545,7 @@
       "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
         "root": "deps/scribbit"
       }
     },
@@ -565,10 +574,12 @@
       "files": {
         "docs": "deps/scribbit/platform/notify/README.md"
       },
-      "dependents": [],
+      "dependents": [
+        "degent-studio"
+      ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
         "root": "deps/scribbit"
       }
     },
@@ -618,10 +629,12 @@
         "runbook": "deps/scribbit/platform/signer/RUNBOOK.md",
         "docs": "deps/scribbit/platform/signer/README.md"
       },
-      "dependents": [],
+      "dependents": [
+        "degent-mint"
+      ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
         "root": "deps/scribbit"
       }
     },
@@ -656,7 +669,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "9298e7f7a9ff2e39b1b25760ffe5d0d80b19984f",
+        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
         "root": "deps/scribbit"
       }
     }
@@ -828,7 +841,9 @@
       "providers": [
         "signer"
       ],
-      "consumers": []
+      "consumers": [
+        "degent-mint"
+      ]
     },
     {
       "path": "events:block.indexed.{network}",
@@ -868,6 +883,11 @@
     },
     {
       "from": "degent-mint",
+      "to": "deps/scribbit/contracts/openapi/signer.yaml",
+      "type": "consumes"
+    },
+    {
+      "from": "degent-mint",
       "to": "events:block.indexed.{network}",
       "type": "consumes"
     },
@@ -893,12 +913,22 @@
     },
     {
       "from": "degent-mint",
+      "to": "edge",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-mint",
       "to": "events",
       "type": "depends_on"
     },
     {
       "from": "degent-mint",
       "to": "inscription",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-mint",
+      "to": "signer",
       "type": "depends_on"
     },
     {
@@ -919,6 +949,11 @@
     {
       "from": "degent-studio",
       "to": "identity",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-studio",
+      "to": "notify",
       "type": "depends_on"
     },
     {
