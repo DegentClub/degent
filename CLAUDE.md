@@ -14,10 +14,12 @@ and the catalog tool come from `DegentClub/scribbit`, vendored as a git submodul
 | `products/degent/packages/mint-sdk/` | `@bsh/degent-mint-sdk`: mint rules, domain types, typed API client |
 | `products/degent/services/telegram-gate/` | `@bsh/degent-telegram-gate`: holders-only Telegram gate (SIWB via `@bsh/identity`, Register holder check, invite by DM) |
 | `products/degent/services/x-bot/` | `@bsh/degent-x-bot`: X content engine (approval tiers, content safety, Register-fact drafts, `brain/BRAIN.md`) |
-| `contracts/` | Contracts **this product provides**: `openapi/degent-mint.yaml`, `openapi/degent-telegram-gate.yaml`, `asyncapi/degent-mint.yaml`. Platform contracts are at `deps/scribbit/contracts/` |
+| `products/degent/services/market/` | `@bsh/degent-market`: marketplace settlement engine (PSBT, FIFO via `@bsh/inscription`), SIWB listing auth, watcher; buys behind `BUYS_ENABLED` (ADR-0008) |
+| `products/degent/packages/market-sdk/` | `@bsh/degent-market-sdk`: listing/buy types, settlement layout, royalty/fee maths, typed API client |
+| `contracts/` | Contracts **this product provides**: `openapi/degent-mint.yaml`, `asyncapi/degent-mint.yaml`, `openapi/degent-telegram-gate.yaml`, `openapi/degent-market.yaml`, `asyncapi/degent-market.yaml`. Platform contracts are at `deps/scribbit/contracts/` |
 | `deps/scribbit/` | SUBMODULE, read-only here: `platform/*`, `tools/catalog`, platform contracts, platform ADRs. Change it in DegentClub/scribbit, then bump the pin |
 | `catalog/catalog.json` | GENERATED index of every component, platform ones marked `external` (`pnpm catalog`). Query this before grepping |
-| `docs/adr/` | ADR-0002 (mint architecture), ADR-0005 (0x81 reveals, re-signed rescue), ADR-0007 (member approval + the Register). Platform ADRs: `deps/scribbit/docs/adr/`. Numbering is global across the three repos |
+| `docs/adr/` | ADR-0002 (mint architecture), ADR-0005 (0x81 reveals, re-signed rescue), ADR-0007 (member approval + the Register), ADR-0008 (marketplace settlement). Platform ADRs: `deps/scribbit/docs/adr/`. Numbering is global across the three repos |
 | `docs/REGISTER.md` | The on-chain roll: parent, Gallery, children, numbering, custody, the Register API |
 | `roadmap.yaml` | Machine-readable roadmap (`schemas/roadmap.schema.json`); `pnpm test:root` validates it and every `verify` it names |
 | `schemas/component.schema.json` | Copy of the platform's manifest schema; refresh it when bumping the pin. `roadmap.schema.json`, `register.schema.json`: our own |
@@ -59,6 +61,7 @@ pnpm catalog                 # regenerate catalog/catalog.json
 pnpm --filter @bsh/catalog-tool run codeowners --org DegentClub   # regenerate .github/CODEOWNERS
 pnpm --filter @bsh/degent-web dev        # run the degent.club mint front end
 pnpm --filter @bsh/degent-mint dev       # run the mint service (in-memory adapters, regtest-safe)
+pnpm --filter @bsh/degent-market dev     # run the marketplace service (regtest, in-memory, buys paused)
 ```
 
 ## Adding a component

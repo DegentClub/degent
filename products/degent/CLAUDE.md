@@ -13,6 +13,8 @@ real bitcoin; the rules below are not style preferences.
 | `packages/mint-sdk` | `@bsh/degent-mint-sdk` | library (rules, types, API client) |
 | `services/telegram-gate` | `@bsh/degent-telegram-gate` | service (Hono + grammY; holders-only Telegram gate on `@bsh/identity` and the Register) |
 | `services/x-bot` | `@bsh/degent-x-bot` | service (X content engine: approval tiers, safety, Register-fact drafts; `brain/BRAIN.md`) |
+| `services/market` | `@bsh/degent-market` | service (Hono, ports and adapters): marketplace settlement, SIWB listing auth, watcher ([ADR-0008](../../docs/adr/0008-first-party-marketplace-settlement.md), [SETTLEMENT.md](services/market/docs/SETTLEMENT.md)) |
+| `packages/market-sdk` | `@bsh/degent-market-sdk` | library (listing/buy types, layout constants, royalty/fee maths, API client) |
 
 Query `catalog/catalog.json` (`.products.degent`, `.components[] | select(.product=="degent")`) for the current
 dependency and contract graph instead of reading package.json files.
@@ -25,19 +27,24 @@ dependency and contract graph instead of reading package.json files.
    never sent to the server. The server only stores half-signed reveals and rescue *parameters*.
 2. **Only the policy signer signs the parent input**, and only transactions matching ADR-0002 section 3.
    Never widen its checks to make a test pass.
-3. **One implementation of the maths.** Weight, fee and commit address come from `@bsh/inscription`; rules come
-   from `@bsh/degent-mint-sdk`. Do not re-derive them in the app or the service.
-4. **Contract first.** API or event changes start in `contracts/openapi/degent-mint.yaml`,
-   `contracts/openapi/degent-telegram-gate.yaml` or `contracts/asyncapi/degent-mint.yaml`. The order-status topic is shared and owned by the platform
+3. **One implementation of the maths.** Weight, fee, commit address and sat assignment (FIFO: where an inscription
+   lands) come from `@bsh/inscription`; mint rules from `@bsh/degent-mint-sdk`; marketplace layout, royalty and fee
+   maths from `@bsh/degent-market-sdk`. Do not re-derive them in the app or the services.
+4. **Contract first.** API or event changes start in `contracts/openapi/degent-{mint,market,telegram-gate}.yaml` /
+   `contracts/asyncapi/degent-{mint,market}.yaml`. The order-status topic is shared and owned by the platform
    (`deps/scribbit/contracts/asyncapi/platform-events.yaml`); keep `OrderStatusEvent` compatible with it.
-5. **Imports:** only `@bsh/inscription`, `@bsh/wallet-kit`, `@bsh/degent-mint-sdk`, `@bsh/events`, `@bsh/identity`, `@bsh/notify`, each only where declared in
-   that component's `depends_on`. Platform packages come from the `deps/scribbit` submodule; never edit them in
-   place. Never import `blockspace` or `scribbit` code; `pnpm lint:boundaries` fails.
+5. **Imports:** only `@bsh/inscription`, `@bsh/identity`, `@bsh/wallet-kit`, `@bsh/events`, `@bsh/notify`,
+   `@bsh/degent-mint-sdk`, `@bsh/degent-market-sdk`, each only where declared in that component's `depends_on`.
+   Services never import each other (the market reads the mint's Register through the mint SDK client). Platform
+   packages come from the `deps/scribbit` submodule; never edit them in place. Never import `blockspace` or
+   `scribbit` code; `pnpm lint:boundaries` fails.
 6. **Tests with fakes.** Service tests use the in-memory adapters (`memory-order-store`, `in-memory-policy-signer`,
-   `rules-art-review`; the gate's `MemoryTelegramApi` / `MemoryHolderRegistry`; the X bot's `MemoryXClient`); nothing
-   in tests touches mainnet, Telegram or X.
+   `rules-art-review`; the gate's `MemoryTelegramApi` / `MemoryHolderRegistry`; the X bot's `MemoryXClient`; the
+   market's `memory-store` and `test/fakes/harness.ts`); nothing in tests touches mainnet, a network, Telegram or X.
 7. **Outbound words are gated.** Every text the X bot might post goes through `gateContent`; it posts alone only when
    the tier is `auto` and `REVIEW_QUEUE_ENABLED=false`. The Telegram gate sends invite links by DM only.
+8. **Buys stay off.** `BUYS_ENABLED` defaults to `false`. Never flip the default or weaken the kill switch; enabling
+   is an owner action after signet trades and an external review (ADR-0008, roadmap p3.4/p3.5/p3.13).
 
 ## Verify before finishing
 

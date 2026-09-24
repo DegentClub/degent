@@ -10,11 +10,15 @@
 /catalog/                                     @DegentClub/team-platform
 /contracts/                                   @DegentClub/team-platform
 /tools/                                       @DegentClub/team-platform
+/contracts/asyncapi/degent-market.yaml        @DegentClub/team-degent
 /contracts/asyncapi/degent-mint.yaml          @DegentClub/team-degent
+/contracts/openapi/degent-market.yaml         @DegentClub/team-degent
 /contracts/openapi/degent-mint.yaml           @DegentClub/team-degent
 /contracts/openapi/degent-telegram-gate.yaml  @DegentClub/team-degent
 /products/degent/apps/web/                    @DegentClub/team-degent
+/products/degent/packages/market-sdk/         @DegentClub/team-degent
 /products/degent/packages/mint-sdk/           @DegentClub/team-degent
+/products/degent/services/market/             @DegentClub/team-degent
 /products/degent/services/mint/               @DegentClub/team-degent
 /products/degent/services/telegram-gate/      @DegentClub/team-degent
 /products/degent/services/x-bot/              @DegentClub/team-degent

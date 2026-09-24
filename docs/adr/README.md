@@ -12,3 +12,4 @@ start from `deps/scribbit/docs/adr/template.md` and take the next free number.
 | [0002](0002-degent-mint-architecture.md) | degent.club automated mint: non-custodial, parent-linked, block-sized | Accepted, partially superseded by 0005 |
 | [0005](0005-sighash-all-anyonecanpay-reveals.md) | SIGHASH_ALL\|ANYONECANPAY reveals; self-rescue by re-signing with K_e | Accepted |
 | [0007](0007-member-approval-and-register.md) | Member approval gates the parent link; the Register is the club's roll | Accepted |
+| [0008](0008-first-party-marketplace-settlement.md) | First-party marketplace settles with a padding-input PSBT layout; buys ship disabled | Accepted |

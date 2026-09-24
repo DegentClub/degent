@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-24T01:47:33.180Z",
+  "generatedAt": "2026-09-24T01:49:41.029Z",
   "schema": "schemas/component.schema.json",
   "components": [
     {
@@ -36,6 +36,83 @@
         "commit": "abac96823c55ba8ba44aef1c99f1d45795f8e2e9",
         "root": "deps/scribbit"
       }
+    },
+    {
+      "name": "degent-market",
+      "package": "@bsh/degent-market",
+      "kind": "service",
+      "product": "degent",
+      "owner": "team-degent",
+      "summary": "degent.club first-party marketplace - PSBT settlement engine (padding-input layout, FIFO asserted via @bsh/inscription), SIWB listing auth, settlement watcher, buys behind BUYS_ENABLED.",
+      "lifecycle": "experimental",
+      "depends_on": [
+        "@bsh/inscription",
+        "@bsh/identity",
+        "@bsh/degent-market-sdk",
+        "@bsh/degent-mint-sdk"
+      ],
+      "provides": [
+        "contracts/openapi/degent-market.yaml",
+        "contracts/asyncapi/degent-market.yaml"
+      ],
+      "consumes": [
+        "contracts/openapi/degent-mint.yaml"
+      ],
+      "stores": [
+        "sqlite:degent_market"
+      ],
+      "env_schema": "./env.schema.json",
+      "docs": "./README.md",
+      "commands": {
+        "dev": "dev",
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "products/degent/services/market",
+      "version": "0.1.0",
+      "scripts": {
+        "dev": "NETWORK=${NETWORK:-regtest} tsx watch src/main.ts",
+        "start": "tsx src/main.ts",
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "env_schema": "products/degent/services/market/env.schema.json",
+        "docs": "products/degent/services/market/README.md"
+      },
+      "dependents": []
+    },
+    {
+      "name": "degent-market-sdk",
+      "package": "@bsh/degent-market-sdk",
+      "kind": "library",
+      "product": "degent",
+      "owner": "team-degent",
+      "summary": "degent.club marketplace listing/buy domain types, settlement layout constants, price/royalty/fee maths and typed API client.",
+      "lifecycle": "experimental",
+      "depends_on": [
+        "@bsh/degent-mint-sdk"
+      ],
+      "provides": [
+        "contracts/openapi/degent-market.yaml"
+      ],
+      "docs": "./README.md",
+      "commands": {
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "products/degent/packages/market-sdk",
+      "version": "0.1.0",
+      "scripts": {
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "docs": "products/degent/packages/market-sdk/README.md"
+      },
+      "dependents": [
+        "degent-market"
+      ]
     },
     {
       "name": "degent-mint",
@@ -126,6 +203,8 @@
         "docs": "products/degent/packages/mint-sdk/README.md"
       },
       "dependents": [
+        "degent-market",
+        "degent-market-sdk",
         "degent-mint",
         "degent-telegram-gate",
         "degent-web",
@@ -365,6 +444,7 @@
         "docs": "deps/scribbit/platform/identity/README.md"
       },
       "dependents": [
+        "degent-market",
         "degent-mint",
         "degent-telegram-gate"
       ],
@@ -398,6 +478,7 @@
         "docs": "deps/scribbit/platform/inscription/README.md"
       },
       "dependents": [
+        "degent-market",
         "degent-mint",
         "degent-web"
       ],
@@ -545,6 +626,8 @@
     "degent": {
       "path": "products/degent",
       "components": [
+        "degent-market",
+        "degent-market-sdk",
         "degent-mint",
         "degent-mint-sdk",
         "degent-telegram-gate",
@@ -556,8 +639,8 @@
       ],
       "kinds": {
         "app": 1,
-        "library": 1,
-        "service": 3
+        "library": 2,
+        "service": 4
       }
     },
     "platform": {
@@ -600,11 +683,30 @@
   },
   "contracts": [
     {
+      "path": "contracts/asyncapi/degent-market.yaml",
+      "kind": "asyncapi",
+      "exists": true,
+      "providers": [
+        "degent-market"
+      ],
+      "consumers": []
+    },
+    {
       "path": "contracts/asyncapi/degent-mint.yaml",
       "kind": "asyncapi",
       "exists": true,
       "providers": [
         "degent-mint"
+      ],
+      "consumers": []
+    },
+    {
+      "path": "contracts/openapi/degent-market.yaml",
+      "kind": "openapi",
+      "exists": true,
+      "providers": [
+        "degent-market",
+        "degent-market-sdk"
       ],
       "consumers": []
     },
@@ -617,6 +719,7 @@
         "degent-mint-sdk"
       ],
       "consumers": [
+        "degent-market",
         "degent-telegram-gate",
         "degent-web",
         "degent-x-bot"
@@ -675,6 +778,11 @@
   ],
   "edges": [
     {
+      "from": "degent-market",
+      "to": "contracts/openapi/degent-mint.yaml",
+      "type": "consumes"
+    },
+    {
       "from": "degent-mint",
       "to": "deps/scribbit/contracts/asyncapi/platform-events.yaml",
       "type": "consumes"
@@ -708,6 +816,31 @@
       "from": "degent-x-bot",
       "to": "deps/scribbit/contracts/asyncapi/platform-events.yaml",
       "type": "consumes"
+    },
+    {
+      "from": "degent-market",
+      "to": "degent-market-sdk",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-market",
+      "to": "degent-mint-sdk",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-market",
+      "to": "identity",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-market",
+      "to": "inscription",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-market-sdk",
+      "to": "degent-mint-sdk",
+      "type": "depends_on"
     },
     {
       "from": "degent-mint",
@@ -783,6 +916,21 @@
       "from": "notify",
       "to": "events",
       "type": "depends_on"
+    },
+    {
+      "from": "degent-market",
+      "to": "contracts/asyncapi/degent-market.yaml",
+      "type": "provides"
+    },
+    {
+      "from": "degent-market",
+      "to": "contracts/openapi/degent-market.yaml",
+      "type": "provides"
+    },
+    {
+      "from": "degent-market-sdk",
+      "to": "contracts/openapi/degent-market.yaml",
+      "type": "provides"
     },
     {
       "from": "degent-mint",

@@ -1,0 +1,11 @@
+name: degent-market-sdk
+package: "@bsh/degent-market-sdk"
+kind: library
+product: degent
+owner: team-degent
+summary: degent.club marketplace listing/buy domain types, settlement layout constants, price/royalty/fee maths and typed API client.
+lifecycle: experimental
+depends_on: ["@bsh/degent-mint-sdk"]
+provides: [contracts/openapi/degent-market.yaml]
+docs: ./README.md
+commands: { test: test, typecheck: typecheck }

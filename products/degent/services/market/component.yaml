@@ -1,0 +1,14 @@
+name: degent-market
+package: "@bsh/degent-market"
+kind: service
+product: degent
+owner: team-degent
+summary: degent.club first-party marketplace - PSBT settlement engine (padding-input layout, FIFO asserted via @bsh/inscription), SIWB listing auth, settlement watcher, buys behind BUYS_ENABLED.
+lifecycle: experimental
+depends_on: ["@bsh/inscription", "@bsh/identity", "@bsh/degent-market-sdk", "@bsh/degent-mint-sdk"]
+provides: [contracts/openapi/degent-market.yaml, contracts/asyncapi/degent-market.yaml]
+consumes: [contracts/openapi/degent-mint.yaml]
+stores: ["sqlite:degent_market"]
+env_schema: ./env.schema.json
+docs: ./README.md
+commands: { dev: dev, test: test, typecheck: typecheck }

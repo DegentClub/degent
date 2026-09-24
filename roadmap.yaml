@@ -11,9 +11,9 @@ claim:
   measure: "sum of inscription content_length over the roster, via ord recursive endpoint"
   reproduce: "node products/degent/services/mint/scripts/blockspace-query.mjs --collection products/degent/services/mint/data/roster.json --compare compare.json"
 repos:
-  degent: { url: https://github.com/DegentClub/degent, role: "this repository: the mint service, the front end, the mint SDK, the Register", local: true }
+  degent: { url: https://github.com/DegentClub/degent, role: "this repository: the mint service, the marketplace service, the front end, the mint and market SDKs, the Register", local: true }
   platform: { url: https://github.com/DegentClub/scribbit, role: "shared platform (@bsh/inscription, @bsh/wallet-kit, @bsh/identity, @bsh/events), vendored at deps/scribbit" }
-  marketplace: { url: https://github.com/antron3000/Degent-Marketplace, role: "exchange" }
+  marketplace: { url: https://github.com/antron3000/Degent-Marketplace, role: "legacy exchange; settlement engine ported to @bsh/degent-market (ADR-0008)" }
   combiner: { url: https://github.com/antron3000/degen-frame-combiner, role: "atelier prototype" }
   xbot: { url: https://github.com/antron3000/Degent-X-Bot, role: "x account automation" }
   archived: [ https://github.com/antron3000/Degen-minter, https://github.com/antron3000/degen-minter-2, https://github.com/antron3000/degen-minter-3 ]
@@ -25,7 +25,7 @@ phases:
       - { id: p0.1, repo: degent, title: "Mint locks after payment; stale quotes cannot be paid (pure reducer with entry guards)", status: done, verify: "pnpm --filter @bsh/degent-web test -- reducer" }
       - { id: p0.2, repo: degent, title: "Fee rate passed to the wallet; single set of fee/size rules in @bsh/degent-mint-sdk", status: done, verify: "pnpm --filter @bsh/degent-mint-sdk test -- rules" }
       - { id: p0.3, repo: degent, title: "Non-custodial mint service replaces the Skrybit proxy: rate limit, recipient validation, no upstream echo", status: done, verify: "pnpm --filter @bsh/degent-mint test -- api" }
-      - { id: p0.4, repo: marketplace, title: "Buys disabled behind BUYS_ENABLED=false with banner and 503", status: in_progress, verify: "npm test -- flags" }
+      - { id: p0.4, repo: degent, title: "Buys disabled behind BUYS_ENABLED=false (default) with 503 buys_paused; paused banner specified in the market UI contract", status: done, verify: "pnpm --filter @bsh/degent-market test -- api e2e" }
       - { id: p0.5, repo: marketplace, title: "XSS removed; public/ only; CSP; POST-only mutations; CORS restricted", status: in_progress, verify: "npm test -- security" }
       - { id: p0.6, repo: combiner, title: "Image proxy allow-listed; DALL-E route authenticated and rate-limited", status: in_progress, verify: "npm test -- proxy" }
       - { id: p0.7, repo: xbot, title: "Review tiers enforced; default secrets fail startup; bech32 filter fixed", status: in_progress, verify: "npm test" }
@@ -85,11 +85,15 @@ phases:
     name: Exchange and the Club
     exit: "External review signs off the exchange; 100 real trades settle with the inscription in the buyer output."
     items:
-      - { id: p3.1, repo: marketplace, title: "Settlement engine on @scure/btc-signer with padding inputs and FIFO assertion", status: in_progress, verify: "npm test -- settlement" }
-      - { id: p3.2, repo: marketplace, title: "BIP-322 authenticated listing/cancel; watcher marks sold from chain", status: in_progress, verify: "npm test -- auth watcher" }
-      - { id: p3.3, repo: marketplace, title: "Royalty output to treasury; dynamic fees; multi-UTXO buyers", status: in_progress, verify: "npm test -- settlement" }
-      - { id: p3.4, repo: marketplace, title: "Signet end-to-end trade before BUYS_ENABLED=true", status: todo, owner_action: true, depends_on: [p3.1] }
-      - { id: p3.5, repo: marketplace, title: "External security review of settlement", status: todo, owner_action: true, depends_on: [p3.4] }
+      - { id: p3.1, repo: degent, title: "Marketplace ported into the monorepo (@bsh/degent-market + @bsh/degent-market-sdk, ADR-0008): settlement engine on @scure/btc-signer with padding inputs; inscription destination asserted with @bsh/inscription before any PSBT is returned and again before broadcast (no local FIFO calculator)", status: done, verify: "pnpm --filter @bsh/degent-market test -- settlement-fifo settlement-seller settlement-buyer settlement-assemble" }
+      - { id: p3.2, repo: degent, title: "SIWB/BIP-322 authenticated listing/cancel via @bsh/identity; listings only for roster Degents or parent-linked children; watcher marks sold/invalid/expired from chain", status: done, depends_on: [p3.1], verify: "pnpm --filter @bsh/degent-market test -- auth watcher api" }
+      - { id: p3.3, repo: degent, title: "Royalty output to TREASURY_ADDRESS when ROYALTY_BPS > 0 (royalty property test); fee tiers; multi-UTXO buyers; padding round", status: done, depends_on: [p3.1], verify: "pnpm --filter @bsh/degent-market-sdk test -- maths" }
+      - { id: p3.4, repo: degent, title: "Signet end-to-end trades covering the five unverified wallet/chain items (services/market/docs/SETTLEMENT.md section 7) plus P2WPKH, watcher and royalty", status: todo, owner_action: true, depends_on: [p3.1, p3.11, p3.12] }
+      - { id: p3.5, repo: degent, title: "External security review of settlement before enabling buys", status: todo, owner_action: true, depends_on: [p3.4] }
+      - { id: p3.11, repo: degent, title: "Decide TREASURY_ADDRESS (the royalty output's address; a club-controlled wallet)", status: todo, owner_action: true }
+      - { id: p3.12, repo: degent, title: "Decide ROYALTY_BPS (0..5000 basis points, paid by the buyer on top of the price)", status: todo, owner_action: true }
+      - { id: p3.13, repo: degent, title: "Set BUYS_ENABLED=true in production", status: todo, owner_action: true, depends_on: [p3.4, p3.5, p3.11, p3.12] }
+      - { id: p3.14, repo: degent, title: "Marketplace screens in apps/web per the UI contract in services/market/README.md (listing card, list flow, buy flow showing the real transaction, paused banner)", status: todo, depends_on: [p3.1], doc: products/degent/services/market/README.md }
       - { id: p3.6, repo: degent, title: "Holders-only Telegram gate (@bsh/degent-telegram-gate, ported from the X bot): /verify → SIWB challenge (@bsh/identity) → Register holder check (GET /v1/register/holder/{address}) → single-use invite by DM; periodic re-verification kicks non-holders", status: done, verify: "pnpm --filter @bsh/degent-telegram-gate test -- gate-service contract", doc: products/degent/services/telegram-gate/README.md, depends_on: [p1.11, p2.5] }
       - { id: p3.8, repo: degent, title: "/verify web page for the Telegram gate (wallet connect, gate SIWB challenge, BIP-322 sign, POST /gate/verify at VITE_GATE_URL)", status: done, depends_on: [p1.11], verify: "pnpm --filter @bsh/degent-web test -- members gate-contract" }
       - { id: p3.9, repo: degent, title: "Register updates: batch newly approved members + approver signatures as JSON for the owner to inscribe as a child of the parent", status: done, verify: "node products/degent/services/mint/scripts/register-batch.mjs --help", depends_on: [p1.12] }

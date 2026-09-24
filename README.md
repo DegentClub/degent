@@ -8,7 +8,7 @@ loop. This repository holds the product; the shared platform comes from
 
 | Repository | What it is |
 |---|---|
-| **DegentClub/degent** (this repo) | `degent-web` (the degent.club website and mint front end), `degent-mint` (mint service), `degent-mint-sdk` (rules, types, API client), `degent-telegram-gate` (holders-only Telegram gate), `degent-x-bot` (X content engine), their contracts, ADR-0002 |
+| **DegentClub/degent** (this repo) | `degent-web` (the degent.club website and mint front end), `degent-mint` (mint service), `degent-mint-sdk` (rules, types, API client), `degent-telegram-gate` (holders-only Telegram gate), `degent-x-bot` (X content engine), `degent-market` + `degent-market-sdk` (marketplace), their contracts, ADRs |
 | [DegentClub/scribbit](https://github.com/DegentClub/scribbit) | The platform: `@bsh/inscription`, `@bsh/wallet-kit`, `@bsh/events`, `@bsh/edge`, …, the catalog tool, scribb.it |
 | [DegentClub/blockspace](https://github.com/DegentClub/blockspace) | block.space: explorer, fee Meter, certification |
 
@@ -24,6 +24,7 @@ pnpm install
 pnpm check                             # validate manifests + boundaries + typecheck + tests (what CI runs)
 pnpm --filter @bsh/degent-web dev      # degent.club website + mint (add ?demo=1)
 pnpm --filter @bsh/degent-mint dev     # mint service with in-memory adapters (regtest-safe)
+pnpm --filter @bsh/degent-market dev   # marketplace service (regtest, in-memory, buys paused)
 ```
 
 Every package answers to the same verbs: `pnpm --filter <pkg> test | typecheck | build | dev`. `pnpm test` also
@@ -37,12 +38,16 @@ products/degent/services/mint/     @bsh/degent-mint       order state machine, a
 products/degent/packages/mint-sdk/ @bsh/degent-mint-sdk   rules, domain types, typed API client
 products/degent/services/telegram-gate/ @bsh/degent-telegram-gate  holders-only Telegram gate (SIWB + Register, invite by DM)
 products/degent/services/x-bot/    @bsh/degent-x-bot      X content engine: approval tiers, safety, Register-fact drafts
+products/degent/services/market/   @bsh/degent-market     marketplace: PSBT settlement, SIWB listing auth, watcher (buys off by default)
+products/degent/packages/market-sdk/ @bsh/degent-market-sdk listing/buy types, layout, royalty/fee maths, typed API client
 contracts/openapi/degent-mint.yaml     HTTP API of degent-mint (provided here)
 contracts/asyncapi/degent-mint.yaml    degent.mint.* order events (provided here; compatible with the platform topic)
 contracts/openapi/degent-telegram-gate.yaml  HTTP API of degent-telegram-gate (provided here; consumed by degent-web /verify)
+contracts/openapi/degent-market.yaml   HTTP API of degent-market (provided here)
+contracts/asyncapi/degent-market.yaml  degent.market.listing.{status} events (provided here; owned by this product)
 deps/scribbit/                     SUBMODULE: the platform (platform/*), catalog tool (tools/catalog), platform contracts
 catalog/                           GENERATED catalog.json + CATALOG.md (platform components listed as external)
-docs/adr/                          ADR-0002 (mint architecture); platform ADRs are in deps/scribbit/docs/adr/
+docs/adr/                          ADR-0002 (mint), 0005, 0007, 0008 (marketplace settlement); platform ADRs in deps/scribbit/docs/adr/
 schemas/component.schema.json      copy of the platform's manifest schema (refresh on pin bumps)
 ```
 
@@ -69,6 +74,10 @@ The catalog tool treats the submodule's packages as **external** components: `ca
 - `contracts/asyncapi/degent-mint.yaml`: `degent.mint.order.{status}` events, provided by `degent-mint`. The shared
   topic is owned by the platform (`deps/scribbit/contracts/asyncapi/platform-events.yaml`); a test in
   `products/degent/services/mint/test/contract.test.ts` asserts this contract stays compatible with it.
+- `contracts/openapi/degent-market.yaml`: provided by `degent-market` and `degent-market-sdk` (marketplace, ADR-0008).
+- `contracts/asyncapi/degent-market.yaml`: `degent.market.listing.{status}` events, provided by `degent-market` and
+  owned by this product; `products/degent/services/market/test/contract.test.ts` asserts routes, errors, enums and
+  live payloads against both files.
 - Consumes `events:block.indexed.{network}` from the chain indexers.
 
 ## The machine-readability model
