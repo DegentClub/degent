@@ -15,10 +15,14 @@ export type ListingStatus = (typeof LISTING_STATUSES)[number];
 /** Statuses the settlement watcher keeps checking; also "already listed" for a new listing. */
 export const OPEN_LISTING_STATUSES: readonly ListingStatus[] = ['active', 'pending'];
 
-/** Allowed transitions. `sold`/`invalid`/`expired`/`cancelled` are terminal for that listing row. */
+/**
+ * Allowed transitions. `sold`/`invalid`/`expired`/`cancelled` are terminal for that listing row (the
+ * inscription can be listed again as a new row). A `pending` listing cannot be cancelled: a purchase is
+ * already on the wire; the watcher decides it.
+ */
 export const LISTING_TRANSITIONS: Readonly<Record<ListingStatus, readonly ListingStatus[]>> = {
   active: ['pending', 'sold', 'invalid', 'expired', 'cancelled'],
-  pending: ['active', 'sold', 'invalid', 'cancelled'],
+  pending: ['active', 'sold', 'invalid'],
   sold: [],
   invalid: [],
   expired: [],

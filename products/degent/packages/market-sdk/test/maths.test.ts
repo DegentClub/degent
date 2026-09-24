@@ -131,5 +131,6 @@ describe('formatting, windows, layout, statuses', () => {
     expect(canTransition('pending', 'active')).toBe(true);
     expect(canTransition('sold', 'active')).toBe(false);
     expect(canTransition('pending', 'expired')).toBe(false);
+    expect(canTransition('pending', 'cancelled')).toBe(false);
   });
 });
