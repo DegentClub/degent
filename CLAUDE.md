@@ -12,6 +12,8 @@ and the catalog tool come from `DegentClub/scribbit`, vendored as a git submodul
 | `products/degent/apps/web/` | `@bsh/degent-web`: the mint front end (React + Vite) |
 | `products/degent/services/mint/` | `@bsh/degent-mint`: order state machine, art review, policy signer, lane broadcaster |
 | `products/degent/packages/mint-sdk/` | `@bsh/degent-mint-sdk`: mint rules, domain types, typed API client |
+| `products/degent/deploy/`, `flake.nix` | Dockerfiles, compose (signet/mainnet), generated `.env.*.example`, Caddy site, NixOS modules + packages. Guide: `docs/DEPLOY.md`; static checks: `test/deploy.test.ts` |
+| `scripts/rehearsal/` | Signet rehearsal runner + scenarios (`docs/REHEARSAL.md`), proven by `test/rehearsal.test.ts` |
 | `contracts/` | Contracts **this product provides**: `openapi/degent-mint.yaml`, `asyncapi/degent-mint.yaml`. Platform contracts are at `deps/scribbit/contracts/` |
 | `deps/scribbit/` | SUBMODULE, read-only here: `platform/*`, `tools/catalog`, platform contracts, platform ADRs. Change it in DegentClub/scribbit, then bump the pin |
 | `catalog/catalog.json` | GENERATED index of every component, platform ones marked `external` (`pnpm catalog`). Query this before grepping |
@@ -54,6 +56,8 @@ pnpm install                 # once
 pnpm check                   # validate manifests + boundaries + typecheck + tests (what CI runs)
 pnpm contracts:diff          # statuses our AsyncAPI carries that the platform's shared topic does not (yet)
 pnpm catalog                 # regenerate catalog/catalog.json
+pnpm deploy:env              # regenerate products/degent/deploy/.env.*.example after changing env.schema.json
+pnpm rehearsal -- --base-url <url>/api --auto   # rehearsal checklist runner (docs/REHEARSAL.md)
 pnpm --filter @bsh/catalog-tool run codeowners --org DegentClub   # regenerate .github/CODEOWNERS
 pnpm --filter @bsh/degent-web dev        # run the degent.club mint front end
 pnpm --filter @bsh/degent-mint dev       # run the mint service (in-memory adapters, regtest-safe)
