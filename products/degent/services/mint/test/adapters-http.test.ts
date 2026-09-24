@@ -75,7 +75,7 @@ describe('broadcasters', () => {
 
   it('libre relay: JSON-RPC sendrawtransaction with basic auth', async () => {
     const f = fetchOf(() => json({ result: TXID, error: null }));
-    const b = new LibreRelayBroadcaster({ rpcUrl: 'http://10.40.0.227:8332', user: 'u', password: 'p', fetch: f.fetch });
+    const b = new LibreRelayBroadcaster({ rpcUrl: 'http://192.0.2.227:8332', user: 'u', password: 'p', fetch: f.fetch });
     expect(await b.broadcast('beef')).toEqual({ ok: true, txid: TXID, via: 'libre-relay' });
     const init = f.calls[0]!.init!;
     expect((init.headers as Record<string, string>).authorization).toBe(`Basic ${Buffer.from('u:p').toString('base64')}`);
