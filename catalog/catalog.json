@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-23T21:55:20.458Z",
+  "generatedAt": "2026-09-24T01:04:29.208Z",
   "schema": "schemas/component.schema.json",
   "components": [
     {
@@ -33,7 +33,7 @@
       "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "abac96823c55ba8ba44aef1c99f1d45795f8e2e9",
         "root": "deps/scribbit"
       }
     },
@@ -192,10 +192,12 @@
       "files": {
         "docs": "deps/scribbit/platform/edge/README.md"
       },
-      "dependents": [],
+      "dependents": [
+        "ledger"
+      ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "abac96823c55ba8ba44aef1c99f1d45795f8e2e9",
         "root": "deps/scribbit"
       }
     },
@@ -227,11 +229,12 @@
       },
       "dependents": [
         "degent-mint",
+        "ledger",
         "notify"
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "abac96823c55ba8ba44aef1c99f1d45795f8e2e9",
         "root": "deps/scribbit"
       }
     },
@@ -266,7 +269,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "abac96823c55ba8ba44aef1c99f1d45795f8e2e9",
         "root": "deps/scribbit"
       }
     },
@@ -276,7 +279,7 @@
       "kind": "library",
       "product": "platform",
       "owner": "team-platform",
-      "summary": "Ordinals envelope, commit/reveal construction with SIGHASH_SINGLE|ANYONECANPAY, exact weight and fee maths.",
+      "summary": "Ordinals envelope, commit/reveal construction with SIGHASH_ALL|ANYONECANPAY (0x83 legacy), exact weight and fee maths.",
       "lifecycle": "beta",
       "depends_on": [],
       "docs": "./README.md",
@@ -299,7 +302,68 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "abac96823c55ba8ba44aef1c99f1d45795f8e2e9",
+        "root": "deps/scribbit"
+      }
+    },
+    {
+      "name": "ledger",
+      "package": "@bsh/ledger",
+      "kind": "service",
+      "product": "platform",
+      "owner": "team-platform",
+      "summary": "Shared order/payment ledger for every product - on-chain (xpub watch-only), Lightning + BTC via BTCPay, cards via a Stripe-shaped provider; receipts, refunds, events.",
+      "lifecycle": "beta",
+      "depends_on": [
+        "@bsh/edge",
+        "@bsh/events"
+      ],
+      "provides": [
+        "deps/scribbit/contracts/openapi/ledger.yaml",
+        "deps/scribbit/contracts/asyncapi/ledger.yaml"
+      ],
+      "stores": [
+        "sqlite:ledger",
+        "memory:ledger-api-keys",
+        "memory:ledger-rate-limits"
+      ],
+      "secrets": [
+        "services/ledger/api-keys",
+        "services/ledger/xpub",
+        "services/ledger/btcpay/api-key",
+        "services/ledger/btcpay/webhook-secret",
+        "services/ledger/card/secret-key",
+        "services/ledger/card/webhook-secret"
+      ],
+      "env_schema": "./env.schema.json",
+      "slo": {
+        "availability": "99.9",
+        "p95_ms": 250
+      },
+      "runbook": "./RUNBOOK.md",
+      "docs": "./README.md",
+      "commands": {
+        "dev": "dev",
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "deps/scribbit/platform/ledger",
+      "version": "0.1.0",
+      "scripts": {
+        "dev": "tsx watch src/main.ts",
+        "start": "tsx src/main.ts",
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "env_schema": "deps/scribbit/platform/ledger/env.schema.json",
+        "runbook": "deps/scribbit/platform/ledger/RUNBOOK.md",
+        "docs": "deps/scribbit/platform/ledger/README.md"
+      },
+      "dependents": [],
+      "external": {
+        "repo": "https://github.com/DegentClub/scribbit.git",
+        "commit": "abac96823c55ba8ba44aef1c99f1d45795f8e2e9",
         "root": "deps/scribbit"
       }
     },
@@ -331,7 +395,7 @@
       "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "abac96823c55ba8ba44aef1c99f1d45795f8e2e9",
         "root": "deps/scribbit"
       }
     },
@@ -363,7 +427,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "abac96823c55ba8ba44aef1c99f1d45795f8e2e9",
         "root": "deps/scribbit"
       }
     }
@@ -398,6 +462,7 @@
         "events",
         "identity",
         "inscription",
+        "ledger",
         "notify",
         "wallet-kit"
       ],
@@ -405,7 +470,8 @@
         "team-platform"
       ],
       "kinds": {
-        "library": 6
+        "library": 6,
+        "service": 1
       }
     },
     "scribbit": {
@@ -450,6 +516,15 @@
       ]
     },
     {
+      "path": "deps/scribbit/contracts/asyncapi/ledger.yaml",
+      "kind": "asyncapi",
+      "exists": true,
+      "providers": [
+        "ledger"
+      ],
+      "consumers": []
+    },
+    {
       "path": "deps/scribbit/contracts/asyncapi/platform-events.yaml",
       "kind": "asyncapi",
       "exists": true,
@@ -459,6 +534,15 @@
       "consumers": [
         "degent-mint"
       ]
+    },
+    {
+      "path": "deps/scribbit/contracts/openapi/ledger.yaml",
+      "kind": "openapi",
+      "exists": true,
+      "providers": [
+        "ledger"
+      ],
+      "consumers": []
     },
     {
       "path": "events:block.indexed.{network}",
@@ -522,6 +606,16 @@
       "type": "depends_on"
     },
     {
+      "from": "ledger",
+      "to": "edge",
+      "type": "depends_on"
+    },
+    {
+      "from": "ledger",
+      "to": "events",
+      "type": "depends_on"
+    },
+    {
       "from": "notify",
       "to": "events",
       "type": "depends_on"
@@ -544,6 +638,16 @@
     {
       "from": "events",
       "to": "deps/scribbit/contracts/asyncapi/platform-events.yaml",
+      "type": "provides"
+    },
+    {
+      "from": "ledger",
+      "to": "deps/scribbit/contracts/asyncapi/ledger.yaml",
+      "type": "provides"
+    },
+    {
+      "from": "ledger",
+      "to": "deps/scribbit/contracts/openapi/ledger.yaml",
       "type": "provides"
     }
   ]
