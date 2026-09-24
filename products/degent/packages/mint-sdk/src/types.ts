@@ -113,10 +113,39 @@ export interface ReviewCheck {
   detail: string;
 }
 
+/** Outcome of one advisory minting rule (site-spec "Minting Rules"). `unknown` = not assessed. */
+export type RuleVerdict = 'pass' | 'fail' | 'unknown';
+
+/** The placard texts the collection accepts (site-spec rule 3). */
+export const PLACARD_TEXTS = ['DEGEN', 'DEGENT', 'REGEN'] as const;
+export type PlacardText = (typeof PLACARD_TEXTS)[number];
+
+/** Rule ids of {@link MintingRulesAdvice}, in display order. */
+export const ADVISORY_RULE_IDS = ['square', 'pepeInTuxWithBowtie', 'framedWithPlacard'] as const;
+export type AdvisoryRuleId = (typeof ADVISORY_RULE_IDS)[number];
+
+/**
+ * ADVISORY check of the collection's minting rules. Never rejects an order: it is shown to the collector
+ * before payment and to member reviewers (`GET /v1/review`), who decide. `square` is exact (from the image
+ * header); the other rules come from the optional vision review and stay `unknown` without it.
+ */
+export interface MintingRulesAdvice {
+  square: RuleVerdict;
+  pepeInTuxWithBowtie: RuleVerdict;
+  framedWithPlacard: RuleVerdict;
+  /** Text read on the placard when it is one of the accepted texts; null when absent, unreadable or not assessed. */
+  placardText: PlacardText | null;
+  /** One short note per rule (why pass/fail/unknown). */
+  notes: Record<AdvisoryRuleId, string>;
+}
+
 export interface ReviewResult {
+  /** Hard verdict: false only for a safety or file-rule rejection (`reasons`). Advisory rules never affect it. */
   approved: boolean;
   reasons: string[];
   checks: ReviewCheck[];
+  /** Advisory minting-rules check; absent on reviews stored before it existed. */
+  rules?: MintingRulesAdvice;
 }
 
 export interface OrderEvent {

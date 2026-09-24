@@ -1,9 +1,11 @@
 /**
  * Deterministic ArtReview: re-checks the declared metadata against the collection rules using the
  * REAL bytes (magic-byte type sniffing + header-decoded dimensions), never the client's claims.
+ * It also fills the advisory `rules.square` exactly from the dimensions; the design and framing rules
+ * need eyes and stay `unknown` here (the vision reviewer fills them). Advisory rules never reject.
  */
 import type { CollectionConfig, ReviewCheck, ReviewResult } from '@bsh/degent-mint-sdk';
-import { readImageInfo, validateContentMeta } from '@bsh/degent-mint-sdk';
+import { mergeRuleAdvice, readImageInfo, squareRuleAdvice, unknownRuleAdvice, validateContentMeta } from '@bsh/degent-mint-sdk';
 import type { ArtReview, ArtReviewInput } from '../ports/art-review.js';
 
 export class RulesArtReview implements ArtReview {
@@ -40,13 +42,19 @@ export class RulesArtReview implements ArtReview {
     );
     checks.push(...meta.checks);
     const reasons = checks.filter((c) => !c.passed).map((c) => c.detail);
-    return { approved: reasons.length === 0, reasons, checks };
+    const sq = squareRuleAdvice(dimsKnown ? info!.width : null, dimsKnown ? info!.height : null);
+    const rules = unknownRuleAdvice('needs the vision review (not configured or not reached)');
+    rules.square = sq.square;
+    rules.notes.square = sq.note;
+    return { approved: reasons.length === 0, reasons, checks, rules };
   }
 }
 
 /**
  * Runs reviewers in order; stops at the first rejection (no point paying for a vision call on a
- * file the rules already refuse). Checks are namespaced by reviewer.
+ * file the rules already refuse). Checks are namespaced by reviewer. Advisory `rules` are merged
+ * (`mergeRuleAdvice`): per rule the earliest reviewer with a pass/fail wins, so the deterministic
+ * reviewer's exact `square` beats a model's estimate.
  */
 export class CompositeArtReview implements ArtReview {
   readonly name: string;
@@ -56,12 +64,18 @@ export class CompositeArtReview implements ArtReview {
   async review(input: ArtReviewInput): Promise<ReviewResult> {
     const checks: ReviewCheck[] = [];
     const reasons: string[] = [];
+    const advice: Array<ReviewResult['rules']> = [];
+    const result = (approved: boolean): ReviewResult => {
+      const rules = mergeRuleAdvice(...advice);
+      return rules ? { approved, reasons, checks, rules } : { approved, reasons, checks };
+    };
     for (const r of this.reviewers) {
       const res = await r.review(input);
       checks.push(...res.checks.map((c) => ({ ...c, id: `${r.name}.${c.id}` })));
       reasons.push(...res.reasons);
-      if (!res.approved) return { approved: false, reasons, checks };
+      advice.push(res.rules);
+      if (!res.approved) return result(false);
     }
-    return { approved: true, reasons, checks };
+    return result(true);
   }
 }

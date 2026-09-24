@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: degent.club mint API
-  version: 0.2.0
+  version: 0.3.0
   summary: Non-custodial, parent-linked inscription minting for the Decentralized Gentlemen Club.
   description: |
     Implemented by `@bsh/degent-mint` (products/degent/services/mint); typed client and domain types in
@@ -606,6 +606,38 @@ components:
         approved: { type: boolean }
         reasons: { type: array, items: { type: string } }
         checks: { type: array, items: { $ref: '#/components/schemas/ReviewCheck' } }
+        rules: { $ref: '#/components/schemas/MintingRulesAdvice' }
+      description: >-
+        `approved`/`reasons` are the hard verdict (file rules and safety categories only). `rules` is ADVISORY:
+        it never rejects; the collector sees it before paying and members see it in `GET /v1/review`.
+        Absent on reviews stored before advisory rules existed.
+    RuleVerdict:
+      type: string
+      enum: [pass, fail, unknown]
+      description: '`unknown` = not assessed (no vision review, unsupported image type, or the model could not tell).'
+    MintingRulesAdvice:
+      type: object
+      additionalProperties: false
+      required: [square, pepeInTuxWithBowtie, framedWithPlacard, placardText, notes]
+      description: >-
+        Advisory check of the site's Minting Rules. `square` is exact (from the decoded image header); the others
+        come from the optional vision review. Never affects `ReviewResult.approved`.
+      properties:
+        square: { $ref: '#/components/schemas/RuleVerdict' }
+        pepeInTuxWithBowtie: { $ref: '#/components/schemas/RuleVerdict' }
+        framedWithPlacard: { $ref: '#/components/schemas/RuleVerdict' }
+        placardText:
+          type: [string, 'null']
+          enum: [DEGEN, DEGENT, REGEN, null]
+          description: Accepted placard text read on the image; null when absent, unreadable or not assessed.
+        notes:
+          type: object
+          additionalProperties: false
+          required: [square, pepeInTuxWithBowtie, framedWithPlacard]
+          properties:
+            square: { type: string, maxLength: 200 }
+            pepeInTuxWithBowtie: { type: string, maxLength: 200 }
+            framedWithPlacard: { type: string, maxLength: 200 }
     OrderEvent:
       type: object
       additionalProperties: false

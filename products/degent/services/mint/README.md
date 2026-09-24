@@ -126,6 +126,32 @@ Policy signer (ADR §3), stricter in one respect: the parent return must equal t
 postage, the lane fee band and that the fee rate matches the quote. A refusal moves the order straight to
 `rescue_available`.
 
+## Art review and the advisory minting rules
+
+The review runs on upload, before payment (`CompositeArtReview`: `rules`, then the optional `vision` reviewer).
+Its result (`ReviewResult`, `contracts/openapi/degent-mint.yaml`) has two independent parts:
+
+1. **Hard verdict** — `approved` / `reasons`. Only the file rules (type sniffed from the bytes, size tier,
+   256–4096 px) and the six safety categories in `DEFAULT_GUIDELINES` (explicit or child sexual content, gore,
+   hate, personal data, scams, blank/noise images) can reject. A vision refusal rejects; a vision outage or an
+   off-schema reply is a 503 and the upload can be retried (nobody is rejected because a dependency was down).
+2. **Advisory rules** — `rules: { square, pepeInTuxWithBowtie, framedWithPlacard, placardText, notes }`, the
+   site's four Minting Rules (`MINTING_RULES` in `@bsh/degent-mint-sdk`, verbatim from the site). Each verdict is
+   `pass | fail | unknown`; `placardText` is `DEGEN | DEGENT | REGEN | null`. **They never reject.**
+   - `square`: exact, from the decoded image header (rules reviewer).
+   - `pepeInTuxWithBowtie`, `framedWithPlacard`, `placardText`: from the vision reviewer; `unknown`/`null`
+     without it (no key, AVIF, > 3.7 MB, refusal).
+   - Merge: per rule the earliest reviewer with a pass/fail wins (`mergeRuleAdvice`), so the measured `square`
+     beats any model estimate. Rule 1's JPEG/200 KB part is the hard size check; rule 4 (quantity) needs none.
+
+**UI contract** (web renders it later; nothing else is needed from the API):
+
+| Where | Data | Rendering |
+|---|---|---|
+| Design → Validate, after `PUT /v1/orders/{id}/content`, **before payment** | `order.review.rules` | Four rule cards in `MINTING_RULES` order (title + verbatim text). Badge per rule: `pass` ✓ green, `fail` ⚠ amber "does not seem to follow this rule", `unknown` grey "not checked automatically". Show `notes[rule]` under the badge; show `placardText` when non-null. Never block the pay button on a `fail`; say that members see the same check when they vote. Rule 4 is always shown as informational. |
+| Member review (`GET /v1/review`) | `items[].order.review.rules` | Same badges, compact, next to the tally. `fail` is information for the voter, not a recommendation. |
+| Either, when `rules` is absent | — | Hide the block (orders reviewed before this field existed). |
+
 ## Member approval (ADR-0007)
 
 `application/approval-service.ts` wires the platform's SIWB (`issueChallenge` / `verifySignIn`, nonce store in
@@ -179,7 +205,8 @@ See [`env.schema.json`](./env.schema.json) for every variable. Essentials:
 | `SIGNER`, `PARENT_KEY_FILE` | `memory` + key file is dev-only; **mainnet refuses to start** with it (KMS adapter TODO) |
 | `REVEAL_ENCRYPTION_KEY` | 32-byte hex AES key for stored reveals (required off regtest) |
 | `CORS_ORIGINS` | exact origins, comma-separated; empty = deny all |
-| `ART_REVIEW_API_KEY` | enables the Claude vision review (`claude-opus-5`); unset = rules only |
+| `ART_REVIEW_API_KEY` | enables the Claude vision review (model: the `ART_REVIEW_MODEL` constant in `src/adapters/claude-art-review.ts`); unset = rules only |
+| `ART_REVIEW_GUIDELINES_FILE` | optional replacement for `DEFAULT_GUIDELINES` (the verdict schema is fixed) |
 | `SERVICE_FEE_ADDRESS`, `SERVICE_FEE_SATS_*` | optional service fee, paid in the funding tx |
 
 Config errors are listed all at once and the process exits non-zero.
