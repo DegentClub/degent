@@ -15,5 +15,10 @@ export interface OrderStore {
   /** Small key/value area for service state (e.g. the parent UTXO chain tip). */
   getMeta(key: string): Promise<string | null>;
   setMeta(key: string, value: string): Promise<void>;
+  /**
+   * Atomically add 1 to an integer meta value (missing = 0) and return the new value. Two API processes
+   * sharing the database never get the same number (used for Degent numbering).
+   */
+  incrementMeta(key: string): Promise<number>;
   close?(): void;
 }

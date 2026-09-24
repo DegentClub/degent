@@ -243,13 +243,13 @@ export function standardArt(size = 200_000, w = 1024, h = 1024): Uint8Array {
 
 export async function browserCreate(
   h: Harness,
-  o: { bytes?: Uint8Array; contentType?: string; tier?: Tier; feeRate?: number; recipientSeed?: number } = {},
+  o: { bytes?: Uint8Array; contentType?: string; tier?: Tier; feeRate?: number; recipientSeed?: number; recipientAddress?: string } = {},
 ): Promise<BrowserMint> {
   const bytes = o.bytes ?? standardArt();
   const contentType = o.contentType ?? 'image/png';
   const revealKey = schnorr.utils.randomSecretKey();
   const revealPubkey = bytesToHex(schnorr.getPublicKey(revealKey));
-  const recipientAddress = regtestAddress(o.recipientSeed ?? 42);
+  const recipientAddress = o.recipientAddress ?? regtestAddress(o.recipientSeed ?? 42);
   const res = await api(h, 'POST', '/v1/orders', {
     json: {
       tier: o.tier ?? (bytes.length > 390_000 ? 'block' : 'standard'),

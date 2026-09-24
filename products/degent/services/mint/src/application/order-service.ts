@@ -21,7 +21,7 @@ import type {
   Tier,
 } from '@bsh/degent-mint-sdk';
 import { ADVISORY_RULE_IDS, BLOCK_INTERVAL_MINUTES, isSha256Hex, sha256Hex, tierForSize, validateContentMeta } from '@bsh/degent-mint-sdk';
-import { checkRecipientAddress } from '../domain/address.js';
+import { canonicalAddress, checkRecipientAddress } from '../domain/address.js';
 import { DomainError, conflict, invalid, notFound } from '../domain/errors.js';
 import { approvalInfo } from '../domain/approval.js';
 import { IN_FLIGHT, RESCUE_OFFERED, WAITING_FOR_LANE, toPublicOrder, type OrderRecord } from '../domain/order.js';
@@ -226,6 +226,16 @@ export class OrderService {
 
   async setApprovedCount(n: number): Promise<void> {
     await this.d.store.setMeta(APPROVED_COUNT_KEY, String(n));
+  }
+
+  /**
+   * Claim the next approval rank atomically (1 for the first approved order). Concurrent approvals, in this
+   * process or another API process on the same database, never share a rank. A claim whose transition then
+   * fails leaves a gap, like an approved order that is later rescued without the parent: numbers are unique,
+   * not necessarily contiguous.
+   */
+  async claimApprovalRank(): Promise<number> {
+    return this.d.store.incrementMeta(APPROVED_COUNT_KEY);
   }
 
   /** Current parent UTXO value, or null when the service does not know its parent yet. */
@@ -534,7 +544,7 @@ export function parseCreateOrder(body: unknown): CreateOrderRequest {
     contentType: (o.contentType as string).toLowerCase(),
     contentLength: o.contentLength as number,
     contentSha256: o.contentSha256 as string,
-    recipientAddress: o.recipientAddress as string,
+    recipientAddress: canonicalAddress(o.recipientAddress as string),
     revealPubkey: o.revealPubkey as string,
     feeRate: o.feeRate as number,
   };

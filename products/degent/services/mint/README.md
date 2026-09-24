@@ -156,7 +156,9 @@ Its result (`ReviewResult`, `contracts/openapi/degent-mint.yaml`) has two indepe
 
 `application/approval-service.ts` wires the platform's SIWB (`issueChallenge` / `verifySignIn`, nonce store in
 memory or sqlite) and `SessionKeyRing` to orders and holders; `domain/approval.ts` holds the pure rules (one vote
-per address per order, holder at vote time, no self-votes, exact statement, quorums, `4112 + rank`).
+per address per order and one per Degent, canonical addresses, holder at vote time, no self-votes, exact statement,
+quorums, `4112 + rank`). Votes on one order are decided one at a time and the rank comes from an atomic counter
+(`OrderStore.incrementMeta`), so concurrent votes neither lose a quorum nor share a Degent number.
 `ports/holder-registry.ts` answers who is a member: `adapters/memory-holder-registry.ts` (tests, regtest) or
 `adapters/roster-chain-holder-registry.ts` (roster JSON + ord `/r/inscription`, `/r/utxo` + esplora, injectable
 fetch, 60 s cache). `application/register-service.ts` serves the Register from the roster plus delivered children.

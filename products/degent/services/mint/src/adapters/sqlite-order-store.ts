@@ -80,6 +80,16 @@ export class SqliteOrderStore implements OrderStore, SecretBlobStore {
     this.db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
   }
 
+  async incrementMeta(key: string): Promise<number> {
+    // One statement: SQLite serialises writers, so concurrent callers (any process) get distinct values.
+    const row = this.db
+      .prepare(
+        "INSERT INTO meta (key, value) VALUES (?, '1') ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) RETURNING value",
+      )
+      .get(key) as { value: string };
+    return Number(row.value);
+  }
+
   async putBlob(key: string, blob: Uint8Array): Promise<void> {
     this.db
       .prepare('INSERT INTO reveals (order_id, ciphertext) VALUES (?, ?) ON CONFLICT(order_id) DO UPDATE SET ciphertext = excluded.ciphertext')

@@ -16,8 +16,8 @@ import {
   type SigningKey,
 } from '@bsh/identity';
 import type { AuthChallengeResponse, AuthVerifyResponse, CastVoteRequest, ReviewQueueResponse, VoteChoice, VotesResponse } from '@bsh/degent-mint-sdk';
-import { addressKind } from '../domain/address.js';
-import { approvalInfo, checkVote, nextDegentNumber, tally, verdict, votingDegent, type VoteRecord } from '../domain/approval.js';
+import { addressKind, canonicalAddress } from '../domain/address.js';
+import { approvalInfo, checkVote, degentNumberForRankOf, tally, verdict, votingDegent, type VoteRecord } from '../domain/approval.js';
 import { DomainError, invalid, notFound } from '../domain/errors.js';
 import { IN_MEMBER_REVIEW, type OrderRecord } from '../domain/order.js';
 import type { Clock } from '../ports/clock.js';
@@ -53,6 +53,8 @@ export class ApprovalService {
   private readonly keys: SessionKeyRing;
   private readonly nonces: NonceStore;
   private readonly log: Logger;
+  /** Per-order tail of the vote queue: votes on one order are decided one at a time in this process. */
+  private readonly voteLocks = new Map<string, Promise<unknown>>();
 
   constructor(private readonly d: ApprovalServiceDeps) {
     this.keys = new SessionKeyRing(d.sessionKey, d.previousKeys ?? []);
@@ -73,8 +75,9 @@ export class ApprovalService {
 
   async challenge(body: unknown): Promise<AuthChallengeResponse> {
     const o = asObject(body, ['address']);
-    const address = o.address;
-    if (typeof address !== 'string' || addressKind(address, this.s.network) === null) throw invalid(`address is not a valid ${this.s.network} address`);
+    if (typeof o.address !== 'string' || addressKind(o.address, this.s.network) === null) throw invalid(`address is not a valid ${this.s.network} address`);
+    // The challenge (and so the session) always names the canonical spelling: one member, one identity.
+    const address = canonicalAddress(o.address);
     const auth = this.s.auth;
     const ch = await issueChallenge(this.nonces, {
       domain: auth.domain,
@@ -92,22 +95,24 @@ export class ApprovalService {
     const o = asObject(body, ['address', 'message', 'signature']);
     for (const k of ['address', 'message', 'signature'] as const) if (typeof o[k] !== 'string') throw invalid(`${k} must be a string`);
     const r = await verifySignIn(
-      { address: o.address as string, message: o.message as string, signature: o.signature as string },
+      { address: canonicalAddress(o.address as string), message: o.message as string, signature: o.signature as string },
       { domain: this.s.auth.domain, nonces: this.nonces, network: this.s.network, now: this.d.clock.now() },
     );
     if (!r.ok) {
       this.log.warn('holder sign-in refused', { error: r.error, detail: r.detail });
       throw new DomainError('auth_failed', 401, `sign-in failed: ${r.error}`);
     }
-    const { degents } = await this.d.holders.isHolder(r.address);
+    // Challenges are only issued for canonical addresses, so r.address is canonical; fold anyway.
+    const address = canonicalAddress(r.address);
+    const { degents } = await this.d.holders.isHolder(address);
     if (degents.length === 0) throw new DomainError('not_a_holder', 403, 'this address holds no Degent; only club members can review');
     const ttl = this.s.auth.sessionTtlSeconds;
     const now = this.d.clock.now();
     const token = this.keys.issue(
-      { sub: r.address, accounts: [r.address], product: this.s.auth.audience, scopes: [MEMBER_SCOPE] },
+      { sub: address, accounts: [address], product: this.s.auth.audience, scopes: [MEMBER_SCOPE] },
       { ttlSeconds: ttl, now },
     );
-    return { token, address: r.address, degents, expiresAt: new Date(now.getTime() + ttl * 1000).toISOString() };
+    return { token, address, degents, expiresAt: new Date(now.getTime() + ttl * 1000).toISOString() };
   }
 
   /** Bearer holder session -> address + the Degents held RIGHT NOW (a sold Degent revokes the vote right). */
@@ -121,9 +126,10 @@ export class ApprovalService {
       const code = e instanceof SessionError ? e.code : 'invalid';
       throw new DomainError('unauthorized', 401, `holder session rejected: ${code}`);
     }
-    const { degents } = await this.d.holders.isHolder(claims.sub);
+    const address = canonicalAddress(claims.sub);
+    const { degents } = await this.d.holders.isHolder(address);
     if (degents.length === 0) throw new DomainError('not_a_holder', 403, 'this address no longer holds a Degent');
-    return { address: claims.sub, degents, claims };
+    return { address, degents, claims };
   }
 
   // ---------------------------------------------------------------- review queue and votes
@@ -160,6 +166,19 @@ export class ApprovalService {
 
   async castVote(orderId: string, session: HolderSession, body: unknown): Promise<VotesResponse> {
     const req = parseCastVote(body);
+    // Serialise votes per order: each decision sees every vote stored before it (no lost quorum, no
+    // double transition). Across API processes the store's unique keys and optimistic versions still hold.
+    const prev = this.voteLocks.get(orderId) ?? Promise.resolve();
+    const run = prev.catch(() => undefined).then(() => this.castVoteLocked(orderId, session, req));
+    this.voteLocks.set(orderId, run);
+    try {
+      return await run;
+    } finally {
+      if (this.voteLocks.get(orderId) === run) this.voteLocks.delete(orderId);
+    }
+  }
+
+  private async castVoteLocked(orderId: string, session: HolderSession, req: CastVoteRequest): Promise<VotesResponse> {
     const r = await this.d.store.get(orderId);
     if (!r) throw notFound('order');
     const existing = await this.d.votes.listByOrder(r.id);
@@ -175,7 +194,7 @@ export class ApprovalService {
     const vote: VoteRecord = {
       orderId: r.id,
       voterAddress: session.address,
-      voterDegent: votingDegent(session.degents),
+      voterDegent: votingDegent(session.degents, existing),
       vote: req.vote,
       at: this.d.clock.now().toISOString(),
       signature: req.signature,
@@ -186,19 +205,19 @@ export class ApprovalService {
     } catch {
       throw new DomainError('already_voted', 409, 'this address has already voted on this order');
     }
-    const all = [...existing, vote];
+    // Decide on what is stored, not on what this request read before its insert: another process may have
+    // added votes in between.
+    const all = await this.d.votes.listByOrder(r.id);
     const t = tally(all);
     const outcome = verdict(t, this.s.approval);
     let saved: OrderRecord = r;
     if (outcome === 'approved') {
-      const count = await this.d.orders.approvedCount();
-      const degentNumber = nextDegentNumber(count, this.s.approval);
+      const degentNumber = degentNumberForRankOf(await this.d.orders.claimApprovalRank(), this.s.approval);
       const at = vote.at;
       saved = await this.d.orders.transition(r, 'queued', {
         detail: `approved by ${t.approvals} members; Degent #${degentNumber}`,
         patch: { degentNumber, approvedAt: at, queuedAt: at },
       });
-      await this.d.orders.setApprovedCount(count + 1);
       this.log.info('order approved by members', { orderId: r.id, degentNumber, approvals: t.approvals });
     } else if (outcome === 'declined') {
       saved = await this.d.orders.transition(r, 'declined', {

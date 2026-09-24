@@ -62,9 +62,31 @@ describe.each([
     await s.setMeta('k', 'v2');
     expect(await s.getMeta('k')).toBe('v2');
   });
+
+  it('incrementMeta is atomic and continues an existing count (DGT-SEC-003)', async () => {
+    const s = make();
+    expect(await s.incrementMeta('n')).toBe(1);
+    const many = await Promise.all(Array.from({ length: 20 }, () => s.incrementMeta('n')));
+    expect(new Set(many).size).toBe(20);
+    expect(Math.max(...many)).toBe(21);
+    expect(await s.getMeta('n')).toBe('21');
+    await s.setMeta('legacy', '41');
+    expect(await s.incrementMeta('legacy')).toBe(42);
+  });
 });
 
 describe('SqliteOrderStore persistence', () => {
+  it('two connections to one file (api processes) never claim the same approval rank', async () => {
+    const path = join(dir, 'ranks.db');
+    const a = new SqliteOrderStore(path);
+    const b = new SqliteOrderStore(path);
+    const got: number[] = [];
+    for (let i = 0; i < 10; i++) got.push(await a.incrementMeta('approval.approvedCount'), await b.incrementMeta('approval.approvedCount'));
+    expect(got).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+    a.close();
+    b.close();
+  });
+
   it('survives reopen', async () => {
     const path = join(dir, 'persist.db');
     const a = new SqliteOrderStore(path);

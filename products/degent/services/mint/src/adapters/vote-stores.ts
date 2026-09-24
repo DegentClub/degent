@@ -10,7 +10,7 @@ export class MemoryVoteStore implements VoteStore {
   private readonly votes: VoteRecord[] = [];
 
   async add(vote: VoteRecord): Promise<void> {
-    if (this.votes.some((v) => v.orderId === vote.orderId && v.voterAddress === vote.voterAddress)) throw dupError(vote);
+    if (this.votes.some((v) => v.orderId === vote.orderId && (v.voterAddress === vote.voterAddress || v.voterDegent === vote.voterDegent))) throw dupError(vote);
     this.votes.push(structuredClone(vote));
   }
 
@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS votes (
   PRIMARY KEY (order_id, voter_address)
 );
 CREATE INDEX IF NOT EXISTS votes_voter ON votes(voter_address);
+-- Each vote is backed by a distinct Degent (a Degent moved to another address cannot vote twice).
+CREATE UNIQUE INDEX IF NOT EXISTS votes_order_degent ON votes(order_id, voter_degent);
 `;
 
 type Row = { order_id: string; voter_address: string; voter_degent: number; vote: string; at: string; signature: string; message: string };

@@ -72,7 +72,9 @@ presents "keep your inscription". The existing `rescue_available` semantics are 
 - **A vote is itself a BIP-322 signature** of the statement `Approve Degent order <id> (<inscriptionId or
   contentSha256>)` (or `Decline …`), built by one function in the SDK and rebuilt/compared by the service. Votes are
   stored with the signature and published (`GET /v1/orders/{id}/votes`) with the voter's Degent number, never the
-  address, so anyone can verify the record. Rules: one vote per address per order; the voter must hold a Degent at
+  address, so anyone can verify the record. Rules: one vote per address per order, and every vote is backed by a
+  distinct Degent (a Degent that already voted cannot vote again after it moves; addresses are compared in their
+  canonical lower-case bech32 form, so a case variant is the same voter); the voter must hold a Degent at
   vote time (a sold Degent revokes the session); a voter may not vote on an order paying their own address; votes
   are accepted only in `member_review`.
 - **Quorums** are settings: `APPROVAL_QUORUM` (default 3) and `DECLINE_QUORUM` (default 3); approval is checked

@@ -40,4 +40,10 @@ export class MemoryOrderStore implements OrderStore {
   async setMeta(key: string, value: string): Promise<void> {
     this.meta.set(key, value);
   }
+
+  async incrementMeta(key: string): Promise<number> {
+    const next = Number(this.meta.get(key) ?? '0') + 1;
+    this.meta.set(key, String(next));
+    return next;
+  }
 }

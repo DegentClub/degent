@@ -295,7 +295,9 @@ paths:
         Requires a holder session (`/v1/auth/verify`). `message` must equal
         `Approve Degent order <id> (<inscriptionId or contentSha256>)` (or `Decline ...`) and `signature` must be
         a BIP-322 simple signature of it by the session address, so every vote is independently verifiable.
-        Rules: one vote per address per order (409 `already_voted`), the voter must currently hold a Degent
+        Rules: one vote per address per order and one per Degent (409 `already_voted`; addresses compare in
+        their canonical lower-case bech32 form, and a Degent that already voted cannot vote again from another
+        address), the voter must currently hold a Degent
         (403 `not_a_holder`), a voter may not vote on an order paying their own address (403 `self_vote`),
         the order must be in `member_review` (409 `review_closed`). Reaching `APPROVAL_QUORUM` moves the
         order to `queued` and assigns its Degent number; reaching `DECLINE_QUORUM` moves it to `declined`.

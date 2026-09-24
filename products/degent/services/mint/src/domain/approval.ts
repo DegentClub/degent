@@ -9,6 +9,7 @@
 import type { ApprovalInfo, VoteChoice } from '@bsh/degent-mint-sdk';
 import { degentNumberForRank, parseVoteStatement, voteReference, voteStatement } from '@bsh/degent-mint-sdk';
 import type { OrderRecord } from './order.js';
+import { canonicalAddress } from './address.js';
 
 export interface VoteRecord {
   orderId: string;
@@ -86,15 +87,30 @@ export interface VoteCheckInput {
 }
 
 /**
- * Everything except the signature: the order is open for review, the voter holds a Degent, is not
- * the recipient, has not voted yet, and the statement is exactly what we expect for this order.
+ * Degents the voter holds that have not backed a vote on this order yet. Each vote is backed by a
+ * distinct Degent: moving a Degent that already voted to a fresh address does not buy a second vote.
+ */
+export function unusedDegents(voterDegents: readonly number[], existing: readonly VoteRecord[]): number[] {
+  const used = new Set(existing.map((v) => v.voterDegent));
+  return voterDegents.filter((n) => !used.has(n));
+}
+
+/**
+ * Everything except the signature: the order is open for review, the voter holds a Degent that has not
+ * voted on this order yet, is not the recipient, has not voted yet (addresses compared in their canonical
+ * spelling), and the statement is exactly what we expect for this order.
  */
 export function checkVote(i: VoteCheckInput): VoteRejection | null {
   if (i.order.status !== 'member_review')
     return { code: 'review_closed', message: `order is not open for member review (status ${i.order.status})` };
   if (i.voterDegents.length === 0) return { code: 'not_a_holder', message: 'this address holds no Degent' };
-  if (i.voterAddress === i.order.recipientAddress) return { code: 'self_vote', message: 'a member cannot vote on their own order' };
-  if (i.existing.some((v) => v.voterAddress === i.voterAddress)) return { code: 'already_voted', message: 'this address has already voted on this order' };
+  const voter = canonicalAddress(i.voterAddress);
+  if (voter === canonicalAddress(i.order.recipientAddress)) return { code: 'self_vote', message: 'a member cannot vote on their own order' };
+  if (i.existing.some((v) => canonicalAddress(v.voterAddress) === voter)) return { code: 'already_voted', message: 'this address has already voted on this order' };
+  if (unusedDegents(i.voterDegents, i.existing).length === 0) {
+    const held = [...i.voterDegents].sort((a, b) => a - b).map((n) => `#${n}`).join(', ');
+    return { code: 'already_voted', message: `every Degent this address holds (Degent ${held}) has already voted on this order` };
+  }
   const expected = voteStatement(i.vote, i.order.id, voteReference(i.order));
   if (i.message !== expected) {
     const parsed = parseVoteStatement(i.message);
@@ -104,9 +120,17 @@ export function checkVote(i: VoteCheckInput): VoteRejection | null {
   return null;
 }
 
-/** The voter's membership identity for the public record: their lowest-numbered Degent. */
-export function votingDegent(degents: readonly number[]): number {
-  return Math.min(...degents);
+/**
+ * The voter's membership identity for the public record: their lowest-numbered Degent that has not voted
+ * on this order yet (`existing` omitted: the lowest they hold).
+ */
+export function votingDegent(degents: readonly number[], existing: readonly VoteRecord[] = []): number {
+  return Math.min(...unusedDegents(degents, existing));
+}
+
+/** Degent number for the order approved with `rank` (1 = the first approved order). */
+export function degentNumberForRankOf(rank: number, cfg: Pick<ApprovalConfig, 'gallerySize'>): number {
+  return degentNumberForRank(rank, cfg.gallerySize);
 }
 
 /** Degent number for the next approved order given how many were approved before it. */

@@ -25,3 +25,13 @@ export function checkRecipientAddress(address: string, network: Network): string
   if (kind !== 'tr') return 'recipientAddress must be a taproot (bc1p / tb1p / bcrt1p) ordinals address';
   return null;
 }
+
+/**
+ * The one spelling of an address used for identity (order recipients, voters, sessions). Bech32 is
+ * case-insensitive (BIP-173: all-lower or all-upper), so `BC1P…` and `bc1p…` are the same script; without
+ * folding, one member could sign in twice and vote twice, and the self-vote rule could be dodged by case.
+ * Base58 is case-sensitive and is returned unchanged.
+ */
+export function canonicalAddress(address: string): string {
+  return /^(bc|tb|bcrt)1/i.test(address) ? address.toLowerCase() : address;
+}
