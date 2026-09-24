@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-24T01:04:29.208Z",
+  "generatedAt": "2026-09-24T01:44:33.243Z",
   "schema": "schemas/component.schema.json",
   "components": [
     {
@@ -43,13 +43,14 @@
       "kind": "service",
       "product": "degent",
       "owner": "team-degent",
-      "summary": "Automated degent.club mint service - order state machine, art review, member approval (SIWB holder votes), Register API, parent co-signing policy signer, lane broadcaster.",
+      "summary": "degent.club mint service - order state machine, art review, member votes (SIWB), Register API, order notifications (@bsh/notify), parent policy signer, lane broadcaster.",
       "lifecycle": "beta",
       "depends_on": [
         "@bsh/inscription",
         "@bsh/degent-mint-sdk",
         "@bsh/events",
-        "@bsh/identity"
+        "@bsh/identity",
+        "@bsh/notify"
       ],
       "provides": [
         "contracts/openapi/degent-mint.yaml",
@@ -68,7 +69,8 @@
         "services/degent-mint/reveal-encryption-key",
         "services/degent-mint/libre-rpc-pass",
         "services/degent-mint/slipstream-api-key",
-        "services/degent-mint/session-key"
+        "services/degent-mint/session-key",
+        "services/degent-mint/telegram-bot-token"
       ],
       "env_schema": "./env.schema.json",
       "slo": {
@@ -134,7 +136,7 @@
       "kind": "app",
       "product": "degent",
       "owner": "team-degent",
-      "summary": "degent.club front end - the four-stage mint (Design, Mint, Confirm, Approve with live member votes), the members' review queue, the Degent Explorer and the Telegram-gate verify page.",
+      "summary": "degent.club website and mint - Home, Collection, Comic, Minting Process, Club; the mint with the Atelier, member votes and Notify me; the Register explorer; the Telegram-gate verify page.",
       "lifecycle": "beta",
       "depends_on": [
         "@bsh/inscription",
@@ -392,7 +394,9 @@
       "files": {
         "docs": "deps/scribbit/platform/notify/README.md"
       },
-      "dependents": [],
+      "dependents": [
+        "degent-mint"
+      ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
         "commit": "abac96823c55ba8ba44aef1c99f1d45795f8e2e9",
@@ -588,6 +592,11 @@
     {
       "from": "degent-mint",
       "to": "inscription",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-mint",
+      "to": "notify",
       "type": "depends_on"
     },
     {

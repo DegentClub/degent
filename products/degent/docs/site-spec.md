@@ -93,3 +93,57 @@ automated art review, no per-wallet cap.
 /how-it-works     "Minting Process" / "Learn How": tiers, fees, wallets, what happens after payment
 /club             Holder area: sign in with Bitcoin (Blockspace ID), your Degents, perks (placeholder)
 ```
+
+## Implementation status
+
+Where each item above stands in `@bsh/degent-web` (routes and tests: `products/degent/apps/web/README.md`;
+roadmap ids in `roadmap.yaml`). **done** = shipped with tests; **todo** = open, with the reason.
+
+### Global chrome (roadmap p2.30)
+| Spec item | Status | Notes |
+|---|---|---|
+| Sticky black header, gem mark + `degent` / `.club` wordmark | done | `src/site/chrome.tsx` |
+| Two live meters (minted / 10K, MB / 3 GB) with green→yellow bars | done | always shown on wide screens (hidden under 1000 px); read from `/v1/stats`; the 3 GB is labelled a projection |
+| Mint (gradient, rocket) and Buy (dark, cart → Magic Eden) | done | `VITE_BUY_URL` |
+| Hamburger → slide-out nav with Mint Now! at the bottom | done | modal dialog, focus trapped; links: Home, About, The Collection, Mint Process, Manifesto, The Comic, The Club, The Register, Member review |
+| Blog link in the nav | todo | no blog yet (p2.39) |
+| Thin green scroll-progress bar | done | |
+| Floating left rail (Telegram, X, Instagram), back to top | done | Instagram hidden until `VITE_INSTAGRAM_URL` is set (URL not captured) |
+| Footer: wordmark, tagline, quick links | done | |
+| Footer newsletter (Name + E-mail) | todo | form ships disabled: the mint API has no newsletter endpoint yet (p3.30); per-order "Notify me" is live |
+
+### Collection page (p2.32, p2.33)
+| Spec item | Status | Notes |
+|---|---|---|
+| Hero over the framed wall: `Degens` pill, "The Collection", green rule, subtitle, Mint Now / Learn How | done | |
+| Collection card: badge, H2, line, stat pills, Twitter / Telegram buttons, Degent #1 in a gold frame with plaque | done | "Website" button dropped (this is the website); "10K = 3+ GB" shown as *projected* next to the *certified* MB |
+| Grid: "Showing 1–20 of N", per page, page select "1 of N", first/prev, numbers with …, next/last, "Go to" | done | six columns on desktop, caption `DEGENT #N` |
+| Filters (tier, size, number) | done | server-side (`/v1/explorer` `tier`, `minBytes`, `maxBytes`, `q`; p2.40) so counts stay honest |
+| Lightbox: inscription id, address, content type, content length, timestamp, block height, fee; View on Ordinals.com; Buy Item; prev/next; filmstrip | done | ord `/r/inscription` prefetched per page and cached: no "LOADING…" flash; keyboard: Esc, ←/→, Tab trapped |
+| block.space attribution in the lightbox | todo | shows "the Register" as the membership source; block.space certification is p2.41 |
+| `/collection/:n` deep link | done | title, OpenGraph/Twitter tags and JSON-LD client-side |
+| OpenGraph image per Degent | todo | unfurlers do not run JavaScript: needs an edge function / prerender (p2.12; README "Share cards") |
+| The Comic section | done | teaser on Home; `/comic` page (p2.34); the comic's inscription id is an owner setting (p2.35) |
+| Degen Minter banner | done | on Home |
+
+### Other pages
+| Spec item | Status | Notes |
+|---|---|---|
+| `/` Home | done | p2.31 |
+| `/mint` the automated mint | done | the wizard moved from `/` to `/mint`; the Atelier lives in its Create step (p1.7) |
+| Mint process → `/how-it-works` | done | the four Minting Rules (verbatim), "Did you know?", tiers, live fees, wallets, stages, review, self-rescue, recovery bundle (p2.36) |
+| Minting rules mirrored by the SDK | done | square + tier size + allowed types measured; JPEG recommended, others accepted; design and placard self-attested or measured by the Atelier; no per-wallet cap |
+| `/comic` | done | ord `/content` embed with zoom, full screen, page-by-page reader; placeholder until configured |
+| `/club` | done | SIWB sign-in (the mint's holder session), your Degents, links to /review and the Telegram gate; perks TODO(copy) (p2.37) |
+| `/manifesto`, `/about` | todo | TODO(copy) placeholders: copy not captured, not invented (p2.38) |
+| `/blog` "Degent Chronicles" | todo | content source to decide; slugs to keep (p2.39) |
+| Visual identity | done | `src/site.css` (ground, cards, borders, green, CTA gradient, orange call-out, gold frames, Space Grotesk + mono) |
+
+### Known defects
+| Defect | Status | Notes |
+|---|---|---|
+| Three conflicting counts | done | one source for the whole site: the Register's `/v1/stats` (demo: the fakes); moving that source to the block.space attestation is p2.41 |
+| "10K = 3+ GB" presented as fact | done | shown as projected, next to the certified MB |
+| Lightbox "LOADING…" per open | done | prefetch + cache |
+| Newsletter posts to WordPress | todo | p3.30 (per-order notifications via `@bsh/notify` are live: p1.31, p1.32) |
+| Three properties → one app | done for site + mint | first-party trading is the marketplace work (p3.x); "Buy" links out until then |

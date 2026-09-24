@@ -9,7 +9,7 @@ and the catalog tool come from `DegentClub/scribbit`, vendored as a git submodul
 
 | Path | What lives there |
 |---|---|
-| `products/degent/apps/web/` | `@bsh/degent-web`: the mint front end (React + Vite) |
+| `products/degent/apps/web/` | `@bsh/degent-web`: the degent.club website and mint front end (React + Vite) |
 | `products/degent/services/mint/` | `@bsh/degent-mint`: order state machine, art review, policy signer, lane broadcaster |
 | `products/degent/packages/mint-sdk/` | `@bsh/degent-mint-sdk`: mint rules, domain types, typed API client |
 | `contracts/` | Contracts **this product provides**: `openapi/degent-mint.yaml`, `asyncapi/degent-mint.yaml`. Platform contracts are at `deps/scribbit/contracts/` |

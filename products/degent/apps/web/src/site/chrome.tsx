@@ -313,7 +313,7 @@ export function SiteFooter() {
           <h2 className="site-footer__title">Newsletter</h2>
           <p className="small muted">Stay updated with our latest news and drops.</p>
           {/* TODO(newsletter): the mint API has no newsletter subscription endpoint yet (only per-order
-              notifications). Needs a contract-first route backed by @bsh/notify's email channel; roadmap p3.10. */}
+              notifications). Needs a contract-first route backed by @bsh/notify's email channel; roadmap p3.30. */}
           <form className="newsletter" aria-describedby="newsletter-soon" onSubmit={(e) => e.preventDefault()}>
             <label className="sr-only" htmlFor="newsletter-name">
               Name

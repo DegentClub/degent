@@ -8,7 +8,7 @@ loop. This repository holds the product; the shared platform comes from
 
 | Repository | What it is |
 |---|---|
-| **DegentClub/degent** (this repo) | `degent-web` (mint front end), `degent-mint` (mint service), `degent-mint-sdk` (rules, types, API client), their contracts, ADR-0002 |
+| **DegentClub/degent** (this repo) | `degent-web` (the degent.club website and mint front end), `degent-mint` (mint service), `degent-mint-sdk` (rules, types, API client), their contracts, ADR-0002 |
 | [DegentClub/scribbit](https://github.com/DegentClub/scribbit) | The platform: `@bsh/inscription`, `@bsh/wallet-kit`, `@bsh/events`, `@bsh/edge`, …, the catalog tool, scribb.it |
 | [DegentClub/blockspace](https://github.com/DegentClub/blockspace) | block.space: explorer, fee Meter, certification |
 
@@ -22,7 +22,7 @@ git clone --recurse-submodules https://github.com/DegentClub/degent.git   # or: 
 corepack enable                        # pnpm version comes from package.json "packageManager"
 pnpm install
 pnpm check                             # validate manifests + boundaries + typecheck + tests (what CI runs)
-pnpm --filter @bsh/degent-web dev      # degent.club mint front end
+pnpm --filter @bsh/degent-web dev      # degent.club website + mint (add ?demo=1)
 pnpm --filter @bsh/degent-mint dev     # mint service with in-memory adapters (regtest-safe)
 ```
 
@@ -32,7 +32,7 @@ runs the platform's tests at the pinned commit (they live in the workspace throu
 ## Layout
 
 ```
-products/degent/apps/web/          @bsh/degent-web        mint front end (React + Vite)
+products/degent/apps/web/          @bsh/degent-web        degent.club website + mint front end (React + Vite)
 products/degent/services/mint/     @bsh/degent-mint       order state machine, art review, policy signer, lanes
 products/degent/packages/mint-sdk/ @bsh/degent-mint-sdk   rules, domain types, typed API client
 contracts/openapi/degent-mint.yaml     HTTP API of degent-mint (provided here)
