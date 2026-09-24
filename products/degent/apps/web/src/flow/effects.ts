@@ -3,8 +3,11 @@
  * asserted in tests. The money path is:
  *
  *   openOrder:        K_e generated → POST /orders (pubkey only) → PUT content → wait for review
- *   verifyCommit:     recompute commit address locally; must equal the service's quote
- *   preparePayment:   passphrase checked → UTXOs → funding PSBT + txid → half-signed reveal (0x81 over
+ *   verifyCommit:     recompute commit address locally (from the key THIS browser generated); must equal the
+ *                     service's quote
+ *   preparePayment:   passphrase checked → the order re-checked against what this browser derived (reveal key,
+ *                     commit address, recipient, content hash, parent return address; DGT-SEC-006) → UTXOs →
+ *                     funding PSBT + txid → half-signed reveal (0x81 over
  *                     [parent return, child], ADR-0005) → K_e encrypted with the passphrase → POST reveal
  *                     → save recovery bundle → wipe the plaintext K_e
  *   rescue:           rescue parameters (service, or the bundle + the artwork file) → decrypt K_e →
@@ -73,19 +76,63 @@ export async function openOrder(
   return order;
 }
 
+/** The quote/order does not match what this browser derived itself: refuse to sign or pay (DGT-SEC-006). */
+export class QuoteMismatchError extends Error {
+  constructor(what: string) {
+    super(
+      `Refusing to pay: ${what} does not match what this browser computed. Nothing was signed or paid. ` +
+        'Start a fresh order; if this repeats, the mint service (or the connection to it) cannot be trusted.',
+    );
+    this.name = 'QuoteMismatchError';
+  }
+}
+
+function inscriptionContentOf(artwork: Artwork, config: CollectionConfig): InscriptionContentInput {
+  return {
+    contentType: artwork.contentType,
+    body: artwork.bytes,
+    ...(config.parentInscriptionId ? { parentId: config.parentInscriptionId } : {}),
+  };
+}
+
+/**
+ * Every field of the order that the payment and the pre-signed reveal depend on, re-derived locally. The
+ * service is not trusted for any of them: a forged reveal key or commit address would lock the payment to
+ * someone else's key, a forged recipient would pre-sign the child away, a forged parent return would send
+ * the inscription's first sat to another address (ordinal FIFO).
+ */
+function assertOrderIsOurs(
+  services: Services,
+  args: { order: Order; privkey: Uint8Array; artwork: Artwork; wallet: WalletSession; config: CollectionConfig; network: Network },
+): void {
+  const { order } = args;
+  const quote = order.quote!;
+  if (services.inscription.publicKeyHex(args.privkey) !== order.revealPubkey) throw new QuoteMismatchError('the order’s reveal key');
+  if (args.artwork.sha256 !== order.contentSha256) throw new QuoteMismatchError('the order’s content hash');
+  // The mint stores bech32 addresses lower-case (BIP-173 case-insensitive), so compare that spelling.
+  const canon = (a: string) => (/^(bc|tb|bcrt)1/i.test(a) ? a.toLowerCase() : a);
+  if (canon(order.recipientAddress) !== canon(args.wallet.ordinals.address)) throw new QuoteMismatchError('the order’s recipient (your ordinals address)');
+  const local = services.inscription.commitAddress(order.revealPubkey, inscriptionContentOf(args.artwork, args.config), args.network);
+  if (local !== quote.commitAddress) throw new QuoteMismatchError('the commit address');
+  const published = 'collectionAddress' in args.config ? (args.config as { collectionAddress?: unknown }).collectionAddress : undefined;
+  if (typeof published === 'string' && published.length > 0 && quote.parentReturnAddress !== published)
+    throw new QuoteMismatchError('the parent return address (the collection address)');
+}
+
 export function verifyCommit(
   services: Services,
-  args: { order: Order; artwork: Artwork; config: CollectionConfig; network: Network },
+  args: { order: Order; artwork: Artwork; config: CollectionConfig; network: Network; vault?: KeyVault },
 ): { localAddress: string; match: boolean } {
   if (!args.order.quote) throw new Error('No quote on this order yet.');
   if (args.artwork.sha256 !== args.order.contentSha256) {
     return { localAddress: '(content hash differs from order)', match: false };
   }
-  const content = {
-    contentType: args.artwork.contentType,
-    body: args.artwork.bytes,
-    ...(args.config.parentInscriptionId ? { parentId: args.config.parentInscriptionId } : {}),
-  };
+  // The reveal key must be the one this browser generated, not whatever the service names.
+  const privkey = args.vault?.get(args.order.id) ?? null;
+  if (privkey && services.inscription.publicKeyHex(privkey) !== args.order.revealPubkey) {
+    return { localAddress: '(the order names a reveal key this browser did not generate)', match: false };
+  }
+  const content = inscriptionContentOf(args.artwork, args.config);
   const localAddress = services.inscription.commitAddress(args.order.revealPubkey, content, args.network);
   // An indicative quote (no commit address yet) can never be "verified".
   const serviceAddress = args.order.quote.binding ? args.order.quote.commitAddress : null;
@@ -128,6 +175,7 @@ export async function preparePayment(
   if (!privkey) throw new MissingKeyError();
   const orderToken = requireToken(deps.vault, order.id);
   const { chain, inscription, mintApi } = deps.services;
+  assertOrderIsOurs(deps.services, { order, privkey, artwork: args.artwork, wallet, config: args.config, network: deps.app.network });
 
   args.onPhase?.('fetching-utxos');
   const utxos = await chain.getUtxos(wallet.payment.address);

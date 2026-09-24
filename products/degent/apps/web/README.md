@@ -104,8 +104,12 @@ money may have moved. Side effects live in `src/flow/effects.ts` and are written
    with only its x-only pubkey, keep the returned `orderToken` in memory, `PUT` the exact bytes (bearer token),
    wait for the art review.
 2. `verifyCommit` — `@bsh/inscription.commitAddress(K_e.pub, bytes, parent, network)` must equal the service's
-   **binding** quote. Mismatch or indicative quote → Pay is disabled.
-3. `preparePayment` — require a recovery passphrase (≥ 8 characters, typed twice), fetch payment UTXOs
+   **binding** quote, with `K_e.pub` derived from the key in this tab (not the pubkey the service names).
+   Mismatch or indicative quote → Pay is disabled.
+3. `preparePayment` — require a recovery passphrase (≥ 8 characters, typed twice); re-check the order against
+   what the browser derived (reveal key, commit address, content hash, recipient = the wallet's ordinals
+   address, parent return = the published collection address; `QuoteMismatchError` otherwise, nothing signed
+   or paid); fetch payment UTXOs
    (esplora), build the funding PSBT (commit output at vout 0, service fee if > 0, change) and compute its txid
    from the unsigned tx (nested-SegWit scriptSigs included), `buildHalfSignedReveal` with
    `SIGHASH_ALL|ANYONECANPAY` (0x81) over `[parent return, child]` — output 0 is the quote's

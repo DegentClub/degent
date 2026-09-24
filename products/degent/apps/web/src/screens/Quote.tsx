@@ -34,12 +34,12 @@ export function QuoteScreen() {
   useEffect(() => {
     if (!state.artwork) return;
     try {
-      const r = verifyCommit(services, { order, artwork: state.artwork, config, network: app.network });
+      const r = verifyCommit(services, { order, artwork: state.artwork, config, network: app.network, vault });
       dispatch({ type: 'COMMIT_CHECKED', localAddress: r.localAddress, match: r.match });
     } catch (e) {
       dispatch({ type: 'COMMIT_CHECKED', localAddress: `error: ${errorText(e)}`, match: false });
     }
-  }, [order, state.artwork, config, app.network, services, dispatch]);
+  }, [order, state.artwork, config, app.network, services, vault, dispatch]);
 
   const expiresAt = Date.parse(quote.expiresAt);
   const secondsLeft = Math.floor((expiresAt - now) / 1000);
