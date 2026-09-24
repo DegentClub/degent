@@ -49,7 +49,8 @@ const { order, orderToken } = await mint.createOrder({ tier, contentType, conten
 const approved = await mint.uploadContent(order.id, orderToken, bytes);        // binding quote + commitAddress
 const paying = await mint.submitReveal(order.id, orderToken, { commitTxid, commitVout, halfSignedRevealPsbt, commitAddress });
 const latest = await mint.getOrder(order.id);                                   // public, no token
-const rescue = await mint.getRescue(order.id, orderToken);                      // only when status === 'rescue_available'
+const rescue = await mint.getRescue(order.id, orderToken);                      // 'rescue_available' | 'declined':
+// rescue parameters (content bytes included), re-signed in the browser with K_e via buildResignedRescue (ADR-0005)
 
 try { /* ... */ } catch (e) {
   if (e instanceof ApiError) console.log(e.status, e.code, e.message, e.details);
@@ -63,8 +64,9 @@ Every endpoint is covered: `health`, `config`, `fees`, `queue`, `createOrder`, `
 ## Types (`types.ts`)
 
 `Order`, `OrderStatus` (+ `ORDER_STATUSES`), `Quote` (`binding: false` on the indicative quote from
-`POST /v1/orders`, `true` with `commitAddress` after upload), `CreateOrderRequest/Response`,
-`SubmitRevealRequest`, `RescueResponse`, `ServiceConfig`, `FeesResponse`, `QueueResponse`,
+`POST /v1/orders`, `true` with `commitAddress` after upload; `parentReturnAddress` + `parentValueSats` are the
+reveal's output 0, signed by the browser with SIGHASH_ALL|ANYONECANPAY, ADR-0005), `CreateOrderRequest/Response`,
+`SubmitRevealRequest`, `RescueResponse` (rescue parameters, not a transaction), `ServiceConfig`, `FeesResponse`, `QueueResponse`,
 `HealthResponse`, `ApiErrorCode`, `ApiErrorBody`, and `OrderStatusEvent` (payload of the
 `degent.mint.order.{status}` events).
 

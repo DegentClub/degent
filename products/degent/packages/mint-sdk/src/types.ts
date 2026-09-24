@@ -95,6 +95,16 @@ export interface Quote {
   expiresAt: string; // ISO 8601
   queuePosition: number | null; // block lane only
   etaMinutes: number | null;
+  /**
+   * Output 0 of the reveal: the collection address the parent returns to. The browser signs it with
+   * SIGHASH_ALL|ANYONECANPAY (0x81, ADR-0005), so it is fixed before the service attaches the parent.
+   */
+  parentReturnAddress: string;
+  /**
+   * Exact value of output 0 (= the parent UTXO's value, constant across reveals), also signed by the browser.
+   * Always set on the binding quote; null on an indicative quote while the service does not know its parent UTXO.
+   */
+  parentValueSats: number | null;
 }
 
 export interface ReviewCheck {
@@ -164,16 +174,39 @@ export interface CreateOrderResponse {
 export interface SubmitRevealRequest {
   commitTxid: string;
   commitVout: number;
-  halfSignedRevealPsbt: string; // base64 PSBT, input 1 signed with 0x83
+  /** base64 PSBT [commit] -> [parent return, child], commit input signed with SIGHASH_ALL|ANYONECANPAY (0x81). */
+  halfSignedRevealPsbt: string;
   /** Optional: the commit address the browser computed. Rejected if it differs from the service's. */
   commitAddress?: string;
 }
 
+/**
+ * GET /v1/orders/{id}/rescue (ADR-0005): the inputs of `@bsh/inscription.buildResignedRescue` except the
+ * ephemeral key K_e, which only the user's recovery bundle holds. The browser checks
+ * `sha256(content) === contentSha256` and that its K_e matches `revealPubkey`, then re-signs
+ * `[commit] -> [child]` and broadcasts it. `weight`/`vsize`/`feeSats` describe that rescue exactly.
+ */
 export interface RescueResponse {
   orderId: string;
-  txid: string;
-  hex: string;
+  network: Network;
+  method: 'resign';
+  commitOutpoint: { txid: string; vout: number };
+  commitValueSats: number;
+  recipientAddress: string;
+  postageSats: number;
+  contentType: string;
+  contentSha256: string;
+  /** The exact inscribed bytes, base64. */
+  contentBase64: string;
+  /** Parent id the envelope commits to (tag 3); part of the commit address. */
+  parentInscriptionId: string | null;
+  revealPubkey: string;
+  /** Quoted sat/vB; the rescue is lighter than the parent reveal, so it pays at least this. */
+  feeRate: number;
   weight: number;
+  vsize: number;
+  /** commitValue - postage (no change output). */
+  feeSats: number;
 }
 
 export interface HealthResponse {
