@@ -48,6 +48,9 @@ jobs:
       - name: CODEOWNERS is up to date
         run: pnpm --filter @bsh/catalog-tool run codeowners --check -- --org DegentClub
 
+      - name: Roadmap is well-formed
+        run: pnpm roadmap:check
+
       - name: No breaking OpenAPI changes (oasdiff)
         if: github.event_name == 'pull_request'
         run: |

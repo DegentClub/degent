@@ -12,7 +12,8 @@
     "catalog": "pnpm --filter @bsh/catalog-tool run catalog",
     "validate": "pnpm --filter @bsh/catalog-tool run validate",
     "lint:boundaries": "pnpm --filter @bsh/catalog-tool run boundaries",
-    "check": "pnpm validate && pnpm lint:boundaries && pnpm typecheck && pnpm test"
+    "check": "pnpm validate && pnpm lint:boundaries && pnpm roadmap:check && pnpm typecheck && pnpm test",
+    "roadmap:check": "node scripts/check-roadmap.mjs"
   },
   "devDependencies": {
     "typescript": "^5",
