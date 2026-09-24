@@ -426,7 +426,8 @@ export function parseArgs(argv) {
       if (v === undefined) throw new Error(`${a} needs a value`);
       return v;
     };
-    if (a === '--base-url') o.baseUrl = next();
+    if (a === '--') continue; // `pnpm rehearsal -- --base-url ...`
+    else if (a === '--base-url') o.baseUrl = next();
     else if (a === '--scenarios') o.scenarios = next();
     else if (a === '--orders') Object.assign(o.orders, JSON.parse(readFileSync(next(), 'utf8')));
     else if (a === '--order') {
