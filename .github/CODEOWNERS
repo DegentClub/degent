@@ -2,16 +2,20 @@
 # Do not edit by hand; change the manifest instead. CI runs the same command with --check.
 # GitHub applies the last matching pattern, so fallbacks come first.
 
-*                                     @DegentClub/team-platform
-/.github/                             @DegentClub/team-platform
-/schemas/                             @DegentClub/team-platform
-/templates/                           @DegentClub/team-platform
-/docs/                                @DegentClub/team-platform
-/catalog/                             @DegentClub/team-platform
-/contracts/                           @DegentClub/team-platform
-/tools/                               @DegentClub/team-platform
-/contracts/asyncapi/degent-mint.yaml  @DegentClub/team-degent
-/contracts/openapi/degent-mint.yaml   @DegentClub/team-degent
-/products/degent/apps/web/            @DegentClub/team-degent
-/products/degent/packages/mint-sdk/   @DegentClub/team-degent
-/products/degent/services/mint/       @DegentClub/team-degent
+*                                       @DegentClub/team-platform
+/.github/                               @DegentClub/team-platform
+/schemas/                               @DegentClub/team-platform
+/templates/                             @DegentClub/team-platform
+/docs/                                  @DegentClub/team-platform
+/catalog/                               @DegentClub/team-platform
+/contracts/                             @DegentClub/team-platform
+/tools/                                 @DegentClub/team-platform
+/contracts/asyncapi/degent-market.yaml  @DegentClub/team-degent
+/contracts/asyncapi/degent-mint.yaml    @DegentClub/team-degent
+/contracts/openapi/degent-market.yaml   @DegentClub/team-degent
+/contracts/openapi/degent-mint.yaml     @DegentClub/team-degent
+/products/degent/apps/web/              @DegentClub/team-degent
+/products/degent/packages/market-sdk/   @DegentClub/team-degent
+/products/degent/packages/mint-sdk/     @DegentClub/team-degent
+/products/degent/services/market/       @DegentClub/team-degent
+/products/degent/services/mint/         @DegentClub/team-degent

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-23T21:55:20.458Z",
+  "generatedAt": "2026-09-24T01:28:59.928Z",
   "schema": "schemas/component.schema.json",
   "components": [
     {
@@ -33,9 +33,86 @@
       "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "abac96823c55ba8ba44aef1c99f1d45795f8e2e9",
         "root": "deps/scribbit"
       }
+    },
+    {
+      "name": "degent-market",
+      "package": "@bsh/degent-market",
+      "kind": "service",
+      "product": "degent",
+      "owner": "team-degent",
+      "summary": "degent.club first-party marketplace - PSBT settlement engine (padding-input layout, FIFO asserted via @bsh/inscription), SIWB listing auth, settlement watcher, buys behind BUYS_ENABLED.",
+      "lifecycle": "experimental",
+      "depends_on": [
+        "@bsh/inscription",
+        "@bsh/identity",
+        "@bsh/degent-market-sdk",
+        "@bsh/degent-mint-sdk"
+      ],
+      "provides": [
+        "contracts/openapi/degent-market.yaml",
+        "contracts/asyncapi/degent-market.yaml"
+      ],
+      "consumes": [
+        "contracts/openapi/degent-mint.yaml"
+      ],
+      "stores": [
+        "sqlite:degent_market"
+      ],
+      "env_schema": "./env.schema.json",
+      "docs": "./README.md",
+      "commands": {
+        "dev": "dev",
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "products/degent/services/market",
+      "version": "0.1.0",
+      "scripts": {
+        "dev": "NETWORK=${NETWORK:-regtest} tsx watch src/main.ts",
+        "start": "tsx src/main.ts",
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "env_schema": "products/degent/services/market/env.schema.json",
+        "docs": "products/degent/services/market/README.md"
+      },
+      "dependents": []
+    },
+    {
+      "name": "degent-market-sdk",
+      "package": "@bsh/degent-market-sdk",
+      "kind": "library",
+      "product": "degent",
+      "owner": "team-degent",
+      "summary": "degent.club marketplace listing/buy domain types, settlement layout constants, price/royalty/fee maths and typed API client.",
+      "lifecycle": "experimental",
+      "depends_on": [
+        "@bsh/degent-mint-sdk"
+      ],
+      "provides": [
+        "contracts/openapi/degent-market.yaml"
+      ],
+      "docs": "./README.md",
+      "commands": {
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "products/degent/packages/market-sdk",
+      "version": "0.1.0",
+      "scripts": {
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "docs": "products/degent/packages/market-sdk/README.md"
+      },
+      "dependents": [
+        "degent-market"
+      ]
     },
     {
       "name": "degent-mint",
@@ -124,6 +201,8 @@
         "docs": "products/degent/packages/mint-sdk/README.md"
       },
       "dependents": [
+        "degent-market",
+        "degent-market-sdk",
         "degent-mint",
         "degent-web"
       ]
@@ -192,10 +271,12 @@
       "files": {
         "docs": "deps/scribbit/platform/edge/README.md"
       },
-      "dependents": [],
+      "dependents": [
+        "ledger"
+      ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "abac96823c55ba8ba44aef1c99f1d45795f8e2e9",
         "root": "deps/scribbit"
       }
     },
@@ -227,11 +308,12 @@
       },
       "dependents": [
         "degent-mint",
+        "ledger",
         "notify"
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "abac96823c55ba8ba44aef1c99f1d45795f8e2e9",
         "root": "deps/scribbit"
       }
     },
@@ -262,11 +344,12 @@
         "docs": "deps/scribbit/platform/identity/README.md"
       },
       "dependents": [
+        "degent-market",
         "degent-mint"
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "abac96823c55ba8ba44aef1c99f1d45795f8e2e9",
         "root": "deps/scribbit"
       }
     },
@@ -276,7 +359,7 @@
       "kind": "library",
       "product": "platform",
       "owner": "team-platform",
-      "summary": "Ordinals envelope, commit/reveal construction with SIGHASH_SINGLE|ANYONECANPAY, exact weight and fee maths.",
+      "summary": "Ordinals envelope, commit/reveal construction with SIGHASH_ALL|ANYONECANPAY (0x83 legacy), exact weight and fee maths.",
       "lifecycle": "beta",
       "depends_on": [],
       "docs": "./README.md",
@@ -294,12 +377,74 @@
         "docs": "deps/scribbit/platform/inscription/README.md"
       },
       "dependents": [
+        "degent-market",
         "degent-mint",
         "degent-web"
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "abac96823c55ba8ba44aef1c99f1d45795f8e2e9",
+        "root": "deps/scribbit"
+      }
+    },
+    {
+      "name": "ledger",
+      "package": "@bsh/ledger",
+      "kind": "service",
+      "product": "platform",
+      "owner": "team-platform",
+      "summary": "Shared order/payment ledger for every product - on-chain (xpub watch-only), Lightning + BTC via BTCPay, cards via a Stripe-shaped provider; receipts, refunds, events.",
+      "lifecycle": "beta",
+      "depends_on": [
+        "@bsh/edge",
+        "@bsh/events"
+      ],
+      "provides": [
+        "deps/scribbit/contracts/openapi/ledger.yaml",
+        "deps/scribbit/contracts/asyncapi/ledger.yaml"
+      ],
+      "stores": [
+        "sqlite:ledger",
+        "memory:ledger-api-keys",
+        "memory:ledger-rate-limits"
+      ],
+      "secrets": [
+        "services/ledger/api-keys",
+        "services/ledger/xpub",
+        "services/ledger/btcpay/api-key",
+        "services/ledger/btcpay/webhook-secret",
+        "services/ledger/card/secret-key",
+        "services/ledger/card/webhook-secret"
+      ],
+      "env_schema": "./env.schema.json",
+      "slo": {
+        "availability": "99.9",
+        "p95_ms": 250
+      },
+      "runbook": "./RUNBOOK.md",
+      "docs": "./README.md",
+      "commands": {
+        "dev": "dev",
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "deps/scribbit/platform/ledger",
+      "version": "0.1.0",
+      "scripts": {
+        "dev": "tsx watch src/main.ts",
+        "start": "tsx src/main.ts",
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "env_schema": "deps/scribbit/platform/ledger/env.schema.json",
+        "runbook": "deps/scribbit/platform/ledger/RUNBOOK.md",
+        "docs": "deps/scribbit/platform/ledger/README.md"
+      },
+      "dependents": [],
+      "external": {
+        "repo": "https://github.com/DegentClub/scribbit.git",
+        "commit": "abac96823c55ba8ba44aef1c99f1d45795f8e2e9",
         "root": "deps/scribbit"
       }
     },
@@ -331,7 +476,7 @@
       "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "abac96823c55ba8ba44aef1c99f1d45795f8e2e9",
         "root": "deps/scribbit"
       }
     },
@@ -363,7 +508,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "97a30a36cdafda9cc9abd894eed5187b314ec6bb",
+        "commit": "abac96823c55ba8ba44aef1c99f1d45795f8e2e9",
         "root": "deps/scribbit"
       }
     }
@@ -378,6 +523,8 @@
     "degent": {
       "path": "products/degent",
       "components": [
+        "degent-market",
+        "degent-market-sdk",
         "degent-mint",
         "degent-mint-sdk",
         "degent-web"
@@ -387,8 +534,8 @@
       ],
       "kinds": {
         "app": 1,
-        "library": 1,
-        "service": 1
+        "library": 2,
+        "service": 2
       }
     },
     "platform": {
@@ -398,6 +545,7 @@
         "events",
         "identity",
         "inscription",
+        "ledger",
         "notify",
         "wallet-kit"
       ],
@@ -405,7 +553,8 @@
         "team-platform"
       ],
       "kinds": {
-        "library": 6
+        "library": 6,
+        "service": 1
       }
     },
     "scribbit": {
@@ -429,11 +578,30 @@
   },
   "contracts": [
     {
+      "path": "contracts/asyncapi/degent-market.yaml",
+      "kind": "asyncapi",
+      "exists": true,
+      "providers": [
+        "degent-market"
+      ],
+      "consumers": []
+    },
+    {
       "path": "contracts/asyncapi/degent-mint.yaml",
       "kind": "asyncapi",
       "exists": true,
       "providers": [
         "degent-mint"
+      ],
+      "consumers": []
+    },
+    {
+      "path": "contracts/openapi/degent-market.yaml",
+      "kind": "openapi",
+      "exists": true,
+      "providers": [
+        "degent-market",
+        "degent-market-sdk"
       ],
       "consumers": []
     },
@@ -446,8 +614,18 @@
         "degent-mint-sdk"
       ],
       "consumers": [
+        "degent-market",
         "degent-web"
       ]
+    },
+    {
+      "path": "deps/scribbit/contracts/asyncapi/ledger.yaml",
+      "kind": "asyncapi",
+      "exists": true,
+      "providers": [
+        "ledger"
+      ],
+      "consumers": []
     },
     {
       "path": "deps/scribbit/contracts/asyncapi/platform-events.yaml",
@@ -461,6 +639,15 @@
       ]
     },
     {
+      "path": "deps/scribbit/contracts/openapi/ledger.yaml",
+      "kind": "openapi",
+      "exists": true,
+      "providers": [
+        "ledger"
+      ],
+      "consumers": []
+    },
+    {
       "path": "events:block.indexed.{network}",
       "kind": "event",
       "exists": true,
@@ -471,6 +658,11 @@
     }
   ],
   "edges": [
+    {
+      "from": "degent-market",
+      "to": "contracts/openapi/degent-mint.yaml",
+      "type": "consumes"
+    },
     {
       "from": "degent-mint",
       "to": "deps/scribbit/contracts/asyncapi/platform-events.yaml",
@@ -485,6 +677,31 @@
       "from": "degent-web",
       "to": "contracts/openapi/degent-mint.yaml",
       "type": "consumes"
+    },
+    {
+      "from": "degent-market",
+      "to": "degent-market-sdk",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-market",
+      "to": "degent-mint-sdk",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-market",
+      "to": "identity",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-market",
+      "to": "inscription",
+      "type": "depends_on"
+    },
+    {
+      "from": "degent-market-sdk",
+      "to": "degent-mint-sdk",
+      "type": "depends_on"
     },
     {
       "from": "degent-mint",
@@ -522,9 +739,34 @@
       "type": "depends_on"
     },
     {
+      "from": "ledger",
+      "to": "edge",
+      "type": "depends_on"
+    },
+    {
+      "from": "ledger",
+      "to": "events",
+      "type": "depends_on"
+    },
+    {
       "from": "notify",
       "to": "events",
       "type": "depends_on"
+    },
+    {
+      "from": "degent-market",
+      "to": "contracts/asyncapi/degent-market.yaml",
+      "type": "provides"
+    },
+    {
+      "from": "degent-market",
+      "to": "contracts/openapi/degent-market.yaml",
+      "type": "provides"
+    },
+    {
+      "from": "degent-market-sdk",
+      "to": "contracts/openapi/degent-market.yaml",
+      "type": "provides"
     },
     {
       "from": "degent-mint",
@@ -544,6 +786,16 @@
     {
       "from": "events",
       "to": "deps/scribbit/contracts/asyncapi/platform-events.yaml",
+      "type": "provides"
+    },
+    {
+      "from": "ledger",
+      "to": "deps/scribbit/contracts/asyncapi/ledger.yaml",
+      "type": "provides"
+    },
+    {
+      "from": "ledger",
+      "to": "deps/scribbit/contracts/openapi/ledger.yaml",
       "type": "provides"
     }
   ]
