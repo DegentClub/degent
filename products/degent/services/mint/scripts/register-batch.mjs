@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * register-batch — emit a Register update for the owner to inscribe as a child of the Club parent
- * (docs/REGISTER.md §1.3, ADR-0005 §4): every order the members approved since `--since`, with its
+ * (docs/REGISTER.md §1.3, ADR-0007 §4): every order the members approved since `--since`, with its
  * Degent number, inscription id and the approver signatures (BIP-322 over the vote statement), so the
  * on-chain record carries the proof of admission.
  *

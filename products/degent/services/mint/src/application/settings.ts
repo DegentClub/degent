@@ -29,7 +29,7 @@ export interface MintSettings {
   /** Keep watching expired orders for a late commit this long after expiry. */
   latePaymentWindowSeconds: number;
   policy: PolicyConfig;
-  /** Member approval (ADR-0005): quorums, review SLA, Gallery size. */
+  /** Member approval (ADR-0007): quorums, review SLA, Gallery size. */
   approval: ApprovalConfig;
   auth: AuthSettings;
   /** Public ord base for explorer image URLs (`<ordPublicUrl>/content/<id>`). */

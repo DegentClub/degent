@@ -1,5 +1,5 @@
 /**
- * Member approval (ADR-0005): holder sign-in with SIWB (@bsh/identity), the review queue, and
+ * Member approval (ADR-0007): holder sign-in with SIWB (@bsh/identity), the review queue, and
  * BIP-322-signed votes that move an order from member_review to queued (approval quorum, Degent
  * number assigned) or declined (decline quorum). Signature and nonce checks are the platform's;
  * this file only wires them to orders and holders.

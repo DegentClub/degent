@@ -142,7 +142,7 @@ export interface Order {
   rescued: boolean;
   serviceFeeAddress: string | null;
   queue: QueueInfo | null;
-  /** Public member-approval tally (ADR-0005). Null before the commit is confirmed. */
+  /** Public member-approval tally (ADR-0007). Null before the commit is confirmed. */
   approval: ApprovalInfo | null;
   /** Degent number assigned when the members approved (4112 + rank). Null until then. */
   degentNumber: number | null;
@@ -251,7 +251,7 @@ export interface OrderStatusEvent {
   inscriptionId?: string;
 }
 
-// ---------------------------------------------------------------- member approval (ADR-0005)
+// ---------------------------------------------------------------- member approval (ADR-0007)
 
 export type VoteChoice = 'approve' | 'decline';
 

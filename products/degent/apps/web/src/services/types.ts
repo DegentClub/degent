@@ -76,7 +76,7 @@ export interface MintApi {
   /** GET /v1/orders/{id}/rescue: the parent-less [commit] -> [child] reveal, fully signed. */
   getRescue(orderId: string, orderToken: string): Promise<RescueTx>;
 
-  // Member approval (ADR-0005): holder sign-in, review queue, votes
+  // Member approval (ADR-0007): holder sign-in, review queue, votes
   authChallenge(address: string): Promise<AuthChallengeResponse>;
   authVerify(address: string, message: string, signature: string): Promise<AuthVerifyResponse>;
   getReviewQueue(sessionToken: string): Promise<ReviewQueueResponse>;

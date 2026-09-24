@@ -268,7 +268,7 @@ export function fundCommit(h: Harness, b: BrowserMint, opts: { value?: bigint; c
   });
 }
 
-// ----------------------------------------------------------------------------- members (ADR-0005)
+// ----------------------------------------------------------------------------- members (ADR-0007)
 
 /** SIWB sign-in as the holder with `seed`: challenge -> BIP-322 sign -> verify. Returns the session. */
 export async function signIn(h: Harness, seed: number): Promise<AuthVerifyResponse> {

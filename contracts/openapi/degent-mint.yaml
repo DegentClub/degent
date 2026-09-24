@@ -7,7 +7,7 @@ info:
     Implemented by `@bsh/degent-mint` (products/degent/services/mint); typed client and domain types in
     `@bsh/degent-mint-sdk`. Design: docs/adr/0002-degent-mint-architecture.md.
 
-    Flow (Design -> Mint -> Confirm -> Approve, ADR-0005): `POST /v1/orders` (indicative quote + one-time
+    Flow (Design -> Mint -> Confirm -> Approve, ADR-0007): `POST /v1/orders` (indicative quote + one-time
     `orderToken`) -> `PUT /v1/orders/{id}/content` (raw bytes; automated review; binding quote + commit address)
     -> `POST /v1/orders/{id}/reveal` (half-signed reveal, verified and stored encrypted) -> user funds the
     commit (`paid` -> `confirming`) -> commit confirmed (`member_review`) -> existing members vote
@@ -299,7 +299,7 @@ paths:
       description: |
         `verifySignIn` from @bsh/identity (domain binding, validity window, BIP-322 or legacy signature,
         single-use nonce). 401 `auth_failed` on any signature/nonce problem, 403 `not_a_holder` when the
-        address holds no Degent (roster holders until the on-chain Register exists, ADR-0005).
+        address holds no Degent (roster holders until the on-chain Register exists, ADR-0007).
       requestBody:
         required: true
         content:
@@ -477,7 +477,7 @@ components:
         [awaiting_content, reviewing, approved, rejected, awaiting_payment, paid, confirming, member_review, declined,
          queued, revealing, revealed, confirmed, verified, delivered, expired, rescue_available, failed]
       description: |
-        ADR-0002 §6 state machine plus the member-approval stage of ADR-0005: `paid` (commit seen) ->
+        ADR-0002 §6 state machine plus the member-approval stage of ADR-0007: `paid` (commit seen) ->
         `confirming` (commit unconfirmed) -> `member_review` (commit confirmed; members vote) -> `queued`
         (approval quorum) or `declined` (decline quorum; self-rescue offered at once) or `rescue_available`
         (review SLA lapsed). Terminal: rejected, delivered, failed. `expired` can still become `paid` if the

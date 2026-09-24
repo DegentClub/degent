@@ -6,7 +6,7 @@ The Register is how anyone with a Bitcoin node can verify two claims without tru
 2. **Scale** — "the club has consumed X bytes of blockspace, more than any other collection".
 
 Today membership lives in a roster JSON (`products/degent/services/mint/data/roster.json`, built from the
-marketplace manifest) and, for new mints, in the **members' approval** ([ADR-0005](adr/0005-member-approval-and-register.md)):
+marketplace manifest) and, for new mints, in the **members' approval** ([ADR-0007](adr/0007-member-approval-and-register.md)):
 the mint only attaches the club parent to an inscription after existing members approved it, so **approval
 gates the parent link**, and the parent link is membership. This document specifies how the roll moves on-chain
 and what the mint service serves in the meantime.
@@ -32,7 +32,7 @@ The Gallery is signed: the metadata includes a BIP-322 signature over `sha256(co
 ### 1.3 New members (4,113 →)
 Every new mint is revealed by the mint service (`@bsh/degent-mint`, ADR-0002) as a **child of the Club parent**:
 the service leases the parent UTXO, the policy signer co-signs input 0, and the reveal carries the parent tag —
-**only after the members approved the order** (ADR-0005: `member_review → queued`). Membership is then a pure
+**only after the members approved the order** (ADR-0007: `member_review → queued`). Membership is then a pure
 on-chain fact: `child.parent == club`. An order the members decline is still revealed by its owner through
 self-rescue, without the parent — it is an inscription, not a Degent, and never enters the Register.
 

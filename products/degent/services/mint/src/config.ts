@@ -166,7 +166,7 @@ export function loadConfig(env: Record<string, string | undefined>, version = '0
   const rescueAfterSeconds = int('RESCUE_AFTER_SECONDS', DEFAULT_CONFIG.rescueAfterSeconds, 600, 7 * 86_400);
   const quoteTtlSeconds = int('QUOTE_TTL_SECONDS', DEFAULT_CONFIG.quoteTtlSeconds, 60, 86_400);
 
-  // Member approval (ADR-0005)
+  // Member approval (ADR-0007)
   const approvalQuorum = int('APPROVAL_QUORUM', DEFAULT_APPROVAL_QUORUM, 1, 100);
   const declineQuorum = int('DECLINE_QUORUM', DEFAULT_DECLINE_QUORUM, 1, 100);
   const reviewSlaSeconds = int('REVIEW_SLA_SECONDS', DEFAULT_REVIEW_SLA_SECONDS, 3600, 90 * 86_400);

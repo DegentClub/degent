@@ -1,5 +1,5 @@
 /**
- * Member approval (ADR-0005). Pure rules: who may vote, when a quorum is reached, how a Degent
+ * Member approval (ADR-0007). Pure rules: who may vote, when a quorum is reached, how a Degent
  * number is assigned. Every new Degent must be approved by existing members before the
  * parent-linked reveal; approval IS membership because the parent link is applied at reveal.
  *

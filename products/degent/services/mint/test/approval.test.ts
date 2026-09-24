@@ -1,5 +1,5 @@
 /**
- * Member approval (ADR-0005): the pure rules in domain/approval.ts and the HTTP surface
+ * Member approval (ADR-0007): the pure rules in domain/approval.ts and the HTTP surface
  * (SIWB sign-in via @bsh/identity, review queue, BIP-322-signed votes, quorums, numbering).
  */
 import { describe, expect, it } from 'vitest';

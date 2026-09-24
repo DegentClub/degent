@@ -1428,7 +1428,7 @@ input[type='range'] {
   }
 }
 
-/* ---------- ADR-0005: stages, votes, review, explorer, share ---------- */
+/* ---------- ADR-0007: stages, votes, review, explorer, share ---------- */
 
 .header__nav {
   display: flex;

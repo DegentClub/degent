@@ -1,5 +1,5 @@
 /**
- * The member and public pages of ADR-0005: /review (holder sign-in + votes), /explorer (the
+ * The member and public pages of ADR-0007: /review (holder sign-in + votes), /explorer (the
  * Register), /verify (the Telegram gate landing), and the declined path on Track.
  */
 import { describe, expect, it } from 'vitest';

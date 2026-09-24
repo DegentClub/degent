@@ -84,7 +84,7 @@ returned hex from any wallet or node. The inscription lands on the user's addres
   bundle, the rescue tx is not recoverable by support; the half-signed reveal stays encrypted in the
   `reveals` table and must not be exported.
 
-## Member review (ADR-0005)
+## Member review (ADR-0007)
 
 - **Orders piling up in `member_review`.** Members are not voting. Check `GET /v1/review` with a holder session (or
   `GET /v1/stats` → `approvals.inReview`) and ping the club. Nothing is stranded: after `REVIEW_SLA_SECONDS`

@@ -5,7 +5,7 @@
  *   awaiting_content -> reviewing -> approved | rejected
  *   approved -> awaiting_payment (half-signed reveal verified + stored)
  *   awaiting_payment -> paid (commit seen) -> confirming (commit unconfirmed)
- *   confirming -> member_review (commit confirmed; existing members vote, ADR-0005)
+ *   confirming -> member_review (commit confirmed; existing members vote, ADR-0007)
  *   member_review -> queued (approval quorum; Degent number assigned) | declined (decline quorum)
  *   queued (lane) -> revealing -> revealed (mempool)
  *   revealed -> confirmed -> verified (ord content hash matches) -> delivered

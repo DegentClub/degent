@@ -1,5 +1,5 @@
 /**
- * /review — the members' vote (ADR-0005). Sign in with the wallet that holds a Degent (SIWB via the
+ * /review — the members' vote (ADR-0007). Sign in with the wallet that holds a Degent (SIWB via the
  * mint, BIP-322 signature), see every order in member_review with its preview, size and tier, and
  * approve or decline by signing the exact vote statement. One vote per address per order.
  */

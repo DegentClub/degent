@@ -1,10 +1,11 @@
-# ADR-0005: Member approval gates the parent link; the Register is the club's roll
+# ADR-0007: Member approval gates the parent link; the Register is the club's roll
 
 - **Status:** Accepted
 - **Date:** 2026-09-23
 - **Deciders:** club owner, team-degent
 - **Components:** `@bsh/degent-mint`, `@bsh/degent-web`, `@bsh/degent-mint-sdk`; consumes `@bsh/identity` (platform)
-- **Supersedes / Related:** extends [ADR-0002](0002-degent-mint-architecture.md) §5–§6; platform ADR-0004 (repo
+- **Supersedes / Related:** extends [ADR-0002](0002-degent-mint-architecture.md) §5–§6; self-rescue as re-defined by
+  [ADR-0005](0005-sighash-all-anyonecanpay-reveals.md) (0x81 reveals, re-signed rescue); platform ADR-0004 (repo
   split, contract ownership); `docs/REGISTER.md`; `roadmap.yaml` p1.9–p1.12, p2.1–p2.10, p3.8–p3.9
 
 ## Context
@@ -20,8 +21,8 @@ shape the design:
 1. Membership *is* the parent link, applied at reveal (ADR-0002 §2, §5). Whatever gates the parent-linked reveal
    gates membership; there is no separate list to keep.
 2. The user has already paid by the time the commit is on chain, and the service is non-custodial: the funds sit in a
-   commit output only the user's pre-signed reveal (0x83) can spend. A rejection after payment must therefore never
-   strand funds; the self-rescue path of ADR-0002 §2 already exists for that.
+   commit output only the user's ephemeral key K_e can spend. A rejection after payment must therefore never
+   strand funds; the self-rescue path (ADR-0002 §2, re-signed with K_e since ADR-0005) already exists for that.
 3. "Existing club members" must be recognisable without trusting a database. Today the club is the 4,112 Gallery
    inscriptions in the hand-maintained marketplace roster; on-chain membership records (parent, Gallery, children,
    `docs/REGISTER.md`) do not exist yet. Holders can prove control of an address with BIP-322, which the platform
@@ -51,8 +52,9 @@ queued | revealing → rescue_available after rescueAfterSeconds from *approval*
 not the lane's fault)
 ```
 
-`declined` immediately offers self-rescue: `GET /v1/orders/{id}/rescue` returns the parent-less reveal and the
-front end presents "keep your inscription". The existing `rescue_available` semantics are unchanged. Orders in
+`declined` immediately offers self-rescue: `GET /v1/orders/{id}/rescue` returns the rescue parameters, the browser
+re-signs the parent-less `[commit] → [child]` with K_e from the recovery bundle (ADR-0005), and the front end
+presents "keep your inscription". The existing `rescue_available` semantics are unchanged. Orders in
 `member_review` do not occupy a lane slot (queue ETAs stay honest). `TRANSITIONS`, `ACTIVE_STATUSES`,
 `WAITING_FOR_LANE`, the SDK `OrderStatus` and both contracts carry the three new statuses.
 

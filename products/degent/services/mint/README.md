@@ -1,6 +1,6 @@
 # @bsh/degent-mint
 
-Automated, non-custodial mint service for degent.club (ADR-0002, ADR-0005). Four stages — **Design → Mint →
+Automated, non-custodial mint service for degent.club (ADR-0002, ADR-0007). Four stages — **Design → Mint →
 Confirm → Approve**: takes an order, reviews the art before payment, stores the user's half-signed reveal,
 watches for the commit and its confirmation, opens a **member review** in which existing Degent holders vote
 with BIP-322 signatures, and only on the approval quorum attaches the collection parent, has the policy signer
@@ -80,7 +80,7 @@ Layout:
 awaiting_content -> reviewing -> approved | rejected                      (Design)
 approved -> awaiting_payment              (half-signed reveal verified + stored)
 awaiting_payment -> paid -> confirming                                    (Mint, Confirm)
-confirming -> member_review               (commit confirmed; members vote, ADR-0005)   (Approve)
+confirming -> member_review               (commit confirmed; members vote, ADR-0007)   (Approve)
 member_review -> queued (APPROVAL_QUORUM; Degent number = 4112 + rank) | declined (DECLINE_QUORUM)
 member_review -> rescue_available         (no decision within REVIEW_SLA_SECONDS, default 14 days)
 queued -> revealing -> revealed -> confirmed -> verified -> delivered
@@ -121,7 +121,7 @@ Policy signer (ADR §3), stricter in one respect: the parent return must equal t
 postage, the lane fee band and that the fee rate matches the quote. A refusal moves the order straight to
 `rescue_available`.
 
-## Member approval (ADR-0005)
+## Member approval (ADR-0007)
 
 `application/approval-service.ts` wires the platform's SIWB (`issueChallenge` / `verifySignIn`, nonce store in
 memory or sqlite) and `SessionKeyRing` to orders and holders; `domain/approval.ts` holds the pure rules (one vote

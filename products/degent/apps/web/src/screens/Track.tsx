@@ -9,7 +9,7 @@ import { clearRecovery, recoveryJson } from '../lib/recovery';
 import { formatSize, formatTimestamp, shortHash } from '../lib/format';
 import type { Services } from '../services/types';
 
-/** The four stages of ADR-0005: Design -> Mint -> Confirm -> Approve. */
+/** The four stages of ADR-0007: Design -> Mint -> Confirm -> Approve. */
 export function Stages({ order }: { order: Pick<Order, 'status'> }) {
   return (
     <ol className="stages" aria-label="Mint stages">

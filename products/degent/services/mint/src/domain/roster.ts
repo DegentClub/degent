@@ -1,5 +1,5 @@
 /**
- * The Register's data model (ADR-0005 §4, docs/REGISTER.md): the Gallery roster (the first 4,112
+ * The Register's data model (ADR-0007 §4, docs/REGISTER.md): the Gallery roster (the first 4,112
  * Degents, inscribed before the parent existed) plus the approved children delivered by the mint.
  * Pure functions over plain records; stats are computed here and tested against known numbers.
  */

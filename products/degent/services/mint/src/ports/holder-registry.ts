@@ -1,5 +1,5 @@
 /**
- * Who is a member right now. Until the on-chain Register exists (ADR-0005 §4) a "member" is the
+ * Who is a member right now. Until the on-chain Register exists (ADR-0007 §4) a "member" is the
  * current holder of a roster Degent (the 4,112 Gallery members) or of a delivered, parent-linked
  * child. Adapters: in-memory (tests, regtest) and roster-chain (roster JSON + ord/esplora lookups).
  */

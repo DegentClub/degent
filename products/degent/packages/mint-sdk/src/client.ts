@@ -64,7 +64,7 @@ export interface MintClient {
   getOrder(orderId: string): Promise<Order>;
   getRescue(orderId: string, orderToken: string): Promise<RescueResponse>;
 
-  // Holder sign-in (SIWB) and member approval (ADR-0005)
+  // Holder sign-in (SIWB) and member approval (ADR-0007)
   authChallenge(req: AuthChallengeRequest): Promise<AuthChallengeResponse>;
   authVerify(req: AuthVerifyRequest): Promise<AuthVerifyResponse>;
   /** Orders in `member_review`. Requires a holder session token. */

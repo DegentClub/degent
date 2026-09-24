@@ -12,7 +12,7 @@ info:
     order tokens, keys or raw transactions.
 
     Status enum: equal to the platform's canonical `degent.mint.order.{status}` enum
-    (deps/scribbit/contracts/asyncapi/platform-events.yaml, topic 1.1.0, which adopted ADR-0005's `confirming`,
+    (deps/scribbit/contracts/asyncapi/platform-events.yaml, topic 1.1.0, which adopted ADR-0007's `confirming`,
     `member_review` and `declined`). `pnpm contracts:diff` prints any delta; contract.test.ts asserts equality.
     Consumers must ignore unknown statuses.
 

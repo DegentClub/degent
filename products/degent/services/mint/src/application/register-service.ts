@@ -1,5 +1,5 @@
 /**
- * The Register API (ADR-0005 §4, docs/REGISTER.md): the Gallery roster plus every approved child
+ * The Register API (ADR-0007 §4, docs/REGISTER.md): the Gallery roster plus every approved child
  * the mint delivered, with owners from the HolderRegistry. Read-only; nothing here moves funds.
  */
 import type {

@@ -15,7 +15,7 @@ and the catalog tool come from `DegentClub/scribbit`, vendored as a git submodul
 | `contracts/` | Contracts **this product provides**: `openapi/degent-mint.yaml`, `asyncapi/degent-mint.yaml`. Platform contracts are at `deps/scribbit/contracts/` |
 | `deps/scribbit/` | SUBMODULE, read-only here: `platform/*`, `tools/catalog`, platform contracts, platform ADRs. Change it in DegentClub/scribbit, then bump the pin |
 | `catalog/catalog.json` | GENERATED index of every component, platform ones marked `external` (`pnpm catalog`). Query this before grepping |
-| `docs/adr/` | ADR-0002 (mint architecture), ADR-0005 (member approval + the Register). Platform ADRs: `deps/scribbit/docs/adr/`. Numbering is global across the three repos |
+| `docs/adr/` | ADR-0002 (mint architecture), ADR-0005 (0x81 reveals, re-signed rescue), ADR-0007 (member approval + the Register). Platform ADRs: `deps/scribbit/docs/adr/`. Numbering is global across the three repos |
 | `docs/REGISTER.md` | The on-chain roll: parent, Gallery, children, numbering, custody, the Register API |
 | `roadmap.yaml` | Machine-readable roadmap (`schemas/roadmap.schema.json`); `pnpm test:root` validates it and every `verify` it names |
 | `schemas/component.schema.json` | Copy of the platform's manifest schema; refresh it when bumping the pin. `roadmap.schema.json`, `register.schema.json`: our own |

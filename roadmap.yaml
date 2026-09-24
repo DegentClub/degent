@@ -42,7 +42,7 @@ phases:
       - { id: p1.6, repo: combiner, title: "Atelier rebrand (Playfair/Inter, gold), border slider, size/fee readout", status: in_progress, verify: "npm run build" }
       - { id: p1.7, repo: degent, title: "Fold combiner into the web app as /atelier route", status: todo, depends_on: [p1.1, p1.6] }
       - { id: p1.8, repo: degent, title: "Character bible v1 (silhouette, tux, palette) as Atelier layer set", status: todo, owner_action: true }
-      - { id: p1.9, repo: degent, title: "Four-stage pipeline Design → Mint → Confirm → Approve: paid → confirming → member_review → queued | declined (ADR-0005)", status: done, verify: "pnpm --filter @bsh/degent-mint test -- worker e2e" }
+      - { id: p1.9, repo: degent, title: "Four-stage pipeline Design → Mint → Confirm → Approve: paid → confirming → member_review → queued | declined (ADR-0007)", status: done, verify: "pnpm --filter @bsh/degent-mint test -- worker e2e" }
       - { id: p1.10, repo: degent, title: "Track page with the four stages, live vote tally, declined state with self-rescue, share card", status: done, verify: "pnpm --filter @bsh/degent-web test -- members demo.e2e" }
       - { id: p1.11, repo: degent, title: "Holder auth: SIWB challenge → BIP-322 signature → holder check, via @bsh/identity (no own signature code)", status: done, verify: "pnpm --filter @bsh/degent-mint test -- approval" }
       - { id: p1.12, repo: degent, title: "Member review queue (/review): existing members approve or decline; APPROVAL_QUORUM / DECLINE_QUORUM configurable; review SLA hands the order to self-rescue", status: done, verify: "pnpm --filter @bsh/degent-web test -- members" }

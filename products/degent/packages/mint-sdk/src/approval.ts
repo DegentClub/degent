@@ -4,7 +4,7 @@
  */
 import type { Order, VoteChoice } from './types.js';
 
-/** First 4,112 Degents are the Gallery; approved mints number from 4113 (ADR-0005 §4). */
+/** First 4,112 Degents are the Gallery; approved mints number from 4113 (ADR-0007 §4). */
 export const GALLERY_SIZE = 4112;
 export const CHARTER_SIZE = 10_000;
 export const DEFAULT_APPROVAL_QUORUM = 3;

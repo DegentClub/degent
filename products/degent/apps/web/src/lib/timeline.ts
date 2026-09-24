@@ -1,4 +1,4 @@
-/** ADR-0002 §6 order state machine plus the member-approval stage of ADR-0005, as presented to the user. */
+/** ADR-0002 §6 order state machine plus the member-approval stage of ADR-0007, as presented to the user. */
 import type { Order, OrderEvent, OrderStatus } from '@bsh/degent-mint-sdk';
 
 export const HAPPY_PATH: readonly OrderStatus[] = [
@@ -40,7 +40,7 @@ export const STATUS_COPY: Record<OrderStatus, { label: string; blurb: string }> 
   failed: { label: 'Failed', blurb: 'Something went wrong. See the detail below.' },
 };
 
-// ---------------------------------------------------------------- the four stages (ADR-0005)
+// ---------------------------------------------------------------- the four stages (ADR-0007)
 
 export type Stage = 'design' | 'mint' | 'confirm' | 'approve';
 export const STAGES: readonly Stage[] = ['design', 'mint', 'confirm', 'approve'];

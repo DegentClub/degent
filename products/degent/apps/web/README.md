@@ -17,7 +17,7 @@ pnpm --filter @bsh/degent-web build      # → dist/
 | Path | What | Who |
 |---|---|---|
 | `/` | The mint wizard (below): Design → Mint → Confirm → Approve; Track shows the four stages, the live member tally ("2 of 3 members have approved"), the declined state with the parent-less reveal, and a share card once delivered | anyone |
-| `/review` | The members' vote (ADR-0005): sign in with the wallet that holds a Degent (SIWB challenge from the mint, BIP-322 `signMessage` via `@bsh/wallet-kit`), grid of orders in `member_review` with preview, size and tier, Approve / Decline by signing `Approve Degent order <id> (<ref>)` | holders |
+| `/review` | The members' vote (ADR-0007): sign in with the wallet that holds a Degent (SIWB challenge from the mint, BIP-322 `signMessage` via `@bsh/wallet-kit`), grid of orders in `member_review` with preview, size and tier, Approve / Decline by signing `Approve Degent order <id> (<ref>)` | holders |
 | `/explorer` | The Register: stats header (`/v1/stats`), filter/sort/paginated grid of every Degent (`/v1/explorer`), member detail | anyone |
 | `/verify?tg=<token>` | Telegram gate landing: connect, sign the gate statement, POST `{token, address, message, signature}` to `VITE_GATE_URL` (the gate service is built separately) | holders |
 

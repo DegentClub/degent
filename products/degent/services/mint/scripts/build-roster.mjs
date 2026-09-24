@@ -2,7 +2,7 @@
 /**
  * build-roster: turn the hand-maintained marketplace manifest (collection.json, an array of
  * { name: "Degent #N", inscription_id, inscription_number, sat, size_kb }) into data/roster.json, the
- * Gallery roster the mint service serves as the first 4,112 Register members (ADR-0005 §4).
+ * Gallery roster the mint service serves as the first 4,112 Register members (ADR-0007 §4).
  *
  * Usage:
  *   node scripts/build-roster.mjs --in ../../../../../Degent-Marketplace/public/collection.json [--out data/roster.json]

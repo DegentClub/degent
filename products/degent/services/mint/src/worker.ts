@@ -4,7 +4,7 @@
  * tick on an interval. One tick at a time: the parent UTXO chain is strictly serial.
  *
  *   awaiting_payment --(commit seen with exact value/script)--> paid --> confirming
- *   confirming --(commit has N confirmations)--> member_review   (ADR-0005: members vote via the API)
+ *   confirming --(commit has N confirmations)--> member_review   (ADR-0007: members vote via the API)
  *   member_review --(approval quorum, in ApprovalService)--> queued | --(decline quorum)--> declined
  *   member_review past reviewSla --> rescue_available            (no funds stranded by a silent club)
  *   queued --(lane slot + parent lease)--> revealing --attachParent/policy-sign/finalize/broadcast--> revealed

@@ -161,7 +161,7 @@ describe('AsyncAPI contract', () => {
 describe('degent.mint.order.{status} stays compatible with the platform topic (deps/scribbit/contracts/asyncapi/platform-events.yaml)', () => {
   // The platform schema is canonical for the shared topic; this contract's OrderStatusEvent is the producer's
   // view and must not drift from it. Both files are plain YAML with local $refs only.
-  // ADR-0005 added statuses here first (superset period); the pin now carries them (topic 1.1.0), so the
+  // ADR-0007 added statuses here first (superset period); the pin now carries them (topic 1.1.0), so the
   // enums must be equal again. `pnpm contracts:diff` prints any future delta.
   const superset = (ours: unknown[], theirs: unknown[], what: string) => {
     expect(theirs.filter((x) => !ours.includes(x)), `${what}: platform values missing here`).toEqual([]);

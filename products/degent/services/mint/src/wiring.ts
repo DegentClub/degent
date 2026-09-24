@@ -122,7 +122,7 @@ export function buildRuntime(cfg: MintConfig, log: Logger = jsonLogger()): Runti
   const parents = new StoreParentUtxoProvider(store);
   const orders = new OrderService({ settings, store, content, reveals, review, events, clock: systemClock, chain, votes });
 
-  // The Register: the Gallery roster plus holders from the chain (ADR-0005 §4).
+  // The Register: the Gallery roster plus holders from the chain (ADR-0007 §4).
   const rosterPath = resolve(serviceDir, cfg.rosterFile);
   const roster = parseRoster(JSON.parse(readFileSync(rosterPath, 'utf8')));
   let holders: HolderRegistry;

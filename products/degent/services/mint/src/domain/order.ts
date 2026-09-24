@@ -81,7 +81,7 @@ export const ACTIVE_STATUSES: readonly OrderStatus[] = [
 
 /**
  * States in which an order occupies (or waits for) a lane slot. Orders in member_review are not
- * counted: they only take a slot once the members approve (ADR-0005), so the queue ETA stays honest.
+ * counted: they only take a slot once the members approve (ADR-0007), so the queue ETA stays honest.
  */
 export const WAITING_FOR_LANE: readonly OrderStatus[] = ['queued'];
 /** States in which the members can still decide (votes accepted). */

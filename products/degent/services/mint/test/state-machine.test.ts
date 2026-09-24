@@ -62,7 +62,7 @@ describe('order state machine', () => {
     for (const s of ['paid', 'confirming', 'member_review', 'queued', 'revealing'] as const) expect(canTransition(s, 'rescue_available')).toBe(true);
   });
 
-  it('member review (ADR-0005) sits between the confirmed commit and the lane', () => {
+  it('member review (ADR-0007) sits between the confirmed commit and the lane', () => {
     expect(TRANSITIONS.confirming).toEqual(['member_review', 'rescue_available']);
     expect(TRANSITIONS.member_review).toEqual(['queued', 'declined', 'rescue_available']);
     // a declined order is not stranded: the self-rescue reveal lands it without the parent

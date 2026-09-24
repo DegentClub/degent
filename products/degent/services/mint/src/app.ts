@@ -236,7 +236,7 @@ export function createApp(o: AppOptions): Hono {
     c.json(await o.orders.getRescue(orderId(c), c.req.header('authorization'))),
   );
 
-  // ---------------------------------------------------------------- member approval (ADR-0005)
+  // ---------------------------------------------------------------- member approval (ADR-0007)
 
   app.post('/v1/auth/challenge', bodyLimit({ maxSize: JSON_BODY_LIMIT, onError: tooLarge(JSON_BODY_LIMIT) }), async (c) =>
     c.json(await o.approval.challenge(await readJson(c))),

@@ -1,6 +1,7 @@
 # degent.club - agent notes
 
-Read the root `CLAUDE.md`, then [ADR-0002](../../docs/adr/0002-degent-mint-architecture.md). This product moves
+Read the root `CLAUDE.md`, then [ADR-0002](../../docs/adr/0002-degent-mint-architecture.md) and
+[ADR-0005](../../docs/adr/0005-sighash-all-anyonecanpay-reveals.md) (which supersedes its §2 steps 4–5). This product moves
 real bitcoin; the rules below are not style preferences.
 
 ## Map
@@ -17,7 +18,9 @@ dependency and contract graph instead of reading package.json files.
 ## Hard rules
 
 1. **Non-custodial.** The service never holds a key that can move user funds. The ephemeral reveal key `K_e` is
-   generated and discarded in the browser; the server only stores half-signed reveals.
+   generated in the browser, signs the reveal with `SIGHASH_ALL|ANYONECANPAY` (0x81) over both outputs, and is then
+   kept only **encrypted** (recovery passphrase) in the user's recovery bundle for self-rescue (ADR-0005); it is
+   never sent to the server. The server only stores half-signed reveals and rescue *parameters*.
 2. **Only the policy signer signs the parent input**, and only transactions matching ADR-0002 section 3.
    Never widen its checks to make a test pass.
 3. **One implementation of the maths.** Weight, fee and commit address come from `@bsh/inscription`; rules come

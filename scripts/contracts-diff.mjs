@@ -2,7 +2,7 @@
 /**
  * contracts:diff — the delta between our AsyncAPI order-status contract and the platform's canonical copy of
  * the shared `degent.mint.order.{status}` topic (deps/scribbit/contracts/asyncapi/platform-events.yaml).
- * ADR-0005 added statuses here first; this prints what the platform PR still has to add. Exit code 0 when
+ * ADR-0007 added statuses here first; this prints what the platform PR still has to add. Exit code 0 when
  * the sets are equal, 1 when we carry extras (a platform PR is pending), 2 when the platform has values we
  * lack (we must catch up).
  */
