@@ -1,0 +1,22 @@
+# degent-web: static SPA + same-origin /api proxy to the mint API. docs/DEPLOY.md.
+#
+# Environment (read when Caddy parses this file):
+#   SITE_ADDRESS        listener; ":8080" (default, TLS terminated by the edge) or "degent.club" (Caddy ACME)
+#   MINT_API_UPSTREAM   mint API host:port (compose: mint-api:8787; NixOS: 127.0.0.1:8787)
+#   CSP_CONNECT_SRC     extra connect-src origins: esplora (UTXOs, broadcast), the Telegram gate
+#   CSP_IMG_SRC         extra img-src origins: the ord server that serves /content/<id>
+#   WEB_ROOT            directory with the built app (default /srv)
+#   CSP_HEADER          "Content-Security-Policy" (default) or "Content-Security-Policy-Report-Only"
+#                       (use report-only only while a wallet extension is being diagnosed in a rehearsal)
+{
+	admin off
+	persist_config off
+	servers {
+		# Keep X-Forwarded-For from the fleet edge (netcore) and docker networks; strip it from anyone else.
+		trusted_proxies static private_ranges
+	}
+}
+
+{$SITE_ADDRESS::8080} {
+	import web-site.caddy
+}

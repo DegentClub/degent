@@ -51,6 +51,11 @@ phases:
       - { id: p1.10, repo: degent, title: "Track page with the four stages, live vote tally, declined state with self-rescue, share card", status: done, verify: "pnpm --filter @bsh/degent-web test -- members demo.e2e" }
       - { id: p1.11, repo: degent, title: "Holder auth: SIWB challenge → BIP-322 signature → holder check, via @bsh/identity (no own signature code)", status: done, verify: "pnpm --filter @bsh/degent-mint test -- approval" }
       - { id: p1.12, repo: degent, title: "Member review queue (/review): existing members approve or decline; APPROVAL_QUORUM / DECLINE_QUORUM configurable; review SLA hands the order to self-rescue", status: done, verify: "pnpm --filter @bsh/degent-web test -- members" }
+      - { id: p1.13, repo: degent, title: "Deploy packaging: mint + web images (non-root, healthchecks, api/worker split), signet/mainnet compose, generated env examples, root flake packages + NixOS modules (secrets as *File options), statically checked", status: done, verify: "pnpm test:root", doc: docs/DEPLOY.md }
+      - { id: p1.14, repo: degent, title: "Signet rehearsal harness: scripted checklist runner + scenarios (5 wallets x desktop/mobile, approve, decline/SLA rescue, block lane, lane outage, policy refusal) writing rehearsal-report.json", status: done, verify: "node scripts/rehearsal/run.mjs --help", doc: docs/REHEARSAL.md }
+      - { id: p1.15, repo: degent, title: "Fleet wiring: degent-mint + degent-web hosts, flake input, SOPS secrets, signet esplora, btc-signet block lane, netcore exposure (proposal in docs/DEPLOY.md)", status: todo, owner_action: true, blocker: "needs an INFRA Jira ticket in Scribbitt/infrastructure and fleet access to the DegentClub/degent repo", doc: docs/DEPLOY.md, depends_on: [p1.13] }
+      - { id: p1.16, repo: degent, title: "Run the signet rehearsal: every scenario passes in rehearsal-report.json, restore drill done, alerts observed", status: todo, owner_action: true, doc: docs/REHEARSAL.md, depends_on: [p1.14, p1.15] }
+      - { id: p1.17, repo: degent, title: "KMS/HSM PolicySigner adapter (mainnet refuses to start without it)", status: todo, depends_on: [p1.13] }
   - id: p2
     name: Register and collection API
     exit: "Anyone can verify membership and the blockspace claim from a node and the published query."

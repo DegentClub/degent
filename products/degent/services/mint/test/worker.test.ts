@@ -241,3 +241,42 @@ describe('worker: broadcast failures and recovery', () => {
     expect(evs.at(-1)!.inscriptionId).toMatch(/^[0-9a-f]{64}i0$/);
   });
 });
+
+describe('worker: status snapshot (alerting feed, docs/DEPLOY.md)', () => {
+  it('counts every non-terminal status and the age of the oldest order in each', async () => {
+    const h = makeHarness();
+    await h.ready;
+    let snap = await h.worker.snapshot();
+    expect(snap.parent).toBe(true);
+    expect(snap.counts.member_review).toBe(0);
+    expect(snap.counts).not.toHaveProperty('delivered');
+    const a = await browserMintToPayment(h);
+    h.clock.advance(120);
+    await browserMintToPayment(h);
+    const b = await browserMintToPayment(h);
+    await fundToReview(h, b);
+    h.clock.advance(30);
+    snap = await h.worker.snapshot();
+    expect(snap.counts.awaiting_payment).toBe(2);
+    expect(snap.oldestSeconds.awaiting_payment).toBe(150);
+    expect(snap.counts.member_review).toBe(1);
+    expect(snap.oldestSeconds.member_review).toBe(30);
+    expect(a.orderId).toBeTruthy();
+  });
+
+  it('run() logs an "order status snapshot" line', async () => {
+    const lines: Array<{ msg: string; fields?: Record<string, unknown> }> = [];
+    const h = makeHarness();
+    await h.ready;
+    const { MintWorker } = await import('../src/worker.js');
+    const log = { info: (msg: string, fields?: Record<string, unknown>) => lines.push({ msg, fields }), warn: () => {}, error: () => {} };
+    const w = new MintWorker({ orders: h.orders, store: h.store, content: h.content, reveals: h.reveals, chain: h.chain, parents: h.parents, signer: h.signer, broadcasters: h.broadcasters, clock: h.clock, log });
+    const stop = new AbortController();
+    const done = w.run(10, stop.signal);
+    await new Promise((r) => setTimeout(r, 30));
+    stop.abort();
+    await done;
+    const snap = lines.find((l) => l.msg === 'order status snapshot');
+    expect(snap?.fields).toMatchObject({ parent: true, counts: { queued: 0 } });
+  });
+});

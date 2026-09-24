@@ -325,3 +325,19 @@ describe('cross-cutting', () => {
     expect(r.body.error.code).toBe('queue_full');
   });
 });
+
+describe('standard-lane-only deployments (mainnet without Libre Relay / Slipstream)', () => {
+  it('withdrawn block tier: /v1/config offers only standard and block-sized orders are refused', async () => {
+    const { offeredTiers } = await import('../src/config.js');
+    const base = makeHarness();
+    const h = makeHarness({ settings: { collection: { ...base.settings.collection, tiers: offeredTiers(true) } } });
+    await h.ready;
+    const cfg = await api(h, 'GET', '/v1/config');
+    expect(cfg.body.tiers.map((t: { tier: string }) => t.tier)).toEqual(['standard']);
+    const big = png(1500, 1500, 400_000);
+    const res = await api(h, 'POST', '/v1/orders', { json: validBody({ tier: 'block', contentLength: big.length, contentSha256: sha256Hex(big) }) });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('validation_failed');
+    expect((await api(h, 'POST', '/v1/orders', { json: validBody() })).status).toBe(201);
+  });
+});

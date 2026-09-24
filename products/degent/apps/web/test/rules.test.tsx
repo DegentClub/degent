@@ -80,3 +80,15 @@ describe('local rules (mint-sdk validateContentMeta + byte checks)', () => {
     expect(cont).toBeEnabled();
   });
 });
+
+describe('standard-lane-only service (no block tier offered)', () => {
+  it('the welcome page shows only the Standard Degent tier', async () => {
+    const services = fakes();
+    const cfg = await services.mintApi.getConfig();
+    services.mintApi.getConfig = async () => ({ ...cfg, tiers: cfg.tiers.filter((t) => t.tier !== 'block') });
+    renderApp(services);
+    expect(await screen.findByRole('button', { name: 'Start minting' })).toBeEnabled();
+    expect(screen.getByRole('heading', { name: 'Standard Degent' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Block Degent' })).not.toBeInTheDocument();
+  });
+});

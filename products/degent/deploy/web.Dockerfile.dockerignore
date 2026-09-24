@@ -1,0 +1,14 @@
+# BuildKit reads <Dockerfile>.dockerignore next to the Dockerfile; the build context is the repo root.
+**/node_modules
+**/dist
+**/coverage
+**/.vite
+.git
+**/.env
+**/.env.*
+!**/.env.*.example
+products/degent/deploy/secrets
+**/*.db
+**/*.db-wal
+**/*.db-shm
+rehearsal-report.json

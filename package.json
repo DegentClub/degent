@@ -9,6 +9,8 @@
     "test": "pnpm -r --if-present test && pnpm test:root",
     "test:root": "vitest run --config vitest.config.ts",
     "contracts:diff": "node scripts/contracts-diff.mjs",
+    "deploy:env": "node products/degent/deploy/gen-env.mjs",
+    "rehearsal": "node scripts/rehearsal/run.mjs",
     "typecheck": "pnpm -r --if-present typecheck",
     "build": "pnpm -r --if-present build",
     "catalog": "pnpm --filter @bsh/catalog-tool run catalog",

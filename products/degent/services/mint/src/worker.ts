@@ -28,7 +28,7 @@ import {
   inscriptionIdFromReveal,
 } from '@bsh/inscription';
 import type { Lane, OrderStatus } from '@bsh/degent-mint-sdk';
-import { sha256Hex } from '@bsh/degent-mint-sdk';
+import { ORDER_STATUSES, sha256Hex } from '@bsh/degent-mint-sdk';
 import type { OrderService } from './application/order-service.js';
 import type { Logger } from './application/logger.js';
 import { silentLogger } from './application/logger.js';
@@ -60,6 +60,18 @@ export interface WorkerDeps {
 export interface TickReport {
   transitions: Array<{ orderId: string; from: OrderStatus; to: OrderStatus }>;
   errors: Array<{ orderId: string; step: string; error: string }>;
+}
+
+/** Every non-terminal status: what the periodic `order status snapshot` log line reports (docs/DEPLOY.md alerts). */
+export const SNAPSHOT_STATUSES: readonly OrderStatus[] = ORDER_STATUSES.filter((s) => !['rejected', 'expired', 'failed', 'delivered'].includes(s));
+
+export interface StatusSnapshot {
+  /** Orders per status (every SNAPSHOT_STATUSES key present, 0 when none). */
+  counts: Record<string, number>;
+  /** Seconds the oldest order in each status has been in it (0 when none). */
+  oldestSeconds: Record<string, number>;
+  /** Whether the service knows a parent UTXO (false pauses every reveal). */
+  parent: boolean;
 }
 
 export class MintWorker {
@@ -121,14 +133,40 @@ export class MintWorker {
     }
   }
 
-  /** Tick every `intervalMs` until the signal aborts. */
-  async run(intervalMs: number, signal: AbortSignal): Promise<void> {
+  /** Counts and oldest age per non-terminal status; logged periodically by run() for alerting. */
+  async snapshot(): Promise<StatusSnapshot> {
+    const now = this.nowMs();
+    const counts: Record<string, number> = {};
+    const oldestSeconds: Record<string, number> = {};
+    for (const s of SNAPSHOT_STATUSES) {
+      counts[s] = 0;
+      oldestSeconds[s] = 0;
+    }
+    for (const r of await this.d.store.listByStatus(SNAPSHOT_STATUSES)) {
+      counts[r.status] = (counts[r.status] ?? 0) + 1;
+      const since = Date.parse(r.timeline.at(-1)?.at ?? r.updatedAt);
+      const age = Number.isFinite(since) ? Math.max(0, Math.floor((now - since) / 1000)) : 0;
+      oldestSeconds[r.status] = Math.max(oldestSeconds[r.status] ?? 0, age);
+    }
+    const parent = (await this.d.parents.current().catch(() => null)) !== null;
+    return { counts, oldestSeconds, parent };
+  }
+
+  /** Tick every `intervalMs` until the signal aborts; log an `order status snapshot` every `snapshotEveryMs`. */
+  async run(intervalMs: number, signal: AbortSignal, snapshotEveryMs = 60_000): Promise<void> {
+    let lastSnapshot = -Infinity;
     while (!signal.aborted) {
       const rep = await this.tick().catch((e) => {
         this.log.error('tick failed', { error: e instanceof Error ? e.message : String(e) });
         return null;
       });
       if (rep && rep.transitions.length) this.log.info('tick', { transitions: rep.transitions.length, errors: rep.errors.length });
+      if (this.nowMs() - lastSnapshot >= snapshotEveryMs) {
+        lastSnapshot = this.nowMs();
+        await this.snapshot()
+          .then((snap) => this.log.info('order status snapshot', { ...snap }))
+          .catch((e) => this.log.error('status snapshot failed', { error: e instanceof Error ? e.message : String(e) }));
+      }
       await new Promise<void>((res) => {
         const t = setTimeout(res, intervalMs);
         signal.addEventListener('abort', () => (clearTimeout(t), res()), { once: true });

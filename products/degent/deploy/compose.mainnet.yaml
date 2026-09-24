@@ -1,0 +1,160 @@
+# degent.club MAINNET stack: mint-api, mint-worker, web, mint-backup. docs/DEPLOY.md.
+#
+# Same shape as compose.signet.yaml, with no defaults for anything secret or chain-identifying:
+#   - SECRETS_DIR, ESPLORA_URL, ORD_URL, PARENT_INSCRIPTION_ID, COLLECTION_ADDRESS, SIWB_DOMAIN, CORS_ORIGINS
+#     must be set (compose refuses to start otherwise);
+#   - no parent key file: SIGNER=kms. The KMS policy signer is not implemented yet
+#     (services/mint/src/adapters/kms-policy-signer.ts), so the service REFUSES TO START on mainnet until it
+#     exists; this file is the target shape, validated statically by test/deploy.test.ts;
+#   - standard lane only unless LIBRE_RPC_URL and/or SLIPSTREAM_URL is set (the service then offers the
+#     block tier; without them /v1/config lists the standard tier only).
+#
+#   docker compose -f compose.mainnet.yaml --env-file .env.mainnet up -d
+name: degent-mainnet
+
+x-mint-env: &mint-env
+  NETWORK: mainnet
+  HOST: 0.0.0.0
+  PORT: "8787"
+  DATABASE_PATH: /var/lib/degent-mint/mint.db
+  CONTENT_DIR: /var/lib/degent-mint/content
+  ROSTER_FILE: /etc/degent-mint/roster.json
+  TRUST_PROXY: "true"
+  SIGNER: kms
+  REVEAL_ENCRYPTION_KEY_FILE: /run/secrets/reveal-encryption-key
+  SESSION_KEY_FILE: /run/secrets/session-key
+  LIBRE_RPC_PASS_FILE: /run/secrets/libre-rpc-pass
+  SLIPSTREAM_API_KEY_FILE: /run/secrets/slipstream-api-key
+  ART_REVIEW_API_KEY_FILE: /run/secrets/art-review-api-key
+  TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram-bot-token
+  ESPLORA_URL: ${ESPLORA_URL:?set ESPLORA_URL in .env.mainnet}
+  ORD_URL: ${ORD_URL:?set ORD_URL in .env.mainnet}
+  LIBRE_RPC_URL: ${LIBRE_RPC_URL:-}
+  LIBRE_RPC_USER: ${LIBRE_RPC_USER:-}
+  SLIPSTREAM_URL: ${SLIPSTREAM_URL:-}
+  PARENT_INSCRIPTION_ID: ${PARENT_INSCRIPTION_ID:?set PARENT_INSCRIPTION_ID in .env.mainnet}
+  PARENT_OUTPOINT: ${PARENT_OUTPOINT:-}
+  COLLECTION_ADDRESS: ${COLLECTION_ADDRESS:?set COLLECTION_ADDRESS in .env.mainnet}
+  CORS_ORIGINS: ${CORS_ORIGINS:?set CORS_ORIGINS (the web origin) in .env.mainnet}
+  ART_REVIEW_GUIDELINES_FILE: ${ART_REVIEW_GUIDELINES_FILE:-}
+  SERVICE_FEE_ADDRESS: ${SERVICE_FEE_ADDRESS:-}
+  SERVICE_FEE_SATS_STANDARD: ${SERVICE_FEE_SATS_STANDARD:-}
+  SERVICE_FEE_SATS_BLOCK: ${SERVICE_FEE_SATS_BLOCK:-}
+  MIN_FEE_RATE: ${MIN_FEE_RATE:-}
+  QUOTE_TTL_SECONDS: ${QUOTE_TTL_SECONDS:-}
+  RESCUE_AFTER_SECONDS: ${RESCUE_AFTER_SECONDS:-}
+  LATE_PAYMENT_WINDOW_SECONDS: ${LATE_PAYMENT_WINDOW_SECONDS:-}
+  STANDARD_CONCURRENCY: ${STANDARD_CONCURRENCY:-}
+  CONFIRMATIONS: ${CONFIRMATIONS:-}
+  WORKER_INTERVAL_MS: ${WORKER_INTERVAL_MS:-}
+  RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-}
+  APPROVAL_QUORUM: ${APPROVAL_QUORUM:-}
+  DECLINE_QUORUM: ${DECLINE_QUORUM:-}
+  REVIEW_SLA_SECONDS: ${REVIEW_SLA_SECONDS:-}
+  SIWB_DOMAIN: ${SIWB_DOMAIN:?set SIWB_DOMAIN in .env.mainnet}
+  SIWB_URI: ${SIWB_URI:-}
+  SIWB_CHALLENGE_TTL_SECONDS: ${SIWB_CHALLENGE_TTL_SECONDS:-}
+  SESSION_KID: ${SESSION_KID:-}
+  SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-}
+  HOLDER_REGISTRY: ${HOLDER_REGISTRY:-}
+  ORD_PUBLIC_URL: ${ORD_PUBLIC_URL:-}
+  GALLERY_INSCRIPTION_ID: ${GALLERY_INSCRIPTION_ID:-}
+  SITE_URL: ${SITE_URL:-}
+  NOTIFY_EMAIL: ${NOTIFY_EMAIL:-}
+
+x-mint: &mint
+  image: ${DEGENT_IMAGE_PREFIX:-degent}/mint:${DEGENT_IMAGE_TAG:?set DEGENT_IMAGE_TAG to a released tag}
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  volumes:
+    - mint-data:/var/lib/degent-mint
+    - ${ROSTER_PATH:-../services/mint/data/roster.json}:/etc/degent-mint/roster.json:ro
+  secrets: [reveal-encryption-key, session-key, libre-rpc-pass, slipstream-api-key, art-review-api-key, telegram-bot-token]
+  logging:
+    driver: json-file
+    options: { max-size: "50m", max-file: "10" }
+
+services:
+  mint-api:
+    <<: *mint
+    command: ["api"]
+    environment:
+      <<: *mint-env
+      MINT_ROLE: api
+    expose: ["8787"]
+
+  mint-worker:
+    <<: *mint
+    # Exactly one worker: the parent UTXO chain is strictly serial.
+    command: ["worker"]
+    environment:
+      <<: *mint-env
+      MINT_ROLE: worker
+    depends_on:
+      mint-api: { condition: service_healthy }
+
+  web:
+    image: ${DEGENT_IMAGE_PREFIX:-degent}/web:${DEGENT_IMAGE_TAG:?set DEGENT_IMAGE_TAG to a released tag}-mainnet
+    build:
+      context: ../../..
+      dockerfile: products/degent/deploy/web.Dockerfile
+      target: runtime
+      args:
+        VITE_NETWORK: mainnet
+        VITE_MINT_API_URL: /api
+        VITE_ESPLORA_URL: ${VITE_ESPLORA_URL:-}
+        VITE_ORD_URL: ${VITE_ORD_URL:-}
+        VITE_EXPLORER_URL: ${VITE_EXPLORER_URL:-}
+        VITE_SITE_URL: ${VITE_SITE_URL:-}
+        VITE_GATE_URL: ${VITE_GATE_URL:-}
+        VITE_POLL_MS: ${VITE_POLL_MS:-}
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      SITE_ADDRESS: ":8080"
+      MINT_API_UPSTREAM: mint-api:8787
+      CSP_CONNECT_SRC: ${CSP_CONNECT_SRC:-}
+      CSP_IMG_SRC: ${CSP_IMG_SRC:-}
+      CSP_HEADER: Content-Security-Policy
+    volumes:
+      - web-data:/data
+      - web-config:/config
+    ports:
+      - ${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:8080
+    depends_on:
+      mint-api: { condition: service_healthy }
+
+  mint-backup:
+    image: ${DEGENT_IMAGE_PREFIX:-degent}/mint-backup:${DEGENT_IMAGE_TAG:?set DEGENT_IMAGE_TAG to a released tag}
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-3600}
+      BACKUP_KEEP: ${BACKUP_KEEP:-48}
+    volumes:
+      - mint-data:/var/lib/degent-mint
+      - ${BACKUP_DIR:?set BACKUP_DIR (a different disk than the mint-data volume)}:/backups
+    depends_on:
+      mint-worker: { condition: service_started }
+
+volumes:
+  mint-data: {}
+  web-data: {}
+  web-config: {}
+
+secrets:
+  reveal-encryption-key: { file: "${SECRETS_DIR:?set SECRETS_DIR}/reveal-encryption-key" }
+  session-key: { file: "${SECRETS_DIR:?set SECRETS_DIR}/session-key" }
+  libre-rpc-pass: { file: "${SECRETS_DIR:?set SECRETS_DIR}/libre-rpc-pass" }
+  slipstream-api-key: { file: "${SECRETS_DIR:?set SECRETS_DIR}/slipstream-api-key" }
+  art-review-api-key: { file: "${SECRETS_DIR:?set SECRETS_DIR}/art-review-api-key" }
+  telegram-bot-token: { file: "${SECRETS_DIR:?set SECRETS_DIR}/telegram-bot-token" }

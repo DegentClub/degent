@@ -2,14 +2,15 @@ import { useMint } from '../flow/context';
 import { ResumeBanner } from '../components/ResumeBanner';
 import { Button, Money, Panel } from '../components/ui';
 import { formatEta, formatFeeRate, formatSize } from '../lib/format';
-import { tierRule } from '../lib/rules';
 import { NotifyPreference } from '../components/Notify';
 
 export function Welcome() {
   const { state, dispatch } = useMint();
   const { config, fees, queue } = state;
-  const std = config ? tierRule(config, 'standard') : null;
-  const blk = config ? tierRule(config, 'block') : null;
+  const std = config?.tiers.find((t) => t.tier === 'standard') ?? null;
+  // A service without a block-lane broadcaster (mainnet soft launch) does not offer the block tier at all.
+  const blk = config?.tiers.find((t) => t.tier === 'block') ?? null;
+  const blockOffered = !config || blk !== null;
   const blockRate = fees?.blockRecommended ?? fees?.economy ?? 2;
   // Illustration only (witness bytes weigh 1 WU → ~bytes/4 vB). The binding quote comes from @bsh/inscription.
   const blockFeeExample = blk ? Math.ceil((blk.maxBytes / 4) * blockRate) : null;
@@ -47,6 +48,7 @@ export function Welcome() {
             <li>Lowest cost; the everyday gentleman</li>
           </ul>
         </article>
+        {blockOffered ? (
         <article className="tier tier--block">
           <p className="kicker">Tier II · the 4 MB Degent</p>
           <h2 className="tier__name">Block Degent</h2>
@@ -65,6 +67,7 @@ export function Welcome() {
             </p>
           ) : null}
         </article>
+        ) : null}
       </div>
 
       <Panel kicker="Right now" title="Fees & the queue">

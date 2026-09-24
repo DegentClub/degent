@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-24T01:49:41.029Z",
+  "generatedAt": "2026-09-24T01:52:40.284Z",
   "schema": "schemas/component.schema.json",
   "components": [
     {
@@ -157,15 +157,19 @@
       "runbook": "./RUNBOOK.md",
       "docs": "./README.md",
       "commands": {
+        "build": "build",
         "dev": "dev",
+        "start": "start:dist",
         "test": "test",
         "typecheck": "typecheck"
       },
       "path": "products/degent/services/mint",
       "version": "0.1.0",
       "scripts": {
+        "build": "node scripts/bundle.mjs",
         "dev": "NETWORK=${NETWORK:-regtest} tsx watch src/main.ts",
         "start": "tsx src/main.ts",
+        "start:dist": "node dist/main.mjs",
         "test": "vitest run",
         "typecheck": "tsc --noEmit -p ."
       },

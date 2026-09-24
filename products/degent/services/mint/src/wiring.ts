@@ -113,8 +113,9 @@ export function buildRuntime(cfg: MintConfig, log: Logger = jsonLogger()): Runti
   if (cfg.libre) blockTargets.push(new LibreRelayBroadcaster({ rpcUrl: cfg.libre.url, user: cfg.libre.user, password: cfg.libre.password }));
   if (cfg.slipstream)
     blockTargets.push(new SlipstreamBroadcaster({ url: cfg.slipstream.url, ...(cfg.slipstream.apiKey ? { apiKey: cfg.slipstream.apiKey } : {}) }));
+  if (cfg.blockTierWithdrawn) log.warn('no Libre Relay / Slipstream configured: Block Degents are not offered (standard lane only)', {});
   if (blockTargets.length === 0) {
-    log.warn('no Libre Relay / Slipstream configured: block lane falls back to esplora (test networks only)', {});
+    if (!cfg.blockTierWithdrawn) log.warn('no Libre Relay / Slipstream configured: block lane falls back to esplora (test networks only)', {});
     blockTargets.push(standard);
   }
   const broadcasters = { standard, block: blockTargets.length === 1 ? blockTargets[0]! : new FanoutBroadcaster(blockTargets) };
