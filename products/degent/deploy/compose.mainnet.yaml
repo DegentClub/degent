@@ -140,6 +140,8 @@ services:
     environment:
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-3600}
       BACKUP_KEEP: ${BACKUP_KEEP:-48}
+      # Snapshots leave the host: encrypt them (age public key; the identity lives offline with the operator).
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:?set BACKUP_AGE_RECIPIENT (age public key) in .env.mainnet}
     volumes:
       - mint-data:/var/lib/degent-mint
       - ${BACKUP_DIR:?set BACKUP_DIR (a different disk than the mint-data volume)}:/backups

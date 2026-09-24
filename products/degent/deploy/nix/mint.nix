@@ -180,6 +180,12 @@ in
       directory = mkOption { type = types.str; default = "/var/backup/degent-mint"; description = "Backup target (ship it off-host; it holds encrypted reveals)."; };
       onCalendar = mkOption { type = types.str; default = "hourly"; description = "systemd OnCalendar for the backup timer."; };
       keep = mkOption { type = types.ints.positive; default = 48; description = "Database snapshots to keep."; };
+      ageRecipient = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "age1...";
+        description = "age public key(s), space-separated: snapshots are encrypted before they are written (BACKUP_AGE_RECIPIENT). Required on mainnet.";
+      };
     };
   };
 
@@ -193,6 +199,8 @@ in
         message = "services.degent-mint: esploraUrl, ordUrl, parentInscriptionId, collectionAddress and siwbDomain are required off regtest."; }
       { assertion = cfg.network == "mainnet" || cfg.network == "regtest" || cfg.signer != "memory" || cfg.parentKeyFile != null;
         message = "services.degent-mint: SIGNER=memory off regtest needs parentKeyFile."; }
+      { assertion = cfg.network != "mainnet" || !cfg.backup.enable || cfg.backup.ageRecipient != null;
+        message = "services.degent-mint: mainnet backups must be encrypted (backup.ageRecipient)."; }
     ];
 
     users.users.degent-mint = { isSystemUser = true; group = "degent-mint"; home = cfg.stateDir; };
@@ -210,6 +218,7 @@ in
         CONTENT_DIR = "${cfg.stateDir}/content";
         BACKUP_DIR = cfg.backup.directory;
         BACKUP_KEEP = toString cfg.backup.keep;
+        BACKUP_AGE_RECIPIENT = if cfg.backup.ageRecipient == null then "" else cfg.backup.ageRecipient;
       };
       serviceConfig = hardening // {
         Type = "oneshot";

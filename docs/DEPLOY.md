@@ -183,11 +183,18 @@ parent link for those orders is gone. Target: RPO 1 h (hourly), RTO 30 min.
   run), `PRAGMA integrity_check`, gzip, keeps `BACKUP_KEEP` snapshots, and copies new content blobs. Compose:
   the `mint-backup` service (`--loop`, `HEALTHCHECK` = `--check`: newest backup younger than two intervals).
   NixOS: `services.degent-mint.backup.enable = true` (`degent-mint-backup.timer`, hourly, `Persistent`).
+- **Private and encrypted**: backup files and directories are created `0600`/`0700` (umask 077; the mint process
+  itself also runs with umask 077). With `BACKUP_AGE_RECIPIENT` (age public key(s); **required on mainnet** in
+  compose and in the NixOS module, `backup.ageRecipient`) every database snapshot is encrypted before it is
+  written (`mint-<ts>.db.gz.age`); keep the age identity offline with the operator, never on the backup host.
+  Content blobs (the artworks, public once inscribed) are copied as private files, not encrypted.
 - **Off-host**: ship `BACKUP_DIR` elsewhere (fleet: the backup host / object store). It is sensitive (encrypted
-  reveals, recipient addresses); the reveal key must never be stored next to it.
+  reveals, recipient addresses, notification e-mail addresses and Telegram chat ids, votes); the reveal key must
+  never be stored next to it.
 - **Restore drill** (before the mainnet soft launch, then monthly; record the time taken):
   1. On a scratch host or compose project: `degent-mint-backup --restore <mint-<ts>.db.gz> /var/lib/degent-mint/mint.db`
-     (refuses to overwrite; checks integrity) and copy `BACKUP_DIR/content/` to `CONTENT_DIR`.
+     (refuses to overwrite; checks integrity; for `*.db.gz.age` set `BACKUP_AGE_IDENTITY=<identity file>`) and copy
+     `BACKUP_DIR/content/` to `CONTENT_DIR`.
   2. Start the **API only** (`MINT_ROLE=api`) with the same `REVEAL_ENCRYPTION_KEY` and compare
      `GET /v1/queue`, `GET /v1/stats` and a sample of `GET /v1/orders/{id}` with production.
   3. Real recovery only: stop the old worker for good first, then start the worker on the restored data.

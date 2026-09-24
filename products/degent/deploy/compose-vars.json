@@ -94,6 +94,11 @@
     "BACKUP_KEEP": {
       "description": "Database snapshots to keep (content blobs are never pruned).",
       "default": "48"
+    },
+    "BACKUP_AGE_RECIPIENT": {
+      "description": "age public key(s), space-separated: database snapshots are encrypted to them before they are written (restore with BACKUP_AGE_IDENTITY). Keep the identity offline, never next to the backups. Required on mainnet.",
+      "default": "",
+      "mainnet": null
     }
   },
   "examples": {

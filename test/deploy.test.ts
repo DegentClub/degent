@@ -238,8 +238,10 @@ describe('compose files', () => {
       SECRETS_DIR: dir,
       DEGENT_IMAGE_TAG: 'v1',
       BACKUP_DIR: '/srv/backups',
+      BACKUP_AGE_RECIPIENT: 'age1operatorrecipient',
     });
     expect(() => interpolateTree(compose('mainnet'), { ...vars, SECRETS_DIR: '' })).toThrow(/SECRETS_DIR/);
+    expect(() => interpolateTree(compose('mainnet'), { ...vars, BACKUP_AGE_RECIPIENT: '' })).toThrow(/BACKUP_AGE_RECIPIENT/);
     const c = interpolateTree(compose('mainnet'), vars);
     const env: Record<string, string> = Object.fromEntries(Object.entries(c.services['mint-api']!.environment!).map(([k, v]) => [k, String(v)]));
     for (const [k, v] of Object.entries(env)) {

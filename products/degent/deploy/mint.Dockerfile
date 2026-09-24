@@ -63,10 +63,10 @@ ENTRYPOINT ["node", "dist/main.mjs"]
 CMD ["api"]
 
 # --------------------------------------------------------------------------------------------- backup
-# sqlite online backup (`.backup`) + content blobs, on an interval. Mount the mint data volume at
+# sqlite online backup (`.backup`, age-encrypted when BACKUP_AGE_RECIPIENT is set) + content blobs, on an interval. Mount the mint data volume at
 # /var/lib/degent-mint and a backup target at /backups. See products/degent/deploy/backup.sh.
 FROM alpine:3.20 AS backup
-RUN apk add --no-cache sqlite \
+RUN apk add --no-cache sqlite age \
  && addgroup -g 1000 node && adduser -D -u 1000 -G node node \
  && mkdir -p /backups && chown node:node /backups
 COPY --chmod=0755 products/degent/deploy/backup.sh /usr/local/bin/degent-mint-backup

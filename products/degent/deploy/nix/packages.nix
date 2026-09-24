@@ -71,7 +71,7 @@ in
             --set-default NODE_OPTIONS --disable-warning=ExperimentalWarning
           install -Dm0755 products/degent/deploy/backup.sh $out/libexec/degent-mint-backup
           makeWrapper $out/libexec/degent-mint-backup $out/bin/degent-mint-backup \
-            --prefix PATH : ${lib.makeBinPath [ pkgs.sqlite pkgs.coreutils pkgs.gzip pkgs.findutils pkgs.gnugrep ]}
+            --prefix PATH : ${lib.makeBinPath [ pkgs.sqlite pkgs.age pkgs.coreutils pkgs.gzip pkgs.findutils pkgs.gnugrep ]}
         '';
       })
     { };

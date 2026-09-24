@@ -150,6 +150,7 @@ services:
     environment:
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-3600}
       BACKUP_KEEP: ${BACKUP_KEEP:-48}
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
     volumes:
       # rw: sqlite needs the -shm file of a WAL database even to read it.
       - mint-data:/var/lib/degent-mint

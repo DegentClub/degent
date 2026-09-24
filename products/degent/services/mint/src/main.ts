@@ -13,6 +13,10 @@ import { loadConfig, ConfigError } from './config.js';
 import { buildRuntime, initialiseParent } from './wiring.js';
 import { jsonLogger } from './application/logger.js';
 
+// The sqlite database (+ WAL/SHM) and content blobs are private to the service user, as under the NixOS unit's
+// UMask=0077; the container runtime has no such setting (docs/security/findings.json DGT-SEC-008).
+process.umask(0o077);
+
 const log = jsonLogger();
 
 async function main(): Promise<void> {
