@@ -1,0 +1,258 @@
+openapi: 3.1.0
+info:
+  title: degent.club Telegram gate API
+  version: 0.1.0
+  summary: Holders-only Telegram group gate - prove a Degent with a Sign-in-with-Bitcoin signature, get a single-use invite by DM.
+  description: |
+    Implemented by `@bsh/degent-telegram-gate` (products/degent/services/telegram-gate); consumed by the `/verify`
+    page of `@bsh/degent-web` (base URL `VITE_GATE_URL`). Background: docs/adr/0007-member-approval-and-register.md
+    (follow-up 4), roadmap p3.6.
+
+    Flow: the user DMs the bot `/verify` and receives a one-time link `<WEB_BASE_URL>/verify?tg=<token>` (10 minutes).
+    The page connects the wallet holding a Degent, calls `POST /gate/challenge {token, address}` and has the wallet
+    sign the returned Sign-in-with-Bitcoin message (BIP-322 simple, or legacy signmessage for P2PKH / P2SH-P2WPKH) whose
+    statement names the Telegram user id. `POST /gate/verify {token, address, message, signature}` verifies it with
+    `@bsh/identity.verifySignIn` (domain-bound, single-use nonce), asks the Register
+    (`GET /v1/register/holder/{address}` of degent-mint) whether the address holds a Degent, and sends a single-use,
+    10-minute invite (`createChatInviteLink`, `member_limit = 1`) **by Telegram DM only**: no response carries it.
+
+    Rules: one wallet <-> one Telegram account among active members (`address_taken`, `telegram_taken`); a link works
+    once; `/verify` is limited to 3 per 10 minutes per Telegram user. A periodic re-check (default every 6 h) removes
+    members whose wallet no longer holds a Degent (ban + unban, with a DM saying why); a Register error never removes
+    anyone.
+
+    Conventions: every error is `{ "error": { "code", "message" } }`. Browser calls are subject to a CORS allowlist
+    (the `WEB_BASE_URL` origin only); POSTs are rate limited per client IP; responses carry `cache-control: no-store`.
+  license: { name: Proprietary, identifier: LicenseRef-Proprietary }
+servers:
+  - url: https://gate.degent.club
+    description: production (mainnet)
+  - url: http://127.0.0.1:8788
+    description: local dev (regtest)
+tags:
+  - name: gate
+  - name: operators
+security: []
+paths:
+  /gate/health:
+    get:
+      tags: [gate]
+      operationId: health
+      summary: Liveness.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+  /gate/challenge:
+    post:
+      tags: [gate]
+      operationId: gateChallenge
+      summary: Issue a Sign-in-with-Bitcoin challenge bound to the link's Telegram user and the address.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GateChallengeRequest' }
+      responses:
+        '200':
+          description: The exact message the wallet must sign.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChallengeResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /gate/verify:
+    post:
+      tags: [gate]
+      operationId: gateVerify
+      summary: Verify the signed challenge and the holding; send the single-use invite by DM.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GateVerifyRequest' }
+      responses:
+        '200':
+          description: Verified. The invite is in the user's Telegram DMs (never in this response).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GateVerifyResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /gate/admin/challenge:
+    post:
+      tags: [operators]
+      operationId: adminChallenge
+      summary: Operator sign-in, step 1 (address must be in ADMIN_ADDRESSES).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminChallengeRequest' }
+      responses:
+        '200':
+          description: The operator sign-in message.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChallengeResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /gate/admin/verify:
+    post:
+      tags: [operators]
+      operationId: adminVerify
+      summary: Operator sign-in, step 2 - returns an EdDSA session (aud degent-telegram-gate, scope gate:admin).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminVerifyRequest' }
+      responses:
+        '200':
+          description: Operator session.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionResponse' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /gate/stats:
+    get:
+      tags: [operators]
+      operationId: stats
+      summary: Member counts and the last re-verification run. Requires an operator session.
+      security: [{ operatorSession: [] }]
+      responses:
+        '200':
+          description: Counts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatsResponse' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    operatorSession:
+      type: http
+      scheme: bearer
+      bearerFormat: JWS (EdDSA)
+      description: Token from `POST /gate/admin/verify`. Rejected once the address leaves ADMIN_ADDRESSES.
+  responses:
+    Error:
+      description: Structured error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    LinkToken:
+      type: string
+      pattern: '^[A-Za-z0-9_-]{8,128}$'
+      description: The opaque `tg` query parameter of the /verify link (HMAC-authenticated, 10 minutes, single use).
+    Timestamp: { type: string, format: date-time }
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok] }
+    GateChallengeRequest:
+      type: object
+      additionalProperties: false
+      required: [token, address]
+      properties:
+        token: { $ref: '#/components/schemas/LinkToken' }
+        address: { type: string, maxLength: 100, description: The address holding the Degent (usually the wallet's ordinals / taproot address). }
+    ChallengeResponse:
+      type: object
+      additionalProperties: false
+      required: [message, expiresAt]
+      properties:
+        message: { type: string, description: 'Sign-in-with-Bitcoin text (see @bsh/identity README); sign it unmodified.' }
+        expiresAt: { $ref: '#/components/schemas/Timestamp' }
+    GateVerifyRequest:
+      type: object
+      additionalProperties: false
+      required: [token, address, message, signature]
+      properties:
+        token: { $ref: '#/components/schemas/LinkToken' }
+        address: { type: string, maxLength: 100 }
+        message: { type: string, maxLength: 4096, description: The challenge message exactly as returned by /gate/challenge. }
+        signature: { type: string, maxLength: 4096, description: 'base64: BIP-322 simple witness, or a 65-byte legacy signmessage signature.' }
+    GateVerifyResponse:
+      type: object
+      additionalProperties: false
+      required: [ok, degents, message]
+      properties:
+        ok: { type: boolean, const: true }
+        degents: { type: array, items: { type: integer, minimum: 1 }, description: Degent numbers the address holds. }
+        message: { type: string, description: Human-readable next step (check your Telegram DMs). }
+    AdminChallengeRequest:
+      type: object
+      additionalProperties: false
+      required: [address]
+      properties:
+        address: { type: string, maxLength: 100 }
+    AdminVerifyRequest:
+      type: object
+      additionalProperties: false
+      required: [address, message, signature]
+      properties:
+        address: { type: string, maxLength: 100 }
+        message: { type: string, maxLength: 4096 }
+        signature: { type: string, maxLength: 4096 }
+    SessionResponse:
+      type: object
+      additionalProperties: false
+      required: [token, expiresAt]
+      properties:
+        token: { type: string }
+        expiresAt: { $ref: '#/components/schemas/Timestamp' }
+    ReverifySummary:
+      type: object
+      additionalProperties: false
+      required: [at, checked, kept, kicked, errors, kickFailures]
+      properties:
+        at: { $ref: '#/components/schemas/Timestamp' }
+        checked: { type: integer }
+        kept: { type: integer }
+        kicked: { type: integer }
+        errors: { type: integer, description: Register lookups that failed (those members were kept). }
+        kickFailures: { type: integer, description: Telegram ban/unban calls that failed (retried next run). }
+    StatsResponse:
+      type: object
+      additionalProperties: false
+      required: [activeMembers, revokedMembers, degentsHeld, invitesIssued, kickPending, lastReverify]
+      properties:
+        activeMembers: { type: integer }
+        revokedMembers: { type: integer }
+        degentsHeld: { type: integer }
+        invitesIssued: { type: integer }
+        kickPending: { type: integer }
+        lastReverify: { oneOf: [{ $ref: '#/components/schemas/ReverifySummary' }, { type: 'null' }] }
+    ErrorCode:
+      type: string
+      enum:
+        [bad_request, unsupported_media_type, payload_too_large, forbidden_origin, rate_limited, bad_telegram_id,
+         bad_token, bad_address, bad_message, auth_failed, not_a_holder, address_taken, telegram_taken, unauthorized,
+         forbidden, upstream_unavailable, not_found, internal]
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code: { $ref: '#/components/schemas/ErrorCode' }
+            message: { type: string }
