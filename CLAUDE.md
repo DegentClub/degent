@@ -59,7 +59,9 @@ Only `degent` has code here.
 ```bash
 git submodule update --init  # once, after cloning
 pnpm install                 # once
-pnpm check                   # validate manifests + boundaries + typecheck + tests (what CI runs)
+pnpm check                   # validate manifests + boundaries + secret scan + typecheck + tests (what CI runs)
+pnpm test:secrets            # scripts/secret-scan.mjs over the full git history + working tree (docs/SECURITY.md)
+pnpm audit:prod              # production dependency audit, high/critical (CI runs it too)
 pnpm contracts:diff          # statuses our AsyncAPI carries that the platform's shared topic does not (yet)
 pnpm catalog                 # regenerate catalog/catalog.json
 pnpm deploy:env              # regenerate products/degent/deploy/.env.*.example after changing env.schema.json

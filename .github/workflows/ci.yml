@@ -36,6 +36,12 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Secret scan (full git history + working tree)
+        run: pnpm test:secrets # scripts/secret-scan.mjs; fetch-depth 0 above makes every commit reachable
+
+      - name: Dependency audit (production, high and critical)
+        run: pnpm audit:prod # docs/SECURITY.md "Supply chain": fix or document every high/critical
+
       - name: Validate component manifests
         run: pnpm validate
 

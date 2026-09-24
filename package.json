@@ -8,6 +8,8 @@
   "scripts": {
     "test": "pnpm -r --if-present test && pnpm test:root",
     "test:root": "vitest run --config vitest.config.ts",
+    "test:secrets": "node scripts/secret-scan.mjs",
+    "audit:prod": "pnpm audit --prod --audit-level high",
     "contracts:diff": "node scripts/contracts-diff.mjs",
     "deploy:env": "node products/degent/deploy/gen-env.mjs",
     "rehearsal": "node scripts/rehearsal/run.mjs",
@@ -16,7 +18,7 @@
     "catalog": "pnpm --filter @bsh/catalog-tool run catalog",
     "validate": "pnpm --filter @bsh/catalog-tool run validate",
     "lint:boundaries": "pnpm --filter @bsh/catalog-tool run boundaries",
-    "check": "pnpm validate && pnpm lint:boundaries && pnpm typecheck && pnpm test"
+    "check": "pnpm validate && pnpm lint:boundaries && pnpm test:secrets && pnpm typecheck && pnpm test"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
