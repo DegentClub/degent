@@ -46,7 +46,7 @@ jobs:
         run: pnpm catalog --check
 
       - name: CODEOWNERS is up to date
-        run: pnpm --filter @bsh/catalog-tool run codeowners --check
+        run: pnpm --filter @bsh/catalog-tool run codeowners --check -- --org DegentClub
 
       - name: No breaking OpenAPI changes (oasdiff)
         if: github.event_name == 'pull_request'
