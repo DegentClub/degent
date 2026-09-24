@@ -18,7 +18,7 @@ export function testApp(over: Partial<AppConfig> = {}): AppConfig {
     ordContentUrl: 'https://ord.test',
     pollIntervalMs: 10,
     demo: true,
-    gateUrl: 'https://gate.test/verify',
+    gateUrl: 'https://gate.test',
     siteUrl: 'https://degent.club',
     ...over,
   };

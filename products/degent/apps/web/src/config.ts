@@ -9,7 +9,7 @@ export interface AppConfig {
   ordContentUrl: string;
   pollIntervalMs: number;
   demo: boolean;
-  /** Telegram gate endpoint the /verify page posts to (VITE_GATE_URL). Empty = gate disabled. */
+  /** Base URL of the Telegram gate service (VITE_GATE_URL; the page calls /gate/challenge and /gate/verify). Empty = gate disabled. */
   gateUrl: string;
   /** Public site origin used in share links (VITE_SITE_URL), defaults to the current origin. */
   siteUrl: string;

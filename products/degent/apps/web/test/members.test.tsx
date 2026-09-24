@@ -9,11 +9,11 @@ import { voteStatement } from '@bsh/degent-mint-sdk';
 import { preparePayment } from '../src/flow/effects';
 import { flowReducer } from '../src/flow/reducer';
 import { routeFor } from '../src/router';
-import { gateStatement, readGateToken } from '../src/screens/Verify';
+import { readGateToken } from '../src/screens/Verify';
 import { Votes } from '../src/screens/Track';
 import { render } from '@testing-library/react';
 import type { Order } from '@bsh/degent-mint-sdk';
-import { demoOrdinalsAddress } from '../src/services/fakes';
+import { demoOrdinalsAddress, fakeGateChallenge } from '../src/services/fakes';
 import type { FakeServicesOptions } from '../src/services/fakes';
 import { fakes, memoryStore, renderApp, stateAtQuote, testApp } from './helpers';
 
@@ -121,7 +121,7 @@ describe('/explorer', () => {
 });
 
 describe('/verify (Telegram gate landing)', () => {
-  it('reads ?tg=, connects, signs the gate statement and posts it to GATE_URL', async () => {
+  it('reads ?tg=, connects, fetches the gate challenge, signs it unmodified and posts it to the gate', async () => {
     const user = userEvent.setup();
     const services = fakes();
     renderApp(services, { path: '/verify', search: '?tg=tok_abc12345' });
@@ -133,16 +133,20 @@ describe('/verify (Telegram gate landing)', () => {
     expect(await screen.findByText(/holds Degent #17/)).toBeInTheDocument();
     await waitFor(() => expect(sign).toBeEnabled());
     await user.click(sign);
-    expect(await screen.findByText('Welcome, gentleman.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Open your invite/ })).toHaveAttribute('href', expect.stringContaining('https://t.me/'));
-    const sub = services.gateSubmissions[0]!;
-    expect(sub.url).toBe('https://gate.test/verify');
-    const body = sub.body as { token: string; address: string; message: string; signature: string };
+    expect(await screen.findByText(/Your single-use invite is in your Telegram DMs/)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /invite/i })).not.toBeInTheDocument();
+    const [challenge, verify] = services.gateSubmissions;
+    expect(challenge!.url).toBe('https://gate.test/gate/challenge');
+    expect(challenge!.body).toEqual({ token: 'tok_abc12345', address: demoOrdinalsAddress('unisat', 'mainnet') });
+    expect(verify!.url).toBe('https://gate.test/gate/verify');
+    const body = verify!.body as { token: string; address: string; message: string; signature: string };
+    expect(Object.keys(body)).toEqual(['token', 'address', 'message', 'signature']);
     expect(body.token).toBe('tok_abc12345');
     expect(body.address).toBe(demoOrdinalsAddress('unisat', 'mainnet'));
-    expect(body.message).toContain(`Verify Degent holder ${body.address} for Telegram gate tok_abc12345`);
+    expect(body.message).toBe(fakeGateChallenge('tok_abc12345', body.address));
     expect(body.signature.length).toBeGreaterThan(20);
-    expect(services.log).toContain('wallet.signMessage');
+    expect(services.log.indexOf('gate.challenge')).toBeLessThan(services.log.indexOf('wallet.signMessage'));
+    expect(services.log.indexOf('wallet.signMessage')).toBeLessThan(services.log.indexOf('gate.submit'));
   });
 
   it('warns without a token, and reports a refused gate', async () => {
@@ -151,7 +155,6 @@ describe('/verify (Telegram gate landing)', () => {
     expect(await screen.findByText('No gate token in the link')).toBeInTheDocument();
     expect(readGateToken('?tg=bad token')).toBeNull();
     expect(readGateToken('?tg=ok_token_1')).toBe('ok_token_1');
-    expect(gateStatement('t', 'bc1p', '2026-09-23T00:00:00.000Z')).toBe('Verify Degent holder bc1p for Telegram gate t at 2026-09-23T00:00:00.000Z');
     const services = fakes({ gate: { reject: 'token expired' } });
     renderApp(services, { path: '/verify', search: '?tg=tok_expired1' });
     await user.click((await screen.findAllByRole('button', { name: 'Connect UniSat' })).at(-1)!);

@@ -94,6 +94,13 @@ export interface MintApi {
 
 // ---------------------------------------------------------------- telegram gate (/verify)
 
+/** contracts/openapi/degent-telegram-gate.yaml: GateChallengeRequest. */
+export interface GateChallengeRequest {
+  token: string;
+  address: string;
+}
+
+/** contracts/openapi/degent-telegram-gate.yaml: GateVerifyRequest. */
 export interface GateSubmission {
   token: string;
   address: string;
@@ -101,9 +108,16 @@ export interface GateSubmission {
   signature: string;
 }
 
-/** The holders-only Telegram gate service (built separately): POST {token, address, message, signature}. */
+export type GateResult<T> = ({ ok: true } & T) | { ok: false; message: string };
+
+/**
+ * The holders-only Telegram gate (`@bsh/degent-telegram-gate`, base URL `VITE_GATE_URL`):
+ * `POST /gate/challenge {token, address}` -> a Sign-in-with-Bitcoin message naming the Telegram account,
+ * then `POST /gate/verify {token, address, message, signature}`. The invite arrives by Telegram DM, never here.
+ */
 export interface GateApi {
-  submit(url: string, body: GateSubmission): Promise<{ ok: boolean; invite?: string; message?: string }>;
+  challenge(baseUrl: string, body: GateChallengeRequest): Promise<GateResult<{ message: string; expiresAt: string }>>;
+  submit(baseUrl: string, body: GateSubmission): Promise<GateResult<{ degents: number[]; message: string }>>;
 }
 
 // ---------------------------------------------------------------- wallet

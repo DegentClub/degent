@@ -6,6 +6,6 @@ owner: team-degent
 summary: degent.club front end - the four-stage mint (Design, Mint, Confirm, Approve with live member votes), the members' review queue, the Degent Explorer and the Telegram-gate verify page.
 lifecycle: beta
 depends_on: ["@bsh/inscription", "@bsh/wallet-kit", "@bsh/degent-mint-sdk"]
-consumes: [contracts/openapi/degent-mint.yaml]
+consumes: [contracts/openapi/degent-mint.yaml, contracts/openapi/degent-telegram-gate.yaml]
 docs: ./README.md
 commands: { dev: dev, test: test, typecheck: typecheck, build: build }
