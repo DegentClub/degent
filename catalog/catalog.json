@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-24T02:21:28.753Z",
+  "generatedAt": "2026-09-24T01:58:06.297Z",
   "schema": "schemas/component.schema.json",
   "components": [
     {
@@ -160,7 +160,6 @@
         "build": "build",
         "chain-setup": "chain-setup",
         "dev": "dev",
-        "signet-parent": "signet-parent",
         "start": "start:dist",
         "test": "test",
         "typecheck": "typecheck"
@@ -171,7 +170,6 @@
         "build": "node scripts/bundle.mjs",
         "chain-setup": "tsx scripts/chain-setup.ts",
         "dev": "NETWORK=${NETWORK:-regtest} tsx watch src/main.ts",
-        "signet-parent": "tsx scripts/signet-parent.mjs",
         "start": "tsx src/main.ts",
         "start:dist": "node dist/main.mjs",
         "test": "vitest run",

@@ -14,4 +14,4 @@ env_schema: ./env.schema.json
 slo: { availability: "99.9", p95_ms: 300 }
 runbook: ./RUNBOOK.md
 docs: ./README.md
-commands: { dev: dev, test: test, typecheck: typecheck, build: build, start: start:dist, chain-setup: chain-setup, signet-parent: signet-parent }
+commands: { dev: dev, test: test, typecheck: typecheck, build: build, start: start:dist, chain-setup: chain-setup }
