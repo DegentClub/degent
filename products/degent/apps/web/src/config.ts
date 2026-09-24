@@ -13,6 +13,16 @@ export interface AppConfig {
   gateUrl: string;
   /** Public site origin used in share links (VITE_SITE_URL), defaults to the current origin. */
   siteUrl: string;
+  /** Collection page on the marketplace, for "Buy" until first-party trading ships (VITE_BUY_URL). */
+  buyUrl: string;
+  /** Per-item marketplace link; `{id}` is replaced by the inscription id (VITE_BUY_ITEM_URL). */
+  buyItemUrl: string;
+  /** The comic inscription (VITE_COMIC_INSCRIPTION_ID); empty = /comic shows a placeholder. */
+  comicInscriptionId: string;
+  /** Optional page-by-page comic: inscription ids, comma-separated (VITE_COMIC_PAGES). */
+  comicPages: string[];
+  /** Socials (VITE_X_URL, VITE_TELEGRAM_URL, VITE_INSTAGRAM_URL); empty hides the link. */
+  socials: { x: string; telegram: string; instagram: string };
 }
 
 const NETWORKS: readonly Network[] = ['mainnet', 'testnet', 'signet', 'regtest'];
@@ -43,6 +53,23 @@ export interface EnvLike {
   VITE_POLL_MS?: string;
   VITE_GATE_URL?: string;
   VITE_SITE_URL?: string;
+  VITE_BUY_URL?: string;
+  VITE_BUY_ITEM_URL?: string;
+  VITE_COMIC_INSCRIPTION_ID?: string;
+  VITE_COMIC_PAGES?: string;
+  VITE_X_URL?: string;
+  VITE_TELEGRAM_URL?: string;
+  VITE_INSTAGRAM_URL?: string;
+}
+
+const INSCRIPTION_ID = /^[0-9a-f]{64}i\d+$/;
+
+/** Only well-formed inscription ids reach an ord URL. */
+function inscriptionIds(raw: string | undefined): string[] {
+  return (raw ?? '')
+    .split(',')
+    .map((x) => x.trim())
+    .filter((x) => INSCRIPTION_ID.test(x));
 }
 
 export function readConfig(env: EnvLike, search: string): AppConfig {
@@ -61,5 +88,14 @@ export function readConfig(env: EnvLike, search: string): AppConfig {
     demo,
     gateUrl: trimSlash(env.VITE_GATE_URL ?? ''),
     siteUrl: trimSlash(env.VITE_SITE_URL ?? 'https://degent.club'),
+    buyUrl: env.VITE_BUY_URL ?? 'https://magiceden.io/ordinals/marketplace/degentclub',
+    buyItemUrl: env.VITE_BUY_ITEM_URL ?? 'https://magiceden.io/ordinals/item-details/{id}',
+    comicInscriptionId: inscriptionIds(env.VITE_COMIC_INSCRIPTION_ID)[0] ?? '',
+    comicPages: inscriptionIds(env.VITE_COMIC_PAGES),
+    socials: {
+      x: env.VITE_X_URL ?? 'https://x.com/degentclub',
+      telegram: env.VITE_TELEGRAM_URL ?? 'https://t.me/+cneroYQ-0VpmM2Ix',
+      instagram: env.VITE_INSTAGRAM_URL ?? '',
+    },
   };
 }

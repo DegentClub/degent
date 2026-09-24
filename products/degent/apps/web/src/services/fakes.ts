@@ -17,6 +17,7 @@ import type {
   Network,
   Order,
   OrderStatus,
+  OrderSubscription,
   PublicVote,
   Quote,
   RegisterMember,
@@ -27,7 +28,7 @@ import type {
   VoteChoice,
   VotesResponse,
 } from '@bsh/degent-mint-sdk';
-import { CHARTER_SIZE, GALLERY_SIZE, voteReference, voteStatement } from '@bsh/degent-mint-sdk';
+import { CHARTER_SIZE, GALLERY_SIZE, NOTIFY_STATUSES, voteReference, voteStatement } from '@bsh/degent-mint-sdk';
 import type {
   ChainApi,
   EncodedImage,
@@ -204,6 +205,20 @@ export function createFakeChain(log: CallLog = [], state?: Partial<FakeChainStat
       if (!c) throw new Error('not found');
       return c;
     },
+    async getInscriptionInfo(id) {
+      log.push('chain.getInscriptionInfo');
+      const seed = sha256(enc.encode(`info|${id}`));
+      const c = st.contents.get(id);
+      return {
+        id,
+        contentType: c ? 'image/webp' : 'image/webp',
+        contentLength: c ? c.length : 200_000 + ((seed[0]! << 8) | seed[1]!) * 3,
+        fee: 20_000 + ((seed[2]! << 8) | seed[3]!),
+        height: 840_000 + ((seed[4]! << 8) | seed[5]!),
+        number: 93_800_000 + ((seed[6]! << 8) | seed[7]!),
+        timestamp: new Date(Date.UTC(2024, 3, 20) + ((seed[8]! << 8) | seed[9]!) * 600_000).toISOString(),
+      };
+    },
     contentUrl(id) {
       const existing = st.contentUrls.get(id);
       if (existing) return existing;
@@ -323,7 +338,7 @@ function weekOf(iso: string): string {
 export function createFakeMintApi(
   log: CallLog = [],
   opts: FakeMintOptions,
-): MintApi & { orders: Map<string, Order>; votes: Map<string, PublicVote[]>; tokenFor(id: string): string | undefined; revealPsbts: Map<string, string> } {
+): MintApi & { orders: Map<string, Order>; votes: Map<string, PublicVote[]>; tokenFor(id: string): string | undefined; revealPsbts: Map<string, string>; subscriptions: Map<string, OrderSubscription> } {
   const config = demoConfig(opts.network);
   const orders = new Map<string, Order>();
   const bodies = new Map<string, Uint8Array>();
@@ -432,6 +447,7 @@ export function createFakeMintApi(
   const requests = new Map<string, CreateOrderRequest>();
   const tokens = new Map<string, string>();
   const revealPsbts = new Map<string, string>();
+  const subscriptions = new Map<string, OrderSubscription>();
   const auth = (id: string, token: string) => {
     if (!token) throw new Error('401 unauthorized: missing order token');
     if (tokens.get(id) !== token) throw new Error('403 forbidden: order token does not match');
@@ -503,6 +519,7 @@ export function createFakeMintApi(
     votes,
     tokenFor: (id: string) => tokens.get(id),
     revealPsbts,
+    subscriptions,
     async getConfig() {
       log.push('api.getConfig');
       return config;
@@ -617,6 +634,24 @@ export function createFakeMintApi(
         txid = revealTxid;
       }
       return push(cur, next, undefined, txid);
+    },
+    async subscribeOrder(id, token, req) {
+      log.push(`api.subscribeOrder:${req.channel}`);
+      auth(id, token);
+      const o = get(id);
+      if (['rejected', 'delivered', 'failed'].includes(o.status)) throw new Error(`409 conflict: order is ${o.status}; nothing left to notify`);
+      const valid = req.channel === 'email' ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(req.address) : /^(-?\d{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$/.test(req.address);
+      if (!valid) throw new Error(`422 validation_failed: invalid ${req.channel === 'email' ? 'email address' : 'telegram chat id'}`);
+      const sub: OrderSubscription = {
+        id: `sub_${sha256Hex(enc.encode(`${id}|${req.channel}|${req.address.toLowerCase()}`)).slice(0, 24)}`,
+        orderId: id,
+        channel: req.channel,
+        address: req.address,
+        events: [...NOTIFY_STATUSES],
+        createdAt: iso(),
+      };
+      subscriptions.set(sub.id, sub);
+      return sub;
     },
     async getRescue(id, token) {
       log.push('api.getRescue');
@@ -881,6 +916,7 @@ export interface FakeImageOptions {
   height?: number;
   /** Bytes at quality 1, scale 1. Size scales ~ quality x scale^2. */
   fullSize?: number;
+  log?: CallLog;
 }
 
 /** Deterministic encoder: size = fullSize * (0.08 + 0.92 * quality) * scale^2. */
@@ -901,6 +937,7 @@ export function createFakeImages(opts: FakeImageOptions = {}): ImageTools {
   const width = opts.width ?? 1600;
   const height = opts.height ?? 1600;
   const fullSize = opts.fullSize ?? 1_400_000;
+  const log = opts.log;
   return {
     async decode(): Promise<SourceImage> {
       return { width, height, handle: null };
@@ -913,6 +950,24 @@ export function createFakeImages(opts: FakeImageOptions = {}): ImageTools {
         width: Math.round(width * o.scale),
         height: Math.round(height * o.scale),
       };
+    },
+    async compose(_src, layout) {
+      log?.push('images.compose');
+      // Size ~ fullSize x (0.08 + 0.92 q) x (edge / source edge)^2, with a JPEG header so sniffing sees a JPEG.
+      const scale = layout.size / Math.max(width, height);
+      return {
+        width: layout.size,
+        height: layout.size,
+        async toBlob(_type, quality) {
+          const size = fakeEncodedSize(fullSize, quality, scale);
+          const bytes = bytesOfSize(size, `jpeg|${quality}|${layout.size}|${layout.frame}|${layout.text}`);
+          bytes.set([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1], 0);
+          return new Blob([bytes.slice()], { type: 'image/jpeg' });
+        },
+      };
+    },
+    async template() {
+      return { width, height, handle: null };
     },
     async sample() {
       return new Blob([bytesOfSize(fullSize, 'sample').slice()], { type: 'image/webp' });
@@ -966,7 +1021,7 @@ export function createFakeServices(o: FakeServicesOptions = {}): FakeServices {
   const network = o.network ?? 'mainnet';
   const chain = createFakeChain(log);
   const mintApi = createFakeMintApi(log, { network, chain: chain.state, ...(o.mint ?? {}) });
-  const images = o.images && 'encode' in o.images ? o.images : createFakeImages(o.images as FakeImageOptions | undefined);
+  const images = o.images && 'encode' in o.images ? o.images : createFakeImages({ log, ...(o.images as FakeImageOptions | undefined) });
   const gate = createFakeGate(log, o.gate);
   return {
     mode: 'demo',

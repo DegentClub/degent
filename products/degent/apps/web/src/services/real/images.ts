@@ -1,5 +1,6 @@
-/** Real ImageTools: browser decode + canvas re-encode. Nothing leaves the browser. */
-import type { EncodeType, EncodedImage, ImageTools, SourceImage } from '../types';
+/** Real ImageTools: browser decode + canvas re-encode + Atelier composition. Nothing leaves the browser. */
+import type { EncodeType, EncodedImage, ImageTools, SourceImage, TemplateId } from '../types';
+import { drawComposition } from '../../atelier/draw';
 
 function makeCanvas(w: number, h: number): HTMLCanvasElement {
   const c = document.createElement('canvas');
@@ -56,10 +57,76 @@ export function createCanvasImages(): ImageTools {
       }
       return { blob, width: w, height: h };
     },
+    async compose(src, layout) {
+      const canvas = makeCanvas(layout.size, layout.size);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas 2D is unavailable in this browser.');
+      drawComposition(ctx, src.handle as CanvasImageSource, layout);
+      return {
+        width: canvas.width,
+        height: canvas.height,
+        toBlob: async (type, quality) => {
+          const blob = await toBlob(canvas, type, quality);
+          if (blob.type && blob.type !== type) throw new Error(`This browser produced ${blob.type} instead of ${type}.`);
+          return blob;
+        },
+      };
+    },
+    async template(id) {
+      const canvas = drawTemplate(id);
+      return { width: canvas.width, height: canvas.height, handle: canvas };
+    },
     async sample() {
       return drawSample();
     },
   };
+}
+
+/** Atelier backdrops: a lit room to put the gentleman in. Grain gives the encoder realistic entropy. */
+function drawTemplate(id: TemplateId): HTMLCanvasElement {
+  const size = 1600;
+  const c = makeCanvas(size, size);
+  const ctx = c.getContext('2d');
+  if (!ctx) throw new Error('Canvas 2D is unavailable in this browser.');
+  const palettes: Record<TemplateId, [string, string, string]> = {
+    lounge: ['#1f5c3f', '#0b2418', '#2efc86'],
+    noir: ['#2a2f45', '#07080d', '#f7c948'],
+    gala: ['#7a5a1c', '#1a1206', '#fbe7a1'],
+  };
+  const [inner, outer, accent] = palettes[id];
+  const g = ctx.createRadialGradient(size / 2, size * 0.35, 60, size / 2, size / 2, size * 0.8);
+  g.addColorStop(0, inner);
+  g.addColorStop(1, outer);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  if (id === 'noir') {
+    // skyline
+    ctx.fillStyle = '#05060a';
+    for (let x = 0, k = 0; x < size; x += 90, k++) {
+      const h = 260 + ((k * 7919) % 11) * 45;
+      ctx.fillRect(x, size - h, 80, h);
+    }
+  } else {
+    // wainscoting
+    ctx.strokeStyle = `${accent}33`;
+    ctx.lineWidth = 6;
+    for (let x = 80; x < size; x += 240) ctx.strokeRect(x, size * 0.62, 200, size * 0.3);
+  }
+  // spotlight where the gentleman stands
+  const spot = ctx.createRadialGradient(size / 2, size * 0.55, 20, size / 2, size * 0.55, size * 0.4);
+  spot.addColorStop(0, `${accent}40`);
+  spot.addColorStop(1, 'transparent');
+  ctx.fillStyle = spot;
+  ctx.fillRect(0, 0, size, size);
+  const img = ctx.getImageData(0, 0, size, size);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const n = (Math.random() - 0.5) * 22;
+    img.data[i] = img.data[i]! + n;
+    img.data[i + 1] = img.data[i + 1]! + n;
+    img.data[i + 2] = img.data[i + 2]! + n;
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
 }
 
 /**

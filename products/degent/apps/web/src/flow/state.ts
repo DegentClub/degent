@@ -26,9 +26,11 @@ export interface Artwork {
   width: number;
   height: number;
   sha256: string;
-  origin: 'original' | 'reencoded';
+  origin: 'original' | 'reencoded' | 'atelier';
   quality?: number;
   scale?: number;
+  /** Set when the Atelier composed the piece: frame width (% of the edge) and placard text. */
+  framing?: { framePct: number; placard: string };
 }
 
 export type PayPhase =

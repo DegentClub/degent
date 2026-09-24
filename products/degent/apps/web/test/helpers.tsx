@@ -20,6 +20,11 @@ export function testApp(over: Partial<AppConfig> = {}): AppConfig {
     demo: true,
     gateUrl: 'https://gate.test/verify',
     siteUrl: 'https://degent.club',
+    buyUrl: 'https://magiceden.io/ordinals/marketplace/degentclub',
+    buyItemUrl: 'https://magiceden.io/ordinals/item-details/{id}',
+    comicInscriptionId: '',
+    comicPages: [],
+    socials: { x: 'https://x.com/degentclub', telegram: 'https://t.me/+cneroYQ-0VpmM2Ix', instagram: '' },
     ...over,
   };
 }

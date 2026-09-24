@@ -52,12 +52,20 @@ describe('demo mode: the whole flow, end to end, through the UI', () => {
 
     // 3 · Create
     await screen.findByRole('heading', { level: 1, name: /Dress the gentleman/ });
-    await user.upload(screen.getByLabelText('Upload artwork'), new File([new Uint8Array([1, 2, 3])], 'gent.png', { type: 'image/png' }));
+    // The Atelier: upload a picture, gold frame + DEGENT placard, JPEG fitted to the Standard range.
+    await user.upload(screen.getByLabelText('Upload a picture for the Atelier'), new File([new Uint8Array([1, 2, 3])], 'gent.png', { type: 'image/png' }));
+    await screen.findByTestId('atelier-readout', {}, { timeout: 3000 });
+    const useDesign = screen.getByRole('button', { name: 'Use this design' });
+    await waitFor(() => expect(useDesign).toBeEnabled());
+    await user.click(useDesign);
     expect(await screen.findByText('Fits Standard Degent', {}, { timeout: 3000 })).toBeInTheDocument();
     const img = screen.getByRole('img', { name: 'Preview rendered from the exact bytes to be inscribed' });
     expect(img.getAttribute('src')).toMatch(/^blob:/);
-    expect(screen.getByText('image/webp')).toBeInTheDocument();
-    for (const cb of screen.getAllByRole('checkbox')) await user.click(cb);
+    expect(screen.getByText('image/jpeg')).toBeInTheDocument();
+    for (const cb of screen.getAllByRole('checkbox')) if (!(cb as HTMLInputElement).checked) await user.click(cb);
+    expect(screen.getByTestId('rule-format')).toHaveAttribute('data-satisfied', 'true');
+    expect(screen.getByTestId('rule-design')).toHaveAttribute('data-satisfied', 'true');
+    expect(screen.getByTestId('rule-framing')).toHaveAttribute('data-satisfied', 'true');
     await user.click(screen.getByRole('button', { name: 'Continue to Validate' }));
 
     // 4 · Validate

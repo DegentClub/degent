@@ -8,6 +8,7 @@ import { ART_BRIEF, tierRule } from '../lib/rules';
 import { capScale, classifySize, fitToRange, scaleLadder, type FitResult } from '../lib/compression';
 import { formatBytesExact, formatSize } from '../lib/format';
 import type { EncodeType, SourceImage } from '../services/types';
+import { Atelier } from '../components/Atelier';
 
 interface Loaded {
   name: string;
@@ -17,6 +18,7 @@ interface Loaded {
 }
 
 type Mode = 'original' | 'reencode';
+type Workshop = 'atelier' | 'file';
 
 const SCALE_OPTIONS = [1, 0.85, 0.7, 0.6, 0.5, 0.4, 0.3];
 
@@ -39,6 +41,7 @@ export function Create() {
   const [error, setError] = useState<string | null>(null);
   const [fit, setFit] = useState<FitResult | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [workshop, setWorkshop] = useState<Workshop>(state.artwork && state.artwork.origin !== 'atelier' ? 'file' : 'atelier');
   const fileInput = useRef<HTMLInputElement>(null);
   const reqId = useRef(0);
   const ids = { file: useId(), quality: useId(), scale: useId(), format: useId() };
@@ -242,6 +245,23 @@ export function Create() {
         </Panel>
 
         <Panel title="Your art">
+          <div role="radiogroup" aria-label="How to make your art" className="seg seg--wide">
+            <label className={workshop === 'atelier' ? 'is-on' : ''}>
+              <input type="radio" name="workshop" checked={workshop === 'atelier'} onChange={() => setWorkshop('atelier')} />
+              The Atelier: frame it here
+            </label>
+            <label className={workshop === 'file' ? 'is-on' : ''}>
+              <input type="radio" name="workshop" checked={workshop === 'file'} onChange={() => setWorkshop('file')} />
+              A finished file
+            </label>
+          </div>
+          {workshop === 'atelier' ? (
+            <p className="small muted">
+              Upload a picture or start from a template; the Atelier crops it square, adds the gold frame and the placard,
+              and fits the JPEG to the tier. The finished piece appears below.
+            </p>
+          ) : (
+          <>
           <div
             className={`dropzone ${dragging ? 'is-dragging' : ''}`}
             onDragOver={(e) => {
@@ -281,10 +301,18 @@ export function Create() {
             {busy === 'loading' ? 'Reading your image…' : busy === 'fitting' ? 'Finding the best quality that fits the tier…' : busy === 'encoding' ? 'Encoding…' : ''}
           </div>
           {error ? <Alert tone="bad" title="Image problem">{error}</Alert> : null}
+          </>
+          )}
         </Panel>
       </div>
 
-      {loaded ? (
+      {workshop === 'atelier' ? (
+        <Panel title="The Atelier" kicker="Frame · placard · fit">
+          <Atelier />
+        </Panel>
+      ) : null}
+
+      {loaded && workshop === 'file' ? (
         <Panel title="Compression toolkit" kicker={`Target: ${formatSize(range.min)} – ${formatSize(range.max)}`}>
           <div className="toolkit">
             <div role="radiogroup" aria-label="Bytes to inscribe" className="seg">
@@ -396,7 +424,9 @@ export function Create() {
                 <Fact label="Source">
                   {art.origin === 'original'
                     ? 'Original file, byte-for-byte'
-                    : `Re-encoded at ${Math.round((art.quality ?? 0) * 100)}% quality, ${Math.round((art.scale ?? 1) * 100)}% of the original dimensions`}
+                    : art.origin === 'atelier'
+                      ? `Composed in the Atelier: square, gold frame ${art.framing?.framePct ?? '?'}%, placard “${art.framing?.placard ?? '?'}”, JPEG quality ${Math.round((art.quality ?? 0) * 100)}%`
+                      : `Re-encoded at ${Math.round((art.quality ?? 0) * 100)}% quality, ${Math.round((art.scale ?? 1) * 100)}% of the original dimensions`}
                 </Fact>
               </dl>
             </div>

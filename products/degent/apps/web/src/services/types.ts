@@ -9,11 +9,13 @@ import type {
   AuthVerifyResponse,
   CastVoteRequest,
   CreateOrderRequest,
+  CreateSubscriptionRequest,
   ExplorerQuery,
   ExplorerResponse,
   HolderResponse,
   Network,
   Order,
+  OrderSubscription,
   RegisterMember,
   RegisterSummary,
   RescueResponse,
@@ -24,6 +26,7 @@ import type {
   VerifyMembershipResponse,
   VotesResponse,
 } from '@bsh/degent-mint-sdk';
+import type { CompositionLayout } from '../atelier/composition';
 
 // ---------------------------------------------------------------- mint service
 
@@ -79,6 +82,8 @@ export interface MintApi {
    * rescue. Not a transaction: only the user's K_e can sign it (ADR-0005).
    */
   getRescue(orderId: string, orderToken: string): Promise<RescueResponse>;
+  /** POST /v1/orders/{id}/subscriptions: email / Telegram notifications for this order (order token). */
+  subscribeOrder(orderId: string, orderToken: string, req: CreateSubscriptionRequest): Promise<OrderSubscription>;
 
   // Member approval (ADR-0007): holder sign-in, review queue, votes
   authChallenge(address: string): Promise<AuthChallengeResponse>;
@@ -176,6 +181,21 @@ export interface ChainApi {
   getInscriptionContent(inscriptionId: string): Promise<Uint8Array>;
   /** URL of the on-chain rendering */
   contentUrl(inscriptionId: string): string;
+  /** ord recursive `GET /r/inscription/:id`: the on-chain facts shown in the Collection lightbox. */
+  getInscriptionInfo(inscriptionId: string): Promise<InscriptionInfo>;
+}
+
+/** On-chain facts about one inscription (ord `/r/inscription/:id`). */
+export interface InscriptionInfo {
+  id: string;
+  contentType: string | null;
+  contentLength: number | null;
+  /** Reveal fee in sats. */
+  fee: number | null;
+  height: number | null;
+  number: number | null;
+  /** ISO 8601 */
+  timestamp: string | null;
 }
 
 // ---------------------------------------------------------------- inscription maths
@@ -248,12 +268,30 @@ export interface EncodedImage {
   height: number;
 }
 
+/** A composed Atelier canvas: re-encodable at any quality without redrawing (size search). */
+export interface ComposedCanvas {
+  width: number;
+  height: number;
+  toBlob(type: 'image/jpeg', quality: number): Promise<Blob>;
+}
+
 export interface ImageTools {
   decode(blob: Blob): Promise<SourceImage>;
   encode(src: SourceImage, opts: { type: EncodeType; quality: number; scale: number }): Promise<EncodedImage>;
+  /** Atelier: draw the square crop, the gold frame and the placard (see atelier/composition.ts). */
+  compose(src: SourceImage, layout: CompositionLayout): Promise<ComposedCanvas>;
+  /** Atelier starting points: procedurally drawn backdrops (the gentleman is still yours to add). */
+  template(id: TemplateId): Promise<SourceImage>;
   /** A generated sample for demo mode (not the real brief art). */
   sample?(): Promise<Blob>;
 }
+
+export type TemplateId = 'lounge' | 'noir' | 'gala';
+export const TEMPLATES: ReadonlyArray<{ id: TemplateId; label: string }> = [
+  { id: 'lounge', label: 'Green lounge' },
+  { id: 'noir', label: 'Noir city' },
+  { id: 'gala', label: 'Gold gala' },
+];
 
 // ---------------------------------------------------------------- bundle
 

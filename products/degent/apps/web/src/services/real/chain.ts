@@ -1,5 +1,31 @@
 /** Real ChainApi: esplora-compatible REST (mempool.space / blockstream / self-hosted) + ord /content. */
-import type { ChainApi, Utxo } from '../types';
+import type { ChainApi, InscriptionInfo, Utxo } from '../types';
+
+interface OrdInscription {
+  id?: string;
+  content_type?: string | null;
+  content_length?: number | null;
+  fee?: number | null;
+  height?: number | null;
+  number?: number | null;
+  /** unix seconds */
+  timestamp?: number | null;
+}
+
+/** ord `/r/inscription/:id` JSON -> InscriptionInfo (tolerant of missing fields). */
+export function parseOrdInscription(id: string, j: OrdInscription): InscriptionInfo {
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const ts = num(j.timestamp);
+  return {
+    id: typeof j.id === 'string' ? j.id : id,
+    contentType: typeof j.content_type === 'string' ? j.content_type : null,
+    contentLength: num(j.content_length),
+    fee: num(j.fee),
+    height: num(j.height),
+    number: num(j.number),
+    timestamp: ts !== null ? new Date(ts * 1000).toISOString() : null,
+  };
+}
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -31,6 +57,10 @@ export function createEsploraChain(esploraUrl: string, ordContentUrl: string, fe
     },
     contentUrl(id) {
       return `${ordContentUrl}/content/${encodeURIComponent(id)}`;
+    },
+    async getInscriptionInfo(id) {
+      const res = await check(await f(`${ordContentUrl}/r/inscription/${encodeURIComponent(id)}`, { headers: { accept: 'application/json' } }), 'Inscription lookup');
+      return parseOrdInscription(id, (await res.json()) as OrdInscription);
     },
   };
 }
