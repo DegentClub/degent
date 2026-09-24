@@ -1,4 +1,4 @@
-import type { CollectionConfig, Order, Tier } from '@bsh/degent-mint-sdk';
+import type { CollectionConfig, NotifyChannel, Order, Tier } from '@bsh/degent-mint-sdk';
 import type { FeeSnapshot, QueueSnapshot, WalletSession } from '../services/types';
 import type { RecoveryBundle } from '../lib/recovery';
 import type { FundingPsbt } from '../lib/funding';
@@ -54,6 +54,12 @@ export interface PayState {
 
 export type CommitCheck = 'unchecked' | 'match' | 'mismatch';
 
+/** "Notify me" chosen before paying (Welcome): subscribed on Track once the order token exists. Memory only. */
+export interface NotifyPref {
+  channel: NotifyChannel;
+  address: string;
+}
+
 export interface FlowState {
   step: Step;
   config: CollectionConfig | null;
@@ -71,6 +77,7 @@ export interface FlowState {
   pay: PayState;
   recovery: RecoveryBundle | null;
   resumeOffer: RecoveryBundle | null;
+  notifyPref: NotifyPref | null;
   error: string | null;
 }
 
@@ -100,6 +107,7 @@ export function initialState(resumeOffer: RecoveryBundle | null = null): FlowSta
     pay: initialPay,
     recovery: null,
     resumeOffer,
+    notifyPref: null,
     error: null,
   };
 }

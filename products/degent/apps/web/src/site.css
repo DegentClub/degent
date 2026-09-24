@@ -917,3 +917,15 @@ a.btn {
     grid-template-columns: 1fr;
   }
 }
+
+/* ------------------------------------------------------------------ notify me */
+
+.notify form {
+  display: grid;
+  gap: 12px;
+  max-width: 520px;
+}
+
+.notify form .btn {
+  justify-self: start;
+}

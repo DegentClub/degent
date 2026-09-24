@@ -6,7 +6,7 @@ import type { CollectionConfig, Order, Tier } from '@bsh/degent-mint-sdk';
 import type { FeeSnapshot, QueueSnapshot, WalletSession } from '../services/types';
 import type { RecoveryBundle } from '../lib/recovery';
 import { isLegacy, type FundingPsbt } from '../lib/funding';
-import { initialPay, initialState, STEPS, type Artwork, type FlowState, type PayPhase, type Step } from './state';
+import { initialPay, initialState, STEPS, type Artwork, type FlowState, type NotifyPref, type PayPhase, type Step } from './state';
 
 export type FlowAction =
   | { type: 'CONFIG_LOADED'; config: CollectionConfig }
@@ -30,6 +30,7 @@ export type FlowAction =
   | { type: 'PAY_FAILED'; error: string }
   | { type: 'RESUME'; bundle: RecoveryBundle }
   | { type: 'DISMISS_RESUME' }
+  | { type: 'NOTIFY_PREF_SET'; pref: NotifyPref | null }
   | { type: 'ERROR'; error: string | null }
   | { type: 'RESET' };
 
@@ -123,6 +124,8 @@ export function flowReducer(s: FlowState, a: FlowAction): FlowState {
       return { ...s, recovery: a.bundle, resumeOffer: null, step: 'track', order: null };
     case 'DISMISS_RESUME':
       return { ...s, resumeOffer: null };
+    case 'NOTIFY_PREF_SET':
+      return { ...s, notifyPref: a.pref };
     case 'ERROR':
       return { ...s, error: a.error };
     case 'RESET':

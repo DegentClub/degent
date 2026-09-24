@@ -3,6 +3,7 @@ import { ResumeBanner } from '../components/ResumeBanner';
 import { Button, Money, Panel } from '../components/ui';
 import { formatEta, formatFeeRate, formatSize } from '../lib/format';
 import { tierRule } from '../lib/rules';
+import { NotifyPreference } from '../components/Notify';
 
 export function Welcome() {
   const { state, dispatch } = useMint();
@@ -97,6 +98,10 @@ export function Welcome() {
             </div>
           </dl>
         </div>
+      </Panel>
+
+      <Panel kicker="Optional" title="Notify me">
+        <NotifyPreference />
       </Panel>
 
       <Panel kicker="How it works" title="Seven steps, no custodian">

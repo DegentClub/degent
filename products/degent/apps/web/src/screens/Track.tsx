@@ -4,6 +4,7 @@ import { useMint } from '../flow/context';
 import { rescue } from '../flow/effects';
 import { ScreenHeading } from '../components/ScreenHeading';
 import { Alert, Badge, Button, CopyBlock, ExternalLink, Mono, Panel, errorText, useObjectUrl } from '../components/ui';
+import { NotifyPanel } from '../components/Notify';
 import { buildStages, buildTimeline, isTerminal, rescueOffered, STATUS_COPY } from '../lib/timeline';
 import { clearRecovery, recoveryJson } from '../lib/recovery';
 import { formatSize, formatTimestamp, shortHash } from '../lib/format';
@@ -300,6 +301,8 @@ export function Track({ orderId: pinnedId, onDone }: { orderId?: string; onDone?
         ) : null}
         {order ? <Timeline order={order} explorerUrl={app.explorerUrl} /> : null}
       </Panel>
+
+      {order ? <NotifyPanel order={order} token={orderId ? (vault.token(orderId) ?? recovery?.orderToken ?? null) : null} /> : null}
 
       {order && (order.status === 'member_review' || order.approval) && !isTerminal(order.status) ? (
         <Panel title="Member approval" kicker="Stage 4 · Approve">
