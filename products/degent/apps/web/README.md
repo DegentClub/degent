@@ -154,6 +154,17 @@ self-rescue (the mint's normal path does not need either).
 | `VITE_COMIC_INSCRIPTION_ID` | empty | The comic's inscription id (`/comic` shows a placeholder when empty) |
 | `VITE_COMIC_PAGES` | empty | Optional comma-separated page inscription ids for the page-by-page reader |
 | `VITE_X_URL`, `VITE_TELEGRAM_URL`, `VITE_INSTAGRAM_URL` | x.com/degentclub, the club's t.me invite, empty | Socials (empty hides the link) |
+| `VITE_MINT_MODE` | `full` | Hint only, used until `/v1/config` answers: the API's runtime `mode` always wins, so one build serves a read-only and a full mint |
+| `VITE_BETA_URL` | empty | Where "Minting opens soon" points while the mint is read-only (the signet beta, e.g. `https://signet.degent.club`); https only; empty = the `/mint` explainer |
+
+### Read-only mint and test networks
+
+When `/v1/config` reports `mode: "readonly"` (the mint runs with `MINT_MODE=readonly`, docs/SERVER.md), every Mint call to
+action (header, drawer, Home, Collection, How it works, the TODO pages) reads **"Minting opens soon"** and opens
+`VITE_BETA_URL`; `/mint` shows an explainer instead of the wizard; `/review` explains that membership review opens with
+minting; `/club` looks holdings up by address (public `/v1/register/holder/{address}`) instead of signing in. Collection,
+Explorer, Home stats, How it works and the comic are unchanged. Signet and testnet builds show a persistent banner
+("Test network: signet coins have no value"). All of it lives in `src/site/mintMode.tsx`; tests: `test/readonly.test.tsx`.
 
 Only well-formed inscription ids (`<txid>i<n>`) are accepted for the comic settings.
 

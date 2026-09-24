@@ -2,14 +2,14 @@
  * The mint wizard as a pure state machine. Every step has an entry guard (`canEnter`) so the UI
  * cannot skip review, commit-address verification, or the recovery save.
  */
-import type { CollectionConfig, Order, Tier } from '@bsh/degent-mint-sdk';
+import type { CollectionConfig, MintMode, Order, Tier } from '@bsh/degent-mint-sdk';
 import type { FeeSnapshot, QueueSnapshot, WalletSession } from '../services/types';
 import type { RecoveryBundle } from '../lib/recovery';
 import { isLegacy, type FundingPsbt } from '../lib/funding';
 import { initialPay, initialState, STEPS, type Artwork, type FlowState, type NotifyPref, type PayPhase, type Step } from './state';
 
 export type FlowAction =
-  | { type: 'CONFIG_LOADED'; config: CollectionConfig }
+  | { type: 'CONFIG_LOADED'; config: CollectionConfig & { mode?: MintMode } }
   | { type: 'SNAPSHOT_LOADED'; fees: FeeSnapshot | null; queue: QueueSnapshot | null }
   | { type: 'GO'; step: Step }
   | { type: 'BACK' }
@@ -65,7 +65,7 @@ function clearOrder(s: FlowState): FlowState {
 export function flowReducer(s: FlowState, a: FlowAction): FlowState {
   switch (a.type) {
     case 'CONFIG_LOADED':
-      return { ...s, config: a.config };
+      return { ...s, config: a.config, mintMode: a.config.mode ?? 'full' };
     case 'SNAPSHOT_LOADED':
       return { ...s, fees: a.fees ?? s.fees, queue: a.queue ?? s.queue };
     case 'GO':

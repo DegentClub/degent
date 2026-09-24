@@ -25,6 +25,8 @@ export function testApp(over: Partial<AppConfig> = {}): AppConfig {
     comicInscriptionId: '',
     comicPages: [],
     socials: { x: 'https://x.com/degentclub', telegram: 'https://t.me/+cneroYQ-0VpmM2Ix', instagram: '' },
+    mintMode: 'full',
+    betaUrl: '',
     ...over,
   };
 }

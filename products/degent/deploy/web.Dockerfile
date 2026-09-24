@@ -35,8 +35,10 @@ ARG VITE_ORD_URL
 ARG VITE_POLL_MS
 ARG VITE_GATE_URL
 ARG VITE_SITE_URL
+ARG VITE_MINT_MODE
+ARG VITE_BETA_URL
 # Empty build args must not reach Vite as "" (the app treats "" as a value, not as unset).
-RUN for v in VITE_NETWORK VITE_MINT_API_URL VITE_ESPLORA_URL VITE_EXPLORER_URL VITE_ORD_URL VITE_POLL_MS VITE_GATE_URL VITE_SITE_URL; do \
+RUN for v in VITE_NETWORK VITE_MINT_API_URL VITE_ESPLORA_URL VITE_EXPLORER_URL VITE_ORD_URL VITE_POLL_MS VITE_GATE_URL VITE_SITE_URL VITE_MINT_MODE VITE_BETA_URL; do \
       eval "val=\${$v:-}"; if [ -z "$val" ]; then unset "$v"; else export "$v"; fi; \
     done \
  && pnpm --filter @bsh/degent-web build \

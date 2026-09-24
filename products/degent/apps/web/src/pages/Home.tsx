@@ -8,6 +8,7 @@ import { useMint } from '../flow/context';
 import { groupDigits } from '../lib/format';
 import { ResumeBanner } from '../components/ResumeBanner';
 import { CtaLink, ExternalButton, GoldFrame, MintMeters, Pill, SiteLink, useDocumentMeta } from '../site/components';
+import { MintCta } from '../site/mintMode';
 import { PROJECTED_CHARTER_BYTES, useSite } from '../site/data';
 
 export function useLatest(limit: number): { items: RegisterMember[] | null; error: string | null } {
@@ -81,9 +82,9 @@ export function ComicTeaser() {
         <p>Learn the Degent Lore in this interactive comic book that is one of the biggest Bitcoin Ordinals in History.</p>
         <div className="row">
           <CtaLink to="/comic">Read the comic</CtaLink>
-          <CtaLink to="/mint" variant="dark">
+          <MintCta variant="dark">
             Mint Now
-          </CtaLink>
+          </MintCta>
           {app.comicInscriptionId ? <ExternalButton href={`https://ordiscan.com/inscription/${app.comicInscriptionId}`}>View in Ordiscan</ExternalButton> : null}
         </div>
       </div>
@@ -113,7 +114,7 @@ export function Home() {
             on-chain.
           </p>
           <div className="row">
-            <CtaLink to="/mint">Mint Now</CtaLink>
+            <MintCta>Mint Now</MintCta>
             <CtaLink to="/how-it-works" variant="dark">
               Learn How
             </CtaLink>
@@ -151,7 +152,7 @@ export function Home() {
           <h2 id="minter-title">Degen Minter</h2>
           <p>Create Bitcoin Ordinals Inscriptions.</p>
           <div className="row">
-            <CtaLink to="/mint">Mint Now!</CtaLink>
+            <MintCta>Mint Now!</MintCta>
             <CtaLink to="/how-it-works" variant="dark">
               Learn How
             </CtaLink>

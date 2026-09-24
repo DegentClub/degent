@@ -1807,3 +1807,18 @@ input[type='range'] {
     grid-template-columns: 1fr;
   }
 }
+
+/* Test-network builds (signet beta): always visible, above the sticky header. site/mintMode.tsx */
+.testnet-banner {
+  margin: 0 -20px;
+  padding: 8px 20px;
+  text-align: center;
+  font-size: 0.86rem;
+  color: var(--lacquer-0);
+  background: repeating-linear-gradient(135deg, #7fb8d6 0 18px, #9cc9e0 18px 36px);
+}
+
+.testnet-banner strong {
+  letter-spacing: 0.08em;
+  margin-right: 4px;
+}

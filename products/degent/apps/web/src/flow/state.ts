@@ -1,4 +1,4 @@
-import type { CollectionConfig, NotifyChannel, Order, Tier } from '@bsh/degent-mint-sdk';
+import type { CollectionConfig, MintMode, NotifyChannel, Order, Tier } from '@bsh/degent-mint-sdk';
 import type { FeeSnapshot, QueueSnapshot, WalletSession } from '../services/types';
 import type { RecoveryBundle } from '../lib/recovery';
 import type { FundingPsbt } from '../lib/funding';
@@ -63,6 +63,8 @@ export interface NotifyPref {
 export interface FlowState {
   step: Step;
   config: CollectionConfig | null;
+  /** The mint's runtime mode from `/v1/config` (null until it answers; then AppConfig.mintMode is the hint). */
+  mintMode: MintMode | null;
   fees: FeeSnapshot | null;
   queue: QueueSnapshot | null;
   wallet: WalletSession | null;
@@ -93,6 +95,7 @@ export function initialState(resumeOffer: RecoveryBundle | null = null): FlowSta
   return {
     step: 'welcome',
     config: null,
+    mintMode: null,
     fees: null,
     queue: null,
     wallet: null,

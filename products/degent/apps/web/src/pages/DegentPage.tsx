@@ -9,6 +9,7 @@ import { useMint } from '../flow/context';
 import { formatSize } from '../lib/format';
 import { ExternalLink } from '../components/ui';
 import { GoldFrame, SiteLink, useDocumentMeta, type PageMeta } from '../site/components';
+import { useMintMode } from '../site/mintMode';
 import { DegentDetails, ordinalsUrl } from '../site/DegentDetails';
 
 export function degentMeta(m: RegisterMember, siteUrl: string, ordBase: string): PageMeta {
@@ -36,6 +37,7 @@ export function degentMeta(m: RegisterMember, siteUrl: string, ordBase: string):
 
 export function DegentPage({ n }: { n: number }) {
   const { services, app } = useMint();
+  const mintReadonly = useMintMode().readonly;
   const [m, setM] = useState<RegisterMember | null>(null);
   const [missing, setMissing] = useState(false);
 
@@ -66,7 +68,7 @@ export function DegentPage({ n }: { n: number }) {
           <h1 tabIndex={-1}>Degent #{n}</h1>
           {missing ? (
             <p>
-              No Degent #{n} in the Register yet. The club counts {CHARTER_SIZE.toLocaleString('en-US')}; <SiteLink to="/mint">mint one</SiteLink>.
+              No Degent #{n} in the Register yet. The club counts {CHARTER_SIZE.toLocaleString('en-US')}; {mintReadonly ? <>minting opens soon</> : <SiteLink to="/mint">mint one</SiteLink>}.
             </p>
           ) : m ? (
             <>

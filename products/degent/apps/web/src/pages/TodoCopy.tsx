@@ -3,6 +3,7 @@
  * pages are marked `TODO(copy)` until the club supplies the text (products/degent/docs/site-spec.md).
  */
 import { CtaLink, useDocumentMeta } from '../site/components';
+import { MintCta } from '../site/mintMode';
 
 export function TodoCopyPage({ title, kicker }: { title: string; kicker: string }) {
   useDocumentMeta({ title: `${title} · degent.club` });
@@ -17,9 +18,9 @@ export function TodoCopyPage({ title, kicker }: { title: string; kicker: string 
       </section>
       <div className="row">
         <CtaLink to="/collection">See the collection</CtaLink>
-        <CtaLink to="/mint" variant="dark">
+        <MintCta variant="dark">
           Mint a Degent
-        </CtaLink>
+        </MintCta>
       </div>
     </div>
   );

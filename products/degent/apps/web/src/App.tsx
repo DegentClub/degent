@@ -28,6 +28,7 @@ import { Comic } from './pages/Comic';
 import { HowItWorks } from './pages/HowItWorks';
 import { Club } from './pages/Club';
 import { About, Manifesto, NotFound } from './pages/TodoCopy';
+import { MintingOpensSoon, ReviewOpensWithMinting, TestNetworkBanner } from './site/mintMode';
 
 export interface AppProps {
   app: AppConfig;
@@ -93,7 +94,12 @@ export function App({ app, services, store = browserStore(), vault: vaultProp, i
     [app, services, store, state],
   );
 
-  const mintScreens = (
+  // Runtime mode from /v1/config wins over the build hint (site/mintMode.tsx).
+  const readonly = (state.mintMode ?? app.mintMode) === 'readonly';
+
+  const mintScreens = readonly ? (
+    <MintingOpensSoon />
+  ) : (
     <>
       {state.error ? (
         <div className="alert alert--bad" role="alert">
@@ -123,8 +129,9 @@ export function App({ app, services, store = browserStore(), vault: vaultProp, i
             the real mint.
           </div>
         ) : null}
+        <TestNetworkBanner network={app.network} />
         <SiteHeader route={route} />
-        {route === 'mint' ? <ProgressNav /> : null}
+        {route === 'mint' && !readonly ? <ProgressNav /> : null}
         <main id="main" ref={mainRef} className={`main main--${route}`}>
           {route === 'home' && <Home />}
           {route === 'collection' && <Collection />}
@@ -135,7 +142,7 @@ export function App({ app, services, store = browserStore(), vault: vaultProp, i
           {route === 'manifesto' && <Manifesto />}
           {route === 'about' && <About />}
           {route === 'notfound' && <NotFound />}
-          {route === 'review' && <Review />}
+          {route === 'review' && (readonly ? <ReviewOpensWithMinting /> : <Review />)}
           {route === 'explorer' && <Explorer />}
           {route === 'verify' && <Verify {...(search !== undefined ? { search } : {})} />}
           {route === 'track' && match.id !== undefined && <Track orderId={match.id} onDone={() => navigate('/mint')} />}

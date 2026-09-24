@@ -9,6 +9,7 @@ import { useMint } from '../flow/context';
 import { groupDigits } from '../lib/format';
 import { CertifiedStats, HeroWall } from './Home';
 import { CtaLink, ExternalButton, GoldFrame, Pill, useDocumentMeta } from '../site/components';
+import { MintCta } from '../site/mintMode';
 import { useSite } from '../site/data';
 import { Lightbox } from '../site/Lightbox';
 
@@ -120,7 +121,7 @@ export function Collection() {
             on-chain.
           </p>
           <div className="row">
-            <CtaLink to="/mint">Mint Now</CtaLink>
+            <MintCta>Mint Now</MintCta>
             <CtaLink to="/how-it-works" variant="dark">
               Learn How
             </CtaLink>

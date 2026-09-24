@@ -14,6 +14,7 @@ import type {
   ApprovalInfo,
   CreateOrderRequest,
   ExplorerQuery,
+  MintMode,
   Network,
   Order,
   OrderStatus,
@@ -246,6 +247,8 @@ export const DEMO_REVIEW_SLA_SECONDS = 14 * 86_400;
 
 export interface FakeMintOptions {
   network: Network;
+  /** The mint's runtime mode reported by getConfig (default full). */
+  mode?: MintMode;
   scenario?: FakeScenario;
   /** Addresses that count as club members (address -> Degent numbers). Default: the demo wallets' ordinals addresses. */
   holders?: Record<string, number[]>;
@@ -339,7 +342,7 @@ export function createFakeMintApi(
   log: CallLog = [],
   opts: FakeMintOptions,
 ): MintApi & { orders: Map<string, Order>; votes: Map<string, PublicVote[]>; tokenFor(id: string): string | undefined; revealPsbts: Map<string, string>; subscriptions: Map<string, OrderSubscription> } {
-  const config = demoConfig(opts.network);
+  const config: ServiceConfig = { ...demoConfig(opts.network), mode: opts.mode ?? 'full' };
   const orders = new Map<string, Order>();
   const bodies = new Map<string, Uint8Array>();
   const votes = new Map<string, PublicVote[]>();
