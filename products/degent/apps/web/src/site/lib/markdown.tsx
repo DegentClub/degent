@@ -5,12 +5,14 @@
  * site-relative), **bold**, *italic*, `code`.
  */
 import type { ReactNode } from 'react';
+import { APP_BASE, withBase } from '../router';
 
 const SAFE_URL = /^(https?:\/\/|mailto:|\/(?!\/)|#)/i;
 
-export function safeUrl(u: string): string | null {
+/** A vetted URL; site-relative ones (`/club`) get the build's base path (`/degent/club` on GitHub Pages). */
+export function safeUrl(u: string, base: string = APP_BASE): string | null {
   const t = u.trim();
-  return SAFE_URL.test(t) ? t : null;
+  return SAFE_URL.test(t) ? withBase(t, base) : null;
 }
 
 let keySeq = 0;

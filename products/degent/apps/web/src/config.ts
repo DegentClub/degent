@@ -63,6 +63,8 @@ export interface EnvLike {
   VITE_X_URL?: string;
   VITE_TELEGRAM_URL?: string;
   VITE_INSTAGRAM_URL?: string;
+  /** `1`: demo mode unless the URL says `?demo=0` (the static GitHub Pages build has no server behind it). */
+  VITE_DEMO_DEFAULT?: string;
 }
 
 const INSCRIPTION_ID = /^[0-9a-f]{64}i\d+$/;
@@ -76,9 +78,19 @@ function parseCopyReady(v: string | undefined): Set<CopyPage> {
   return out;
 }
 
+const TRUE = new Set(['1', 'true']);
+const FALSE = new Set(['0', 'false']);
+
+/** `?demo=1|true` forces demo, `?demo=0|false` forces live, otherwise `VITE_DEMO_DEFAULT` decides (default: live). */
+export function demoFlag(param: string | null, envDefault: string | undefined): boolean {
+  if (param !== null && TRUE.has(param)) return true;
+  if (param !== null && FALSE.has(param)) return false;
+  return TRUE.has((envDefault ?? '').trim().toLowerCase());
+}
+
 export function readConfig(env: EnvLike, search: string): AppConfig {
   const params = new URLSearchParams(search);
-  const demo = params.get('demo') === '1' || params.get('demo') === 'true';
+  const demo = demoFlag(params.get('demo'), env.VITE_DEMO_DEFAULT);
   const rawNet = (env.VITE_NETWORK ?? 'mainnet') as Network;
   const network: Network = NETWORKS.includes(rawNet) ? rawNet : 'mainnet';
   const poll = Number(env.VITE_POLL_MS ?? '');

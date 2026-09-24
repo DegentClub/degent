@@ -4,7 +4,8 @@
  * parameter survives every navigation so `?demo=1` stays on while browsing.
  *
  * Static hosting needs an SPA fallback (every unknown path serves index.html); `vite preview` does
- * this out of the box. Trailing slashes (the WordPress URLs: `/collection/`, `/blog/<slug>/`) are
+ * this out of the box. Under a sub-path (`vite build --base /degent/`, GitHub Pages) `browserHistory`
+ * strips the base when reading and adds it when writing, so routes and `<Link to>` stay base-free. Trailing slashes (the WordPress URLs: `/collection/`, `/blog/<slug>/`) are
  * accepted.
  */
 import { createContext, useCallback, useContext, useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent, type ReactNode } from 'react';
@@ -80,28 +81,58 @@ export function routePath(r: Route): string {
 // ------------------------------------------------------------------ history
 
 export interface HistoryLike {
+  /** The app-relative location (base path already stripped). */
   location: { pathname: string; search: string; hash: string };
   push(url: string): void;
   replace(url: string): void;
   subscribe(cb: () => void): () => void;
+  /** The real `href` for an app path (adds the base path); identity when absent. */
+  createHref?(url: string): string;
 }
 
-export function browserHistory(): HistoryLike {
+/** Vite's `BASE_URL` as `/` or `/x/` (always a leading and a trailing slash). */
+export function normalizeBase(base: string | undefined): string {
+  const b = (base ?? '/').trim();
+  if (!b.startsWith('/')) return '/';
+  return b.endsWith('/') ? b : `${b}/`;
+}
+
+/** `/degent/collection` → `/collection` under base `/degent/`; paths outside the base are returned as-is. */
+export function stripBase(pathname: string, base: string): string {
+  const b = normalizeBase(base);
+  if (b === '/') return pathname;
+  if (pathname === b.slice(0, -1)) return '/';
+  return pathname.startsWith(b) ? `/${pathname.slice(b.length)}` : pathname;
+}
+
+/** `/collection?demo=1` → `/degent/collection?demo=1` under base `/degent/`. Only site-relative paths change. */
+export function withBase(url: string, base: string): string {
+  const b = normalizeBase(base);
+  if (b === '/' || !url.startsWith('/') || url.startsWith('//')) return url;
+  return `${b}${url.slice(1)}`;
+}
+
+/** The base this bundle was built for (`vite build --base`). */
+export const APP_BASE = normalizeBase(import.meta.env?.BASE_URL);
+
+export function browserHistory(base: string = APP_BASE): HistoryLike {
   const listeners = new Set<() => void>();
   const emit = () => listeners.forEach((l) => l());
   window.addEventListener('popstate', emit);
   return {
     get location() {
-      return window.location;
+      const { pathname, search, hash } = window.location;
+      return { pathname: stripBase(pathname, base), search, hash };
     },
     push(url) {
-      window.history.pushState(null, '', url);
+      window.history.pushState(null, '', withBase(url, base));
       emit();
     },
     replace(url) {
-      window.history.replaceState(null, '', url);
+      window.history.replaceState(null, '', withBase(url, base));
       emit();
     },
+    createHref: (url) => withBase(url, base),
     subscribe(cb) {
       listeners.add(cb);
       return () => listeners.delete(cb);
@@ -206,8 +237,9 @@ export function useRouter(): RouterValue {
 export type LinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'> & { to: string; keepScroll?: boolean; replace?: boolean };
 
 export function Link({ to, keepScroll, replace, onClick, children, ...rest }: LinkProps) {
-  const { navigate, search, route } = useRouter();
-  const href = hrefFor(to, search);
+  const { navigate, search, route, history } = useRouter();
+  const path = hrefFor(to, search);
+  const href = history.createHref ? history.createHref(path) : path;
   const current = routePath(route) === to.split('?')[0];
   const handle = (e: MouseEvent<HTMLAnchorElement>) => {
     onClick?.(e);

@@ -188,6 +188,11 @@ gets a "travels the block lane" warning there and again on Quote. Quote shows ti
 | `VITE_ESPLORA_URL` | mempool.space per network | Esplora-compatible API for UTXOs and broadcast |
 | `VITE_EXPLORER_URL` | `https://explore.block.space` | Block explorer for tx links (`/tx/<txid>`) |
 | `VITE_POLL_MS` | `5000` (`1200` in demo) | Order polling interval (the Atelier polls at most every 2 s) |
+| `VITE_DEMO_DEFAULT` | unset | `1`: demo mode without `?demo=1` (`?demo=0` still reaches live) and no Google Fonts links, so the page makes no third-party requests. Used by the GitHub Pages build |
+
+Sub-path hosting: build with `vite build --base /degent/`. `browserHistory` strips the base when reading the
+location and adds it on `pushState`; `<Link>` hrefs and site-relative markdown links carry it
+(`src/site/router.tsx`). Static hosts need an SPA fallback (`cp dist/index.html dist/404.html` on GitHub Pages).
 
 ## Demo mode
 

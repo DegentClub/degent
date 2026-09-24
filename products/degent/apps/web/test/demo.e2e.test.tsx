@@ -25,6 +25,15 @@ describe('config', () => {
     expect(readConfig({ VITE_NETWORK: 'bogus' }, '').network).toBe('mainnet');
     expect(readConfig({}, '').explorerUrl).toBe('https://explore.block.space');
   });
+
+  it('VITE_DEMO_DEFAULT=1 (the GitHub Pages build) makes demo the default; ?demo=0 still reaches live', () => {
+    expect(readConfig({ VITE_DEMO_DEFAULT: '1' }, '').demo).toBe(true);
+    expect(readConfig({ VITE_DEMO_DEFAULT: 'true' }, '?utm=x').demo).toBe(true);
+    expect(readConfig({ VITE_DEMO_DEFAULT: '1' }, '?demo=0').demo).toBe(false);
+    expect(readConfig({ VITE_DEMO_DEFAULT: '0' }, '').demo).toBe(false);
+    expect(readConfig({}, '?demo=false').demo).toBe(false);
+    expect(readConfig({}, '?demo=true').demo).toBe(true);
+  });
 });
 
 describe('demo mode: the whole flow, end to end, through the UI', () => {

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Link, RouterProvider, carrySearch, hrefFor, memoryHistory, parseRoute, routePath, useRouter, type Route } from '../../src/site/router';
+import { Link, RouterProvider, browserHistory, carrySearch, hrefFor, memoryHistory, normalizeBase, parseRoute, routePath, stripBase, useRouter, withBase, type Route } from '../../src/site/router';
+import { safeUrl } from '../../src/site/lib/markdown';
 import { renderSite } from './helpers';
 
 describe('parseRoute / routePath', () => {
@@ -98,5 +99,47 @@ describe('RouterProvider + Link', () => {
     await userEvent.keyboard('{Escape}');
     expect(screen.queryByRole('dialog', { name: 'Site menu' })).toBeNull();
     expect(burger).toHaveFocus();
+  });
+});
+
+describe('sub-path hosting (vite build --base /degent/, GitHub Pages)', () => {
+  it('normalizes, strips and adds the base', () => {
+    expect(normalizeBase('/degent')).toBe('/degent/');
+    expect(normalizeBase('./')).toBe('/');
+    expect(normalizeBase(undefined)).toBe('/');
+    expect(stripBase('/degent/collection/42', '/degent/')).toBe('/collection/42');
+    expect(stripBase('/degent', '/degent/')).toBe('/');
+    expect(stripBase('/degent/', '/degent/')).toBe('/');
+    expect(stripBase('/collection', '/')).toBe('/collection');
+    expect(withBase('/blog?demo=1', '/degent/')).toBe('/degent/blog?demo=1');
+    expect(withBase('/', '/degent/')).toBe('/degent/');
+    expect(withBase('https://x.com/a', '/degent/')).toBe('https://x.com/a');
+    expect(withBase('//evil.example/a', '/degent/')).toBe('//evil.example/a');
+    expect(withBase('/club', '/')).toBe('/club');
+  });
+
+  it('browserHistory reads app paths and writes real ones; <Link> hrefs carry the base', async () => {
+    window.history.replaceState(null, '', '/degent/collection/7?demo=1');
+    const history = browserHistory('/degent/');
+    expect(history.location.pathname).toBe('/collection/7');
+    render(
+      <RouterProvider history={history}>
+        <Link to="/blog">Blog</Link>
+        <Where />
+      </RouterProvider>,
+    );
+    expect(screen.getByTestId('where')).toHaveTextContent('collection');
+    expect(screen.getByRole('link', { name: 'Blog' })).toHaveAttribute('href', '/degent/blog?demo=1');
+    await userEvent.click(screen.getByRole('link', { name: 'Blog' }));
+    expect(window.location.pathname).toBe('/degent/blog');
+    expect(screen.getByTestId('where')).toHaveTextContent('blog');
+    window.history.replaceState(null, '', '/');
+  });
+
+  it('site-relative markdown links and images get the base', () => {
+    expect(safeUrl('/club', '/degent/')).toBe('/degent/club');
+    expect(safeUrl('https://degent.club/x', '/degent/')).toBe('https://degent.club/x');
+    expect(safeUrl('#top', '/degent/')).toBe('#top');
+    expect(safeUrl('javascript:alert(1)', '/degent/')).toBeNull();
   });
 });

@@ -24,6 +24,15 @@ loop. This repository holds the product; the shared platform comes from
 Humans start here and at [`products/degent/README.md`](products/degent/README.md); agents start at
 [`AGENTS.md`](AGENTS.md) / [`CLAUDE.md`](CLAUDE.md).
 
+## Live demo
+
+The whole degent.club site, mint included, in demo mode (simulated wallet, mint service, chain, Atelier and ord
+data; no bitcoin moves and the page makes no third-party requests):
+**https://degentclub.github.io/degent/** (once Pages is enabled). It is built and deployed by
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml), which stays idle until the owner sets
+Settings → Pages → Source to "GitHub Actions" and the repository variable `PAGES_ENABLED=true`.
+Locally: `VITE_DEMO_DEFAULT=1 pnpm --filter @bsh/degent-web exec vite build --base /degent/`.
+
 ## Quickstart
 
 ```bash
