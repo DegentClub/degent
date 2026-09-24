@@ -9,10 +9,15 @@
  * must carry EXACTLY the parent input value. ord places the child on the first sat of the commit
  * input, i.e. at offset parentValue; a larger output 0 would swallow the child into the
  * collection address. @bsh/inscription.signParentInput enforces the same equality.
+ *
+ * Since ADR-0005 the user's signature on input 1 is SIGHASH_ALL|ANYONECANPAY (0x81): it already commits to
+ * both outputs checked below, so a PSBT whose outputs differ would also fail at broadcast. The policy still
+ * checks them itself (it never trusts the PSBT) and additionally refuses any other hash type on input 1.
  */
 import { hex } from '@scure/base';
 import { Transaction } from '@scure/btc-signer';
 import { base64 } from '@scure/base';
+import { SIGHASH_ALL_ANYONECANPAY } from '@bsh/inscription';
 import type { Lane } from '@bsh/degent-mint-sdk';
 
 export interface FeeBand {
@@ -83,12 +88,17 @@ export function evaluateParentPolicy(psbtBase64: string, ctx: PolicyContext, cfg
   if (in0.witnessUtxo?.amount !== ctx.parentValue) v.push('input 0 value differs from the parent UTXO value');
   if (!eq(in0.witnessUtxo?.script, ctx.parentScript)) v.push('input 0 script differs from the parent UTXO script');
 
-  // input 1: this order's commit output, already signed by the user (0x83)
+  // input 1: this order's commit output, already signed by the user with 0x81 (ADR-0005)
   if (txidOf(in1.txid) !== ctx.commitOutpoint.txid.toLowerCase() || in1.index !== ctx.commitOutpoint.vout)
     v.push("input 1 is not this order's commit output");
   if (in1.witnessUtxo?.amount !== ctx.commitValue) v.push('input 1 value differs from the order commit value');
   if (!eq(in1.witnessUtxo?.script, ctx.commitScript)) v.push("input 1 script is not this order's commit script");
   if (!in1.tapScriptSig || in1.tapScriptSig.length !== 1) v.push('input 1 is not signed by the reveal key');
+  else {
+    const sig = in1.tapScriptSig[0]![1];
+    if (sig.length !== 65 || sig[64] !== SIGHASH_ALL_ANYONECANPAY)
+      v.push('input 1 is not signed SIGHASH_ALL|ANYONECANPAY (0x81) over both outputs');
+  }
 
   // output 0: parent back to the collection address, same value
   if (!eq(out0.script, ctx.collectionScript)) v.push('output 0 does not return the parent to the collection address');

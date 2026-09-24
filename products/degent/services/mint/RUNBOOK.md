@@ -19,7 +19,7 @@ Identify where it is stuck from `status` and the last `timeline` entry.
 | `revealing` | one tick | Logs `broadcast failed` for the order: retryable errors keep the parent lease and rebroadcast the same tx every tick (see section 4). `lastError` is in the store row. |
 | `revealed` | ~1 block | Esplora `GET /tx/<revealTxid>`. If evicted, the worker re-pushes it every tick. If fees spiked, see section 3. |
 | `confirmed` | until ord indexes | ord `GET /content/<inscriptionId>`; ord lagging is the usual cause. |
-| `failed` | terminal | `timeline[-1].detail`: wrong commit value/script (user's wallet built the wrong funding tx; only the user's K_e could spend it, and K_e is discarded; escalate to support) or ord bytes differ (page someone: this should be impossible). |
+| `failed` | terminal | `timeline[-1].detail`: wrong commit value/script (user's wallet built the wrong funding tx; only the user's K_e could spend it, and K_e exists only encrypted in the user's recovery bundle; escalate to support) or ord bytes differ (page someone: this should be impossible). |
 
 Do not edit order rows by hand. If an order must be moved, do it through code with a test.
 
@@ -50,8 +50,8 @@ User funds are never at risk from the parent key: every user can self-rescue.
   1-500 sat/vB) and orders whose effective rate differs from the quote by more than 2%.
 - To stop taking cheap orders during a spike, raise `MIN_FEE_RATE` and redeploy; new quotes reject lower rates.
 - If a paid order will clearly not confirm before `RESCUE_AFTER_SECONDS`, do nothing special: after the timeout
-  the worker offers rescue. The rescue tx is smaller than the parent reveal at the same fee, so its fee rate is
-  higher.
+  the worker offers rescue. The re-signed rescue is smaller than the parent reveal at the same fee, so its fee
+  rate is higher.
 - CPFP on the child output is the user's decision (their wallet owns output 1).
 
 ## 4. Lane broadcaster down
@@ -70,26 +70,34 @@ orders held in `revealing`.
 
 ## 5. Rescue
 
-`rescue_available` means the service will not add the parent. The user's front end calls
-`GET /v1/orders/{id}/rescue` with the order token (also held in their local recovery bundle) and broadcasts the
-returned hex from any wallet or node. The inscription lands on the user's address without the parent link.
+`rescue_available` (and `declined`) means the service will not add the parent. Since ADR-0005 the half-signed
+reveal is SIGHASH_ALL|ANYONECANPAY over [parent return, child] and cannot be broadcast without the parent, so the
+rescue is a fresh transaction the **user** signs: the front end calls `GET /v1/orders/{id}/rescue` with the order
+token (also held in their local recovery bundle), receives the parameters and the content bytes, decrypts K_e
+from the recovery bundle with the user's recovery passphrase, re-signs `[commit] -> [child]`
+(`buildResignedRescue`) and broadcasts it. The inscription lands on the user's address without the parent link.
 
-- Entered automatically after `RESCUE_AFTER_SECONDS` from payment, on a policy-signer refusal, or when the
-  service fee output is missing from the funding tx.
+- Entered automatically after `RESCUE_AFTER_SECONDS` from payment, on a policy-signer refusal, when the
+  service fee output is missing from the funding tx, or when the parent UTXO's value differs from the value the
+  user signed (see below).
 - The worker watches the commit outpoint: when it is spent, the order moves to `revealed` with
   `rescued: true` (or `false` if our parent reveal won the race, in which case the parent chain is advanced)
   and then proceeds to `confirmed` -> `verified` -> `delivered` as usual.
 - The service never broadcasts the rescue itself; the user does, so it stays their decision.
-- Support cannot fetch a rescue without the order token. If the user lost both the token and the recovery
-  bundle, the rescue tx is not recoverable by support; the half-signed reveal stays encrypted in the
-  `reveals` table and must not be exported.
+- Support cannot fetch rescue parameters without the order token, and nobody but the user can sign a rescue:
+  without the recovery bundle **and** its passphrase there is no self-rescue (the service never had K_e). The
+  half-signed reveal stays encrypted in the `reveals` table and must not be exported.
+- **Never change the parent's value with paid orders waiting.** Users sign the parent return value (not the
+  outpoint), so the parent may advance freely, but re-initialising it with a different value (e.g. after a key
+  rotation) makes every stored reveal unattachable: the worker moves those orders to `rescue_available`. Drain
+  `paid`..`revealing` first, or keep the value.
 
 ## Member review (ADR-0007)
 
 - **Orders piling up in `member_review`.** Members are not voting. Check `GET /v1/review` with a holder session (or
   `GET /v1/stats` → `approvals.inReview`) and ping the club. Nothing is stranded: after `REVIEW_SLA_SECONDS`
   (default 14 days) the worker moves undecided orders to `rescue_available` and the front end offers the
-  parent-less reveal. Lowering `APPROVAL_QUORUM` is a club decision, not an ops one.
+  re-signed parent-less rescue. Lowering `APPROVAL_QUORUM` is a club decision, not an ops one.
 - **Holder sign-in fails with `not_a_holder` for a known member.** The `roster-chain` registry could not see the
   Degent in the address's UTXOs: check `ORD_URL` serves `/r/utxo/<outpoint>` and `/r/inscription/<id>` (ord >= 0.18
   with `--index-addresses` not required) and that `ESPLORA_URL` lists the address's UTXOs. Answers are cached 60 s.

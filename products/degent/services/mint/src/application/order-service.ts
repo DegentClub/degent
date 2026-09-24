@@ -5,7 +5,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { hexToBytes } from '@noble/hashes/utils.js';
-import { buildRescueReveal, verifyHalfSignedReveal } from '@bsh/inscription';
+import { addressToScript, estimateResignedRescueWeight, verifyHalfSignedReveal, vsizeFromWeight } from '@bsh/inscription';
 import type {
   CreateOrderRequest,
   CreateOrderResponse,
@@ -32,6 +32,7 @@ import type { Clock } from '../ports/clock.js';
 import type { ContentStore } from '../ports/content-store.js';
 import type { EventBus } from '../ports/event-bus.js';
 import type { OrderStore } from '../ports/order-store.js';
+import type { ParentUtxoProvider } from '../ports/parent-utxo.js';
 import type { RevealVault } from '../ports/reveal-vault.js';
 import type { VoteStore } from '../ports/vote-store.js';
 import type { MintSettings } from './settings.js';
@@ -45,6 +46,8 @@ export interface OrderServiceDeps {
   events: EventBus;
   clock: Clock;
   votes: VoteStore;
+  /** Where the parent is: its value goes into every quote (output 0 of the 0x81 reveal, ADR-0005). */
+  parents: ParentUtxoProvider;
   chain?: ChainPort;
   newId?: () => string;
   newToken?: () => string;
@@ -196,6 +199,11 @@ export class OrderService {
     await this.d.store.setMeta(APPROVED_COUNT_KEY, String(n));
   }
 
+  /** Current parent UTXO value, or null when the service does not know its parent yet. */
+  private async parentValue(): Promise<bigint | null> {
+    return (await this.d.parents.current())?.value ?? null;
+  }
+
   // ---------------------------------------------------------------- API use cases
 
   async createOrder(body: unknown): Promise<CreateOrderResponse> {
@@ -238,6 +246,7 @@ export class OrderService {
       feeRate: req.feeRate,
       expiresAt,
       queuePosition: occ.block.waiting.length + occ.block.inFlight.length + 1,
+      parentValue: await this.parentValue(),
     });
 
     const token = this.d.newToken?.() ?? randomBytes(32).toString('base64url');
@@ -305,6 +314,12 @@ export class OrderService {
         actual: sha,
       });
 
+    // The binding quote fixes output 0 of the 0x81 reveal (parent return address + value, ADR-0005): without a
+    // known parent UTXO there is nothing the browser could sign. Checked before review so a retry is free.
+    const parentValue = await this.parentValue();
+    if (parentValue === null)
+      throw new DomainError('upstream_unavailable', 503, 'the collection parent UTXO is not known yet; retry the upload later');
+
     // Review BEFORE any transition: if the reviewer is unavailable the order stays
     // awaiting_content and the upload can simply be retried.
     let review;
@@ -336,6 +351,7 @@ export class OrderService {
       feeRate: r.quote!.feeRate,
       expiresAt,
       queuePosition: occ.block.waiting.length + occ.block.inFlight.length + 1,
+      parentValue,
     });
     r = await this.transition(r, 'approved', { detail: 'binding quote issued', patch: { review, quote, expiresAt: quote.expiresAt } });
     return this.publicOrder(r);
@@ -356,6 +372,12 @@ export class OrderService {
     const s = this.d.settings;
     const content = inscriptionContent(r.contentType, bytes, s.collection.parentInscriptionId);
     const commitOutpoint = { txid: req.commitTxid.toLowerCase(), vout: req.commitVout };
+    if (quote.parentValueSats === null)
+      throw new DomainError('internal', 500, 'binding quote has no parent value');
+    // SIGHASH_ALL|ANYONECANPAY (0x81, the platform default; ADR-0005): the signature must cover BOTH outputs,
+    // [parent return to the collection address with exactly the quoted parent value, child to the recipient].
+    // A 0x83 reveal (or one without the parent return) is refused. Every signed field is re-derived from the
+    // order; nothing in the PSBT is trusted but the signature.
     const res = verifyHalfSignedReveal({
       network: s.network,
       psbtBase64: req.halfSignedRevealPsbt,
@@ -365,14 +387,12 @@ export class OrderService {
       expectedCommitValue: BigInt(quote.commitValueSats),
       expectedRecipientAddress: r.recipientAddress,
       expectedPostage: BigInt(quote.postageSats),
+      expectedSighash: 'all_anyonecanpay',
+      expectedParentReturnAddress: quote.parentReturnAddress,
+      expectedParentValue: BigInt(quote.parentValueSats),
     });
     if (!res.ok) throw new DomainError('reveal_invalid', 422, `half-signed reveal rejected: ${res.reason}`);
-    // The same PSBT must also be a valid self-rescue; prove it now, not after the user has paid.
-    try {
-      buildRescueReveal({ network: s.network, halfSignedPsbtBase64: req.halfSignedRevealPsbt });
-    } catch (e) {
-      throw new DomainError('reveal_invalid', 422, `half-signed reveal is not rescuable: ${(e as Error).message}`);
-    }
+    // No "prove rescuable" step any more: the 0x81 rescue is re-signed with K_e, which only the user holds.
     await this.d.reveals.put(r.id, req.halfSignedRevealPsbt);
     r = await this.transition(r, 'awaiting_payment', {
       detail: 'half-signed reveal verified and stored',
@@ -387,16 +407,43 @@ export class OrderService {
     return this.publicOrder(r);
   }
 
+  /**
+   * Self-rescue parameters (ADR-0005). rescue_available (timeouts, policy refusal, changed parent value) and
+   * declined (the members said no: the user keeps their inscription without the parent link) both offer it.
+   * The half-signed 0x81 reveal cannot be broadcast without the parent, and the service does not hold K_e,
+   * so it returns everything @bsh/inscription.buildResignedRescue needs except the key; the browser signs.
+   */
   async getRescue(orderId: string, authorization: string | undefined): Promise<RescueResponse> {
     const r = await this.authorize(orderId, authorization);
-    // rescue_available (timeouts, policy refusal) and declined (the members said no: the user keeps
-    // their inscription without the parent link) both offer the parent-less reveal.
     if (!RESCUE_OFFERED.includes(r.status))
       throw new DomainError('rescue_unavailable', 409, `rescue is not available in status ${r.status}`, { status: r.status });
-    const psbt = await this.d.reveals.get(r.id);
-    if (!psbt) throw new DomainError('internal', 500, 'stored reveal missing');
-    const rescue = buildRescueReveal({ network: this.d.settings.network, halfSignedPsbtBase64: psbt });
-    return { orderId: r.id, txid: rescue.txid, hex: rescue.hex, weight: rescue.weight };
+    if (!r.commitOutpoint || !r.quote) throw new DomainError('internal', 500, 'order has no commit outpoint or quote');
+    const bytes = await this.d.content.get(r.contentSha256);
+    if (!bytes) throw new DomainError('internal', 500, 'stored content missing');
+    const s = this.d.settings;
+    const parentId = s.collection.parentInscriptionId;
+    const weight = estimateResignedRescueWeight({
+      content: inscriptionContent(r.contentType, bytes, parentId),
+      recipientScript: addressToScript(r.recipientAddress, s.network),
+    });
+    return {
+      orderId: r.id,
+      network: r.network,
+      method: 'resign',
+      commitOutpoint: r.commitOutpoint,
+      commitValueSats: r.quote.commitValueSats,
+      recipientAddress: r.recipientAddress,
+      postageSats: r.quote.postageSats,
+      contentType: r.contentType,
+      contentSha256: r.contentSha256,
+      contentBase64: Buffer.from(bytes).toString('base64'),
+      parentInscriptionId: parentId,
+      revealPubkey: r.revealPubkey,
+      feeRate: r.quote.feeRate,
+      weight,
+      vsize: vsizeFromWeight(weight),
+      feeSats: r.quote.commitValueSats - r.quote.postageSats,
+    };
   }
 }
 

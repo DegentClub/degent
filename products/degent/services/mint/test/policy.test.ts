@@ -12,7 +12,7 @@ import { fakeTxid, NET, PARENT_KEY, regtestAddress } from './fakes/harness.js';
 const signer = new InMemoryPolicySigner(PARENT_KEY, NET, DEFAULT_POLICY, { warn: () => {} });
 const collectionScript = addressToScript(signer.collectionAddress(), NET);
 
-function build(opts: { feeRate?: number } = {}) {
+function build(opts: { feeRate?: number; sighash?: 'all_anyonecanpay' | 'single_anyonecanpay' } = {}) {
   const revealKey = new Uint8Array(32).fill(5);
   const content = { contentType: 'image/png', body: new Uint8Array(1000).fill(1), parentId: `${fakeTxid(0)}i0` };
   const commit = commitAddress(schnorr.getPublicKey(revealKey), content, NET);
@@ -20,7 +20,13 @@ function build(opts: { feeRate?: number } = {}) {
   const weight = 5000; // pretend quote weight
   const fee = BigInt(Math.ceil((weight / 4) * (opts.feeRate ?? 2)));
   const commitOutpoint = { txid: fakeTxid(1), vout: 0 };
-  const half = buildHalfSignedReveal({ network: NET, revealPrivkey: revealKey, content, commitOutpoint, commitValue: fee + 546n, recipientAddress: recipient, postage: 546n });
+  // ADR-0005: the browser signs 0x81 over [parent return, child]; 0x83 only to prove the policy refuses it.
+  const half = buildHalfSignedReveal({
+    network: NET, revealPrivkey: revealKey, content, commitOutpoint, commitValue: fee + 546n, recipientAddress: recipient, postage: 546n,
+    sighash: opts.sighash ?? 'all_anyonecanpay',
+    parentReturnAddress: signer.collectionAddress(),
+    parentValue: 10_000n,
+  });
   const parentOutpoint = { txid: fakeTxid(2), vout: 0 };
   const attached = attachParent({ network: NET, halfSignedPsbtBase64: half.psbtBase64, parentOutpoint, parentValue: 10_000n, parentScript: collectionScript, parentReturnAddress: signer.collectionAddress() });
   const ctx: PolicyContext = {
@@ -68,9 +74,23 @@ describe('evaluateParentPolicy', () => {
 
   it('refuses extra outputs, a bigger parent return, and garbage', () => {
     const { psbt, ctx } = build();
-    const extra = mutate(psbt, (tx) => tx.addOutput({ script: collectionScript, amount: 1000n }));
+    // btc-signer itself refuses to add an output under a SIGHASH_ALL signature; a hostile PSBT holder would
+    // strip the signature, add the output and put the (now invalid) signature back. The policy still refuses.
+    const extra = mutate(psbt, (tx) => {
+      const sigs = tx.getInput(1).tapScriptSig;
+      tx.updateInput(1, { tapScriptSig: undefined }, true);
+      tx.addOutput({ script: collectionScript, amount: 1000n });
+      tx.updateInput(1, { tapScriptSig: sigs }, true);
+    });
     expect(evaluateParentPolicy(extra, ctx).join()).toMatch(/exactly 2 outputs/);
     expect(evaluateParentPolicy('not-a-psbt', ctx)[0]).toMatch(/unparseable/);
+  });
+
+  it('refuses a commit input not signed SIGHASH_ALL|ANYONECANPAY (a legacy 0x83 reveal)', () => {
+    const { psbt, ctx } = build({ sighash: 'single_anyonecanpay' });
+    expect(evaluateParentPolicy(psbt, ctx).join()).toMatch(/SIGHASH_ALL\|ANYONECANPAY \(0x81\)/);
+    // the 0x81 build of the same order passes
+    expect(evaluateParentPolicy(build().psbt, ctx)).toEqual([]);
   });
 
   it('refuses a fee rate outside the lane band', () => {

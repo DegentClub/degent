@@ -6,9 +6,9 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { p2tr } from '@scure/btc-signer';
-import { addressToScript, buildHalfSignedReveal, commitAddress, networkParams } from '@bsh/inscription';
+import { addressToScript, buildHalfSignedReveal, buildResignedRescue, commitAddress, networkParams } from '@bsh/inscription';
 import { signBip322Simple } from '@bsh/identity';
-import type { AuthVerifyResponse, CreateOrderResponse, Order, Tier, VoteChoice, VotesResponse } from '@bsh/degent-mint-sdk';
+import type { AuthVerifyResponse, CreateOrderResponse, Order, RescueResponse, Tier, VoteChoice, VotesResponse } from '@bsh/degent-mint-sdk';
 import { DEFAULT_APPROVAL_QUORUM, DEFAULT_CONFIG, DEFAULT_DECLINE_QUORUM, DEFAULT_REVIEW_SLA_SECONDS, GALLERY_SIZE, MAX_UPLOAD_BYTES, sha256Hex, voteReference, voteStatement } from '@bsh/degent-mint-sdk';
 import { ApprovalService } from '../../src/application/approval-service.js';
 import { RegisterService } from '../../src/application/register-service.js';
@@ -118,6 +118,7 @@ export function makeHarness(opts: HarnessOptions = {}) {
   MEMBER_SEEDS.forEach((seed, i) => holders.set(regtestAddress(seed), [i + 1]));
   holders.set(regtestAddress(200), [100, 101]);
   const roster = opts.roster ?? tinyRoster();
+  const parents = new StoreParentUtxoProvider(store);
   let n = 0;
   const orders = new OrderService({
     settings,
@@ -129,11 +130,11 @@ export function makeHarness(opts: HarnessOptions = {}) {
     clock,
     chain,
     votes,
+    parents,
     newId: () => `dgt_test${String(++n).padStart(4, '0')}`,
   });
   const approval = new ApprovalService({ orders, store, votes, holders, clock, sessionKey: SESSION_KEY });
   const register = new RegisterService({ settings, roster, store, holders, clock, statsCacheSeconds: 0 });
-  const parents = new StoreParentUtxoProvider(store);
   const ready = parents.initialise({
     txid: parentTxid,
     vout: 0,
@@ -247,6 +248,9 @@ export async function browserReveal(h: Harness, b: BrowserMint, commitTxid = fak
     commitValue: BigInt(quote.commitValueSats),
     recipientAddress: b.recipientAddress,
     postage: BigInt(quote.postageSats),
+    // SIGHASH_ALL|ANYONECANPAY (0x81, ADR-0005): the parent return is signed up front from the quote
+    parentReturnAddress: quote.parentReturnAddress,
+    parentValue: BigInt(quote.parentValueSats!),
   });
   b.commitTxid = commitTxid;
   b.psbt = psbtBase64;
@@ -255,6 +259,30 @@ export async function browserReveal(h: Harness, b: BrowserMint, commitTxid = fak
     token: b.token,
   });
   return res;
+}
+
+/**
+ * Self-rescue exactly as the browser does it (ADR-0005): GET /rescue returns parameters, the browser checks
+ * the content hash and its key, then re-signs [commit] -> [child] with K_e via @bsh/inscription.
+ */
+export async function browserRescue(h: Harness, b: BrowserMint) {
+  const res = await api(h, 'GET', `/v1/orders/${b.orderId}/rescue`, { token: b.token });
+  if (res.status !== 200) throw new Error(`rescue failed: ${JSON.stringify(res.body)}`);
+  const p = res.body as RescueResponse;
+  const body = new Uint8Array(Buffer.from(p.contentBase64, 'base64'));
+  if (sha256Hex(body) !== p.contentSha256 || p.contentSha256 !== b.order.contentSha256) throw new Error('rescue content hash mismatch');
+  if (p.revealPubkey !== b.revealPubkey) throw new Error('rescue is for another key');
+  const tx = buildResignedRescue({
+    network: p.network,
+    revealPrivkey: b.revealKey,
+    content: { contentType: p.contentType, body, ...(p.parentInscriptionId ? { parentId: p.parentInscriptionId } : {}) },
+    commitOutpoint: p.commitOutpoint,
+    commitValue: BigInt(p.commitValueSats),
+    recipientAddress: p.recipientAddress,
+    postage: BigInt(p.postageSats),
+    feeRate: p.feeRate,
+  });
+  return { params: p, tx };
 }
 
 /** The user's wallet broadcasts the funding tx paying the commit address. */

@@ -7,9 +7,9 @@ import { hex } from '@scure/base';
 import { Transaction } from '@scure/btc-signer';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { addressToScript, inscriptionIdFromReveal } from '@bsh/inscription';
-import type { Order, RescueResponse } from '@bsh/degent-mint-sdk';
+import type { Order } from '@bsh/degent-mint-sdk';
 import { sha256Hex } from '@bsh/degent-mint-sdk';
-import { api, browserCreate, browserMintToPayment, browserReveal, browserUpload, fundAndApprove, fundCommit, fundToReview, makeHarness, membersApprove, NET, standardArt } from './fakes/harness.js';
+import { api, browserCreate, browserMintToPayment, browserRescue, browserReveal, browserUpload, fundAndApprove, fundCommit, fundToReview, makeHarness, membersApprove, NET, standardArt } from './fakes/harness.js';
 import { png } from './fakes/images.js';
 
 function parseRaw(rawHex: string) {
@@ -151,11 +151,21 @@ describe('e2e: rescue path', () => {
     expect(await h.parents.leasedBy()).toBeNull(); // parent lease released, parent unchanged
     expect((await h.parents.current())!.txid).toBe(h.parentTxid);
 
-    const res = await api(h, 'GET', `/v1/orders/${b.orderId}/rescue`, { token: b.token });
-    expect(res.status).toBe(200);
-    const rescue = res.body as RescueResponse;
+    // The service returns parameters, never a transaction: the browser re-signs with K_e (ADR-0005).
+    const { params, tx: rescue } = await browserRescue(h, b);
+    expect(params).toMatchObject({
+      orderId: b.orderId,
+      method: 'resign',
+      commitOutpoint: { txid: b.commitTxid, vout: 0 },
+      recipientAddress: b.recipientAddress,
+      contentSha256: b.order.contentSha256,
+      revealPubkey: b.revealPubkey,
+    });
+    expect(params).not.toHaveProperty('hex');
     const { tx, weight } = parseRaw(rescue.hex);
-    expect(weight).toBe(rescue.weight);
+    expect(weight).toBe(params.weight);
+    expect(rescue.weight).toBe(params.weight);
+    expect(rescue.fee).toBe(BigInt(params.feeSats));
     expect(tx.inputsLength).toBe(1);
     expect(tx.outputsLength).toBe(1);
     expect(hex.encode(tx.getInput(0).txid!)).toBe(b.commitTxid);
@@ -205,9 +215,7 @@ describe('e2e: the members decline', () => {
     expect(o.degentNumber).toBeNull();
     expect(o.approval).toMatchObject({ approvals: 0, declines: 3 });
     // Rescue is offered immediately, no timeout to wait for.
-    const res = await api(h, 'GET', `/v1/orders/${b.orderId}/rescue`, { token: b.token });
-    expect(res.status).toBe(200);
-    const rescue = res.body as RescueResponse;
+    const { tx: rescue } = await browserRescue(h, b);
     h.chain.acceptRaw(rescue.hex);
     await h.worker.tick();
     expect(await getOrder(h, b.orderId)).toMatchObject({ status: 'revealed', rescued: true, revealTxid: rescue.txid });

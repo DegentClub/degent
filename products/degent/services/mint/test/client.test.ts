@@ -46,6 +46,8 @@ describe('mint-sdk client <-> service', () => {
       commitValue: BigInt(approved.quote!.commitValueSats),
       recipientAddress,
       postage: 546n,
+      parentReturnAddress: approved.quote!.parentReturnAddress,
+      parentValue: BigInt(approved.quote!.parentValueSats!),
     });
     const paying = await c.submitReveal(order.id, orderToken, { commitTxid, commitVout: 0, halfSignedRevealPsbt: psbtBase64 });
     expect(paying.status).toBe('awaiting_payment');

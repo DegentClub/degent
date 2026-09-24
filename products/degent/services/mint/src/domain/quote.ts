@@ -30,6 +30,11 @@ export interface QuoteInput {
   expiresAt: Date;
   /** Block lane: orders ahead of this one + 1. */
   queuePosition: number | null;
+  /**
+   * Value of the parent UTXO (constant across reveals: the policy returns it unchanged). The browser signs
+   * it as output 0 with SIGHASH_ALL|ANYONECANPAY (ADR-0005). Null only while the parent UTXO is unknown.
+   */
+  parentValue: bigint | null;
 }
 
 export function inscriptionContent(contentType: string, body: Uint8Array, parentId: string | null): InscriptionContent {
@@ -83,5 +88,7 @@ export function computeQuote(q: QuoteInput): Quote {
     expiresAt: q.expiresAt.toISOString(),
     queuePosition,
     etaMinutes: lane === 'block' ? etaMinutesForPosition(queuePosition) : null,
+    parentReturnAddress: q.collectionAddress,
+    parentValueSats: q.parentValue === null ? null : Number(q.parentValue),
   };
 }

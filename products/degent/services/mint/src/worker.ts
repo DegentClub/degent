@@ -11,6 +11,7 @@
  *   revealed --(N confirmations)--> confirmed --(ord bytes sha256 == order)--> verified --> delivered
  *   pre-paid past expiry --> expired ; paid/confirming (from paidAt) and queued/revealing (from
  *   approval) past rescueAfter --> rescue_available
+ *   revealing with a parent whose value differs from the signed parent return --> rescue_available (ADR-0005)
  *   rescue_available | declined --(commit spent on chain)--> revealed (rescued unless it was our parent reveal)
  *
  * Lane rules:
@@ -344,6 +345,18 @@ export class MintWorker {
     } catch (e) {
       await this.d.parents.release(o.id);
       throw e;
+    }
+    // The user's 0x81 signature fixes the parent return VALUE (not the outpoint, which ANYONECANPAY leaves
+    // open): the parent may have moved any number of times, but if its value changed (operator re-initialised
+    // it) this reveal can never be attached. Offer self-rescue instead of retrying forever (ADR-0005).
+    const signedParentValue = r.quote!.parentValueSats;
+    if (signedParentValue === null || BigInt(signedParentValue) !== lease.value) {
+      await this.d.parents.release(r.id);
+      await this.move(r, 'rescue_available', {
+        detail: `parent UTXO value ${lease.value} differs from the ${signedParentValue ?? 'unknown'} sats the reveal signed; self-rescue available`,
+        patch: { parentOutpoint: null },
+      });
+      return false;
     }
     let finalized: ReturnType<typeof finalizeReveal>;
     try {

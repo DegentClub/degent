@@ -2,9 +2,10 @@
  * Internal order record: the public `Order` plus fields that never leave the service
  * (token hash, raw reveal hex, lease bookkeeping, optimistic-concurrency version).
  *
- * The half-signed reveal PSBT is deliberately NOT part of this record: a 0x83 half-signed reveal
- * can be restructured by whoever holds it before broadcast, so it lives encrypted in the separate
- * RevealVault (ports/reveal-vault.ts) and is never logged, emitted or returned.
+ * The half-signed reveal PSBT is deliberately NOT part of this record: it is user-signed material that
+ * only the worker needs, so it lives encrypted in the separate RevealVault (ports/reveal-vault.ts) and is
+ * never logged, emitted or returned. (Since ADR-0005 it is SIGHASH_ALL|ANYONECANPAY, so a holder can no
+ * longer restructure its outputs; it is still kept private.)
  */
 import type { ApprovalInfo, Lane, Order, OrderStatus, QueueInfo } from '@bsh/degent-mint-sdk';
 
