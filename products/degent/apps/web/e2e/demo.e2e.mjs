@@ -214,6 +214,8 @@ async function viewShot(page, width, file) {
 const SITE_PAGES = [
   ['home', '/', /The Decentralized/],
   ['collection', '/collection', /The Collection/],
+  ['exhibit', '/exhibit', /The Full Block/],
+  ['exhibit-item', '/exhibit/2770', /Degent #2770/],
   ['atelier', '/atelier', /Dress your gentleman/],
   ['comic', '/comic', /This is Gentlemen- The Comic/],
   ['manifesto', '/manifesto', /Manifesto/],
@@ -280,6 +282,37 @@ async function runSite(browser, url, width) {
   check(new URL(page.url()).pathname === '/collection/6', 'next updates the deep link');
   await page.keyboard.press('Escape');
   check(new URL(page.url()).pathname === '/collection', 'Escape closes the lightbox');
+
+  // Full Block Exhibit: the one-block visualization must be drawn to scale (fill width === weight/4,000,000)
+  await page.goto(`${url}/exhibit/2770?demo=1`);
+  await h1(/Degent #2770/);
+  await page.getByTestId('one-block-viz').first().waitFor();
+  const scale = await page.evaluate(() => {
+    const viz = document.querySelector('[data-testid="one-block-viz"]');
+    const fill = viz.querySelector('[data-testid="oneblock-fill"]');
+    const weight = Number(viz.getAttribute('data-weight'));
+    const block = Number(viz.getAttribute('data-block-weight'));
+    const fraction = Number(viz.getAttribute('data-fraction'));
+    const widthPct = parseFloat(getComputedStyle(fill).width) / parseFloat(getComputedStyle(viz.querySelector('.oneblock__track')).width) * 100;
+    return { weight, block, fraction, widthPct };
+  });
+  check(scale.block === 4_000_000, `exhibit block weight should be 4,000,000, got ${scale.block}`);
+  check(Math.abs(scale.fraction - scale.weight / scale.block) < 1e-9, `exhibit fraction ${scale.fraction} !== weight/block`);
+  check(Math.abs(scale.widthPct - scale.fraction * 100) < 0.6, `exhibit viz fill width ${scale.widthPct}% not to scale (fraction ${scale.fraction})`);
+  await shot('exhibit-item');
+
+  // Kiosk mode: full-screen plate
+  await page.goto(`${url}/exhibit?kiosk=1&demo=1`);
+  await page.getByTestId('kiosk').waitFor();
+  await page.getByTestId('kiosk-plate').waitFor();
+  await shot('exhibit-kiosk', true);
+
+  // Static machine-native twins (no client JS): fetched straight from the preview server.
+  const idx = await (await fetch(`${url}/exhibit/index.json`)).json();
+  check(idx.count >= 1 && idx.source === 'bundled' && idx.certified === false, `exhibit index.json shape unexpected: ${JSON.stringify(idx).slice(0, 120)}`);
+  check(idx.blockWeightLimitWU === 4_000_000, 'exhibit index blockWeightLimitWU should be 4,000,000');
+  const one = await (await fetch(`${url}/exhibit/${idx.items[0].number}.json`)).json();
+  check(one.tier === 'fullblock' && one.estimated === true, 'per-item exhibit twin shape unexpected');
 
   // Atelier: generate → finalize → Mint this → Validate with the same SHA-256
   await page.goto(`${url}/atelier?demo=1`);
