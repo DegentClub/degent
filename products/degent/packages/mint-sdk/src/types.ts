@@ -61,7 +61,17 @@ export interface CollectionConfig {
 }
 
 /** GET /v1/config: the collection rules plus the addresses the front end needs to show. */
+/**
+ * `full`: the mint takes orders. `readonly`: the site and the Register are live but minting is not open yet:
+ * every order, vote, subscription and sign-in write answers 503 `mint_not_open` (contracts/openapi/degent-mint.yaml).
+ */
+export type MintMode = 'full' | 'readonly';
+export const MINT_MODES: readonly MintMode[] = ['full', 'readonly'];
+
 export interface ServiceConfig extends CollectionConfig {
+  /** Absent on services older than the read-only mode: treat as `full`. */
+  mode?: MintMode;
+  /** Empty in `readonly` mode when no collection address is configured. */
   collectionAddress: string;
   serviceFeeAddress: string | null;
   maxUploadBytes: number;
@@ -241,6 +251,8 @@ export interface RescueResponse {
 export interface HealthResponse {
   status: 'ok' | 'degraded';
   network: Network;
+  /** Absent on services older than the read-only mode: treat as `full`. */
+  mode?: MintMode;
   version: string;
   time: string;
   checks: Record<string, { ok: boolean; detail?: string }>;

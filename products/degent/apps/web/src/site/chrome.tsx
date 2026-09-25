@@ -9,6 +9,7 @@ import { shortHash } from '../lib/format';
 import type { Route } from '../router';
 import { Button } from '../components/ui';
 import { MintMeters, SiteLink } from './components';
+import { MintCta, useMintMode } from './mintMode';
 
 export const NAV: ReadonlyArray<{ to: string; label: string; route: Route }> = [
   { to: '/', label: 'Home', route: 'home' },
@@ -157,9 +158,7 @@ function NavDrawer({ open, onClose, route }: { open: boolean; onClose: () => voi
           </ul>
         </nav>
         <div onClick={onClose}>
-          <SiteLink to="/mint" className="btn btn--primary drawer__cta">
-            Mint Now!
-          </SiteLink>
+          <MintCta className="btn btn--primary drawer__cta">Mint Now!</MintCta>
         </div>
       </div>
     </div>
@@ -168,6 +167,7 @@ function NavDrawer({ open, onClose, route }: { open: boolean; onClose: () => voi
 
 export function SiteHeader({ route }: { route: Route }) {
   const { state, dispatch, app } = useMint();
+  const mintReadonly = useMintMode().readonly;
   const [open, setOpen] = useState(false);
   const toggle = useRef<HTMLButtonElement>(null);
   const progress = useScrollProgress();
@@ -204,9 +204,13 @@ export function SiteHeader({ route }: { route: Route }) {
                 </Button>
               </span>
             ) : null}
-            <SiteLink to="/mint" className="btn btn--primary btn--sm" aria-current={route === 'mint' ? 'page' : undefined}>
-              <Icon.rocket /> Mint
-            </SiteLink>
+            {mintReadonly ? (
+              <MintCta className="btn btn--primary btn--sm">Mint</MintCta>
+            ) : (
+              <SiteLink to="/mint" className="btn btn--primary btn--sm" aria-current={route === 'mint' ? 'page' : undefined}>
+                <Icon.rocket /> Mint
+              </SiteLink>
+            )}
             <a href={app.buyUrl} className="btn btn--dark btn--sm" target="_blank" rel="noopener noreferrer">
               <Icon.cart /> Buy<span className="sr-only"> on the marketplace (opens in a new tab)</span>
             </a>

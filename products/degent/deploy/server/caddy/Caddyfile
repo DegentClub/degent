@@ -1,0 +1,54 @@
+# degent.club TLS edge (compose.server.yaml `caddy`, official image). docs/SERVER.md.
+#
+# Certificates: automatic HTTPS (Let's Encrypt, HTTP-01 / TLS-ALPN-01 on ports 80/443) for every site address below.
+# A name only gets a certificate when its site block is present, so www is opt-in: a name without a DNS record makes
+# ACME fail and retry. Environment (from /opt/degent/compose/.env):
+#   MINT_DOMAIN     the app on mainnet (read-only until minting opens)   default mint.degent.club
+#   SIGNET_DOMAIN   the signet beta                                      default signet.degent.club
+#   SITE_DOMAIN     the apex: 301 -> https://MINT_DOMAIN{path+query}     default degent.club (APEX_REDIRECT=true|false)
+#   WWW_REDIRECT    true|false: www.SITE_DOMAIN 301 -> MINT_DOMAIN too   default false (needs its DNS record first)
+#   ACME_CA         ACME directory (Let's Encrypt production by default; staging for dry runs)
+# The security headers repeat the site body's (products/degent/deploy/web-site.caddy) so redirects carry them too.
+{
+	admin off
+	acme_ca {$ACME_CA:https://acme-v02.api.letsencrypt.org/directory}
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+(security) {
+	header {
+		-Server
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Cross-Origin-Opener-Policy "same-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+	}
+}
+
+(logging) {
+	log {
+		output stdout
+		format json
+	}
+}
+
+# Mainnet app: the web container serves the SPA and proxies /api to mint-mainnet-api.
+{$MINT_DOMAIN:mint.degent.club} {
+	import security
+	import logging
+	reverse_proxy web-mainnet:8080
+}
+
+# Public signet beta.
+{$SIGNET_DOMAIN:signet.degent.club} {
+	import security
+	import logging
+	reverse_proxy web-signet:8080
+}
+
+import apex-redirect-{$APEX_REDIRECT:true}.caddy
+import www-{$WWW_REDIRECT:false}.caddy

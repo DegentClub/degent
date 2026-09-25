@@ -1,0 +1,5 @@
+# WWW_REDIRECT=true: www.degent.club gets its own certificate and 301s to the app, keeping path and query.
+www.{$SITE_DOMAIN:degent.club} {
+	import security
+	redir https://{$MINT_DOMAIN:mint.degent.club}{uri} 301
+}

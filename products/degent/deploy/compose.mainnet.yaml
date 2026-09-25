@@ -20,6 +20,7 @@ x-mint-env: &mint-env
   CONTENT_DIR: /var/lib/degent-mint/content
   ROSTER_FILE: /etc/degent-mint/roster.json
   TRUST_PROXY: "true"
+  MINT_MODE: ${MINT_MODE:-}
   SIGNER: kms
   REVEAL_ENCRYPTION_KEY_FILE: /run/secrets/reveal-encryption-key
   SESSION_KEY_FILE: /run/secrets/session-key
@@ -32,6 +33,7 @@ x-mint-env: &mint-env
   LIBRE_RPC_URL: ${LIBRE_RPC_URL:-}
   LIBRE_RPC_USER: ${LIBRE_RPC_USER:-}
   SLIPSTREAM_URL: ${SLIPSTREAM_URL:-}
+  BLOCK_TIER: ${BLOCK_TIER:-}
   PARENT_INSCRIPTION_ID: ${PARENT_INSCRIPTION_ID:?set PARENT_INSCRIPTION_ID in .env.mainnet}
   PARENT_OUTPOINT: ${PARENT_OUTPOINT:-}
   COLLECTION_ADDRESS: ${COLLECTION_ADDRESS:?set COLLECTION_ADDRESS in .env.mainnet}

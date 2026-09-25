@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: degent.club mint API
-  version: 0.4.0
+  version: 0.5.0
   summary: Non-custodial, parent-linked inscription minting for the Decentralized Gentlemen Club.
   description: |
     Implemented by `@bsh/degent-mint` (products/degent/services/mint); typed client and domain types in
@@ -20,6 +20,12 @@ info:
 
     The Register (`/v1/register*`, `/v1/explorer`, `/v1/stats`) is the public, read-only membership roster:
     the 4,112 Gallery members plus every approved, delivered child of the parent.
+
+    Modes: `GET /v1/config` and `GET /v1/health` report `mode`. `full`: the mint takes orders. `readonly`
+    (`MINT_MODE=readonly`, e.g. mainnet before minting opens): health, config, fees, queue (empty), the Register,
+    explorer and stats are served; every order, vote, subscription and sign-in write, and the members' review
+    queue, answer 503 with code `mint_not_open` (response `MintNotOpen`, `retry-after` in seconds). No worker
+    runs and no policy signer or parent is used in read-only mode.
 
     Conventions: amounts are integer sats as JSON numbers; timestamps are ISO 8601 UTC; hashes/keys are
     lowercase hex. Every error is `{ "error": { "code", "message", "details"? } }`. Browser calls are
@@ -112,7 +118,7 @@ paths:
         '415': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/RateLimited' }
-        '503': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/MintNotOpen' }
   /v1/orders/{id}:
     parameters:
       - $ref: '#/components/parameters/OrderId'
@@ -167,7 +173,7 @@ paths:
         '415': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/RateLimited' }
-        '503': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/MintNotOpen' }
   /v1/orders/{id}/reveal:
     parameters:
       - $ref: '#/components/parameters/OrderId'
@@ -203,6 +209,7 @@ paths:
         '415': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/MintNotOpen' }
   /v1/orders/{id}/rescue:
     parameters:
       - $ref: '#/components/parameters/OrderId'
@@ -271,7 +278,7 @@ paths:
         '415': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/RateLimited' }
-        '503': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/MintNotOpen' }
 
   /v1/orders/{id}/votes:
     parameters:
@@ -323,6 +330,7 @@ paths:
         '415': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/MintNotOpen' }
   /v1/auth/challenge:
     post:
       tags: [auth]
@@ -344,6 +352,7 @@ paths:
         '415': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/MintNotOpen' }
   /v1/auth/verify:
     post:
       tags: [auth]
@@ -371,6 +380,7 @@ paths:
         '415': { $ref: '#/components/responses/Error' }
         '422': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/MintNotOpen' }
   /v1/review:
     get:
       tags: [review]
@@ -386,6 +396,7 @@ paths:
               schema: { $ref: '#/components/schemas/ReviewQueueResponse' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/MintNotOpen' }
   /v1/register:
     get:
       tags: [register]
@@ -507,6 +518,16 @@ components:
       description: Seconds until the rate-limit window resets.
       schema: { type: integer }
   responses:
+    MintNotOpen:
+      description: |
+        Service unavailable. `mint_not_open` while the service runs with `MINT_MODE=readonly` (minting has not opened
+        on this network; `retry-after` is a hint in seconds). In `full` mode this status carries the operation's own
+        codes (e.g. `queue_full`, `review_unavailable`, `channel_unavailable`, `upstream_unavailable`).
+      headers:
+        retry-after: { $ref: '#/components/headers/RetryAfter' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     Error:
       description: Structured error
       content:
@@ -575,13 +596,18 @@ components:
         minFeeRate: { type: number, description: sat/vB }
         quoteTtlSeconds: { type: integer }
         rescueAfterSeconds: { type: integer }
+    MintMode:
+      type: string
+      enum: [full, readonly]
+      description: '`full`: orders open. `readonly`: site and Register only; write routes answer 503 `mint_not_open`.'
     ServiceConfig:
       allOf:
         - $ref: '#/components/schemas/CollectionConfig'
         - type: object
-          required: [collectionAddress, serviceFeeAddress, maxUploadBytes]
+          required: [mode, collectionAddress, serviceFeeAddress, maxUploadBytes]
           properties:
-            collectionAddress: { type: string, description: Taproot address holding the parent (parent return output). }
+            mode: { $ref: '#/components/schemas/MintMode' }
+            collectionAddress: { type: string, description: 'Taproot address holding the parent (parent return output). Empty in `readonly` mode when none is configured.' }
             serviceFeeAddress: { type: [string, 'null'] }
             maxUploadBytes: { type: integer, examples: [4194304] }
     CreateOrderRequest:
@@ -804,10 +830,11 @@ components:
     HealthResponse:
       type: object
       additionalProperties: false
-      required: [status, network, version, time, checks]
+      required: [status, network, mode, version, time, checks]
       properties:
         status: { type: string, enum: [ok, degraded] }
         network: { $ref: '#/components/schemas/Network' }
+        mode: { $ref: '#/components/schemas/MintMode' }
         version: { type: string }
         time: { $ref: '#/components/schemas/Timestamp' }
         checks:
@@ -1048,7 +1075,7 @@ components:
         [bad_request, unauthorized, forbidden, validation_failed, not_found, conflict, quote_expired, payload_too_large,
          unsupported_media_type, rate_limited, forbidden_origin, content_mismatch, reveal_invalid,
          rescue_unavailable, review_unavailable, queue_full, upstream_unavailable, channel_unavailable, internal,
-         not_a_holder, already_voted, self_vote, vote_invalid, auth_failed, review_closed]
+         not_a_holder, already_voted, self_vote, vote_invalid, auth_failed, review_closed, mint_not_open]
     Error:
       type: object
       additionalProperties: false

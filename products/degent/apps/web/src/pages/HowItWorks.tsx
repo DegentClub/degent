@@ -11,6 +11,7 @@ import { estimateReveal } from '../lib/revealEstimate';
 import { formatFeeRate, formatSize } from '../lib/format';
 import { ExternalLink, Money } from '../components/ui';
 import { CtaLink, useDocumentMeta } from '../site/components';
+import { MintCta } from '../site/mintMode';
 
 function Example({ bytes, feeRate, label }: { bytes: number; feeRate: number; label: string }) {
   const { state, app } = useMint();
@@ -184,7 +185,7 @@ export function HowItWorks() {
       </section>
 
       <div className="row">
-        <CtaLink to="/mint">Mint Now</CtaLink>
+        <MintCta>Mint Now</MintCta>
         <CtaLink to="/collection" variant="dark">
           See the collection
         </CtaLink>

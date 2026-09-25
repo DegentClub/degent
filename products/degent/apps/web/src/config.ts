@@ -1,4 +1,4 @@
-import type { Network } from '@bsh/degent-mint-sdk';
+import type { MintMode, Network } from '@bsh/degent-mint-sdk';
 
 /** Runtime configuration, from Vite env vars with safe defaults. See README "Configuration". */
 export interface AppConfig {
@@ -23,6 +23,13 @@ export interface AppConfig {
   comicPages: string[];
   /** Socials (VITE_X_URL, VITE_TELEGRAM_URL, VITE_INSTAGRAM_URL); empty hides the link. */
   socials: { x: string; telegram: string; instagram: string };
+  /**
+   * Build-time hint for the mint mode (VITE_MINT_MODE, default `full`), used until `/v1/config` answers; the
+   * runtime `mode` from the API always wins, so one build serves a read-only and a full mint.
+   */
+  mintMode: MintMode;
+  /** Where "Minting opens soon" sends people while the mint is read-only: the signet beta (VITE_BETA_URL); empty = /mint explainer. */
+  betaUrl: string;
 }
 
 const NETWORKS: readonly Network[] = ['mainnet', 'testnet', 'signet', 'regtest'];
@@ -60,9 +67,24 @@ export interface EnvLike {
   VITE_X_URL?: string;
   VITE_TELEGRAM_URL?: string;
   VITE_INSTAGRAM_URL?: string;
+  VITE_MINT_MODE?: string;
+  VITE_BETA_URL?: string;
 }
 
 const INSCRIPTION_ID = /^[0-9a-f]{64}i\d+$/;
+
+/** Only absolute https URLs (or http on localhost) become outbound links. */
+export function safeHttpUrl(raw: string | undefined): string {
+  const v = (raw ?? '').trim();
+  if (!v) return '';
+  try {
+    const u = new URL(v);
+    if (u.protocol === 'https:' || (u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1'))) return trimSlash(v);
+  } catch {
+    /* not a URL */
+  }
+  return '';
+}
 
 /** Only well-formed inscription ids reach an ord URL. */
 function inscriptionIds(raw: string | undefined): string[] {
@@ -97,5 +119,7 @@ export function readConfig(env: EnvLike, search: string): AppConfig {
       telegram: env.VITE_TELEGRAM_URL ?? 'https://t.me/+cneroYQ-0VpmM2Ix',
       instagram: env.VITE_INSTAGRAM_URL ?? '',
     },
+    mintMode: env.VITE_MINT_MODE === 'readonly' ? 'readonly' : 'full',
+    betaUrl: safeHttpUrl(env.VITE_BETA_URL),
   };
 }

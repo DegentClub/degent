@@ -5,7 +5,7 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
-import type { ApiErrorBody, FeesResponse, HealthResponse, ServiceConfig } from '@bsh/degent-mint-sdk';
+import type { ApiErrorBody, FeesResponse, HealthResponse, MintMode, ServiceConfig } from '@bsh/degent-mint-sdk';
 import type { ApprovalService } from './application/approval-service.js';
 import type { OrderService } from './application/order-service.js';
 import type { RegisterService } from './application/register-service.js';
@@ -35,6 +35,8 @@ export interface AppOptions {
   /** Client IP for rate limiting. Default: clientIpOf(trustProxy) (X-Client-IP / right-most XFF hop, else socket). */
   clientIp?: (c: Context) => string;
   trustProxy?: boolean;
+  /** `readonly`: write routes answer 503 mint_not_open (default `full`). */
+  mode?: MintMode;
   log?: Logger;
 }
 
@@ -43,6 +45,23 @@ export const JSON_BODY_LIMIT = 16 * 1024;
 export const REVEAL_BODY_LIMIT = 8 * 1024 * 1024;
 
 const ORDER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Routes closed while MINT_MODE=readonly: every order, vote, subscription and sign-in write, plus the members'
+ * review queue (it needs a holder session, which read-only mode never issues). Everything else is a public read.
+ */
+export const READONLY_CLOSED_ROUTES: ReadonlyArray<{ method: string; path: RegExp }> = [
+  { method: 'POST', path: /^\/v1\/orders$/ },
+  { method: 'PUT', path: /^\/v1\/orders\/[^/]+\/content$/ },
+  { method: 'POST', path: /^\/v1\/orders\/[^/]+\/reveal$/ },
+  { method: 'POST', path: /^\/v1\/orders\/[^/]+\/subscriptions$/ },
+  { method: 'POST', path: /^\/v1\/orders\/[^/]+\/votes$/ },
+  { method: 'POST', path: /^\/v1\/auth\/challenge$/ },
+  { method: 'POST', path: /^\/v1\/auth\/verify$/ },
+  { method: 'GET', path: /^\/v1\/review$/ },
+];
+
+export const MINT_NOT_OPEN_MESSAGE = 'minting is not open yet on this network; the site and the Register are read-only';
 
 function errorBody(code: string, message: string, details?: unknown): ApiErrorBody {
   return { error: details === undefined ? { code, message } : { code, message, details } };
@@ -96,6 +115,7 @@ export function createApp(o: AppOptions): Hono {
   const log = o.log ?? silentLogger;
   const s = o.orders.settings;
   const allowed = new Set(o.corsOrigins);
+  const mode: MintMode = o.mode ?? 'full';
 
   app.use('*', async (c, next) => {
     await next();
@@ -121,6 +141,18 @@ export function createApp(o: AppOptions): Hono {
       return c.json(errorBody('forbidden_origin', 'origin not allowed'), 403);
     return next();
   });
+
+  // Read-only mode: closed before the rate limiter and before any body is read.
+  if (mode === 'readonly')
+    app.use('*', async (c, next) => {
+      const method = c.req.method;
+      const path = c.req.path;
+      if (READONLY_CLOSED_ROUTES.some((r) => r.method === method && r.path.test(path))) {
+        c.header('retry-after', '86400');
+        return c.json(errorBody('mint_not_open', MINT_NOT_OPEN_MESSAGE), 503);
+      }
+      return next();
+    });
 
   app.use('*', rateLimiter(o.rateLimit ?? { windowMs: 60_000, max: 60 }, o.clock, o.clientIp ?? clientIpOf(o.trustProxy ?? false)));
 
@@ -174,6 +206,7 @@ export function createApp(o: AppOptions): Hono {
     const body: HealthResponse = {
       status: ok ? 'ok' : 'degraded',
       network: s.network,
+      mode,
       version: s.version,
       time: o.clock.now().toISOString(),
       checks,
@@ -185,6 +218,7 @@ export function createApp(o: AppOptions): Hono {
     const body: ServiceConfig = {
       ...s.collection,
       network: s.network,
+      mode,
       collectionAddress: s.collectionAddress,
       serviceFeeAddress: s.serviceFeeAddress,
       maxUploadBytes: s.maxUploadBytes,

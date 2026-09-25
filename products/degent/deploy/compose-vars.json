@@ -130,5 +130,26 @@
       "HOLDER_REGISTRY": "roster-chain",
       "ORD_PUBLIC_URL": "https://ordinals.com"
     }
+  },
+  "server": {
+    "$comment": "Variables compose.server.yaml interpolates (single-host release, docs/SERVER.md). bootstrap.sh writes /opt/degent/compose/.env; deploy.sh exports the *_TAG and *_MINT_MODE values per deploy. test/deploy.test.ts checks this list against the file.",
+    "DEGENT_HOME": "Server root (default /opt/degent): secrets/, data/ live under it. Written by bootstrap.sh.",
+    "DEPLOY_UID": "uid of the deploy user: the mint containers run as it (it owns the secret files and the data directories). Written by bootstrap.sh.",
+    "DEPLOY_GID": "gid of the deploy user. Written by bootstrap.sh.",
+    "MAINNET_TAG": "Image tag (git sha) of web-mainnet + mint-mainnet-*. Set by deploy.sh.",
+    "SIGNET_TAG": "Image tag (git sha) of web-signet + mint-signet-*. Set by deploy.sh.",
+    "MAINNET_MINT_MODE": "readonly (default) or full, from .env; full only after the parentless mint (ADR-0010) has merged. deploy.sh scales the worker to 0 in readonly.",
+    "SIGNET_MINT_MODE": "readonly (default) or full, from .env, as MAINNET_MINT_MODE.",
+    "SITE_DOMAIN": "Apex, 301 to https://MINT_DOMAIN (default degent.club).",
+    "MINT_DOMAIN": "The app on mainnet (default mint.degent.club).",
+    "SIGNET_DOMAIN": "Signet beta host (default signet.degent.club).",
+    "APEX_REDIRECT": "true (default): serve SITE_DOMAIN as a 301 to MINT_DOMAIN.",
+    "WWW_REDIRECT": "true: also serve www.SITE_DOMAIN as a 301 (needs its DNS record first). Default false.",
+    "ACME_CA": "ACME directory for the edge certificates (default Let's Encrypt production; the staging URL for dry runs).",
+    "CADDY_IMAGE": "Official Caddy image for the edge (default caddy:2.8.4-alpine).",
+    "MAINNET_ESPLORA_URL": "Mainnet esplora (default https://mempool.space/api).",
+    "MAINNET_ORD_URL": "Mainnet ord (default https://ordinals.com).",
+    "SIGNET_ESPLORA_URL": "Signet esplora (default https://mempool.space/signet/api).",
+    "SIGNET_ORD_URL": "Signet ord (default https://signet.ordinals.com)."
   }
 }

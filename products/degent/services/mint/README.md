@@ -229,6 +229,8 @@ See [`env.schema.json`](./env.schema.json) for every variable. Essentials:
 | `SERVICE_FEE_ADDRESS`, `SERVICE_FEE_SATS_*` | optional service fee, paid in the funding tx |
 | `SITE_URL`, `NOTIFY_EMAIL`, `TELEGRAM_BOT_TOKEN` | order notifications (links, email channel `console`/`off`, Telegram bot) |
 | `MINT_ROLE` | `all` (default), `api` or `worker`; also the first argument of `node dist/main.mjs`. Split roles share one sqlite file and content dir on one host; run exactly one worker |
+| `MINT_MODE` | `full` (default) or `readonly`: site and Register reads only; every order, vote, subscription and sign-in write (and `GET /v1/review`) answers 503 `mint_not_open`, no worker runs, and no signer, parent, reveal key, session key or database is required (mainnet before minting opens; `docs/SERVER.md`). `MINT_ROLE=worker` is refused |
+| `BLOCK_TIER` | `auto` (default) or `off`: never offer the block tier (public signet, where the only broadcaster is a public esplora that relays standard transactions only) |
 | `<SECRET>_FILE` | every secret above (`REVEAL_ENCRYPTION_KEY`, `SESSION_KEY`, `LIBRE_RPC_PASS`, `SLIPSTREAM_API_KEY`, `ART_REVIEW_API_KEY`, `TELEGRAM_BOT_TOKEN`) can be given as a file path instead (Docker secrets, systemd credentials); not both |
 
 Config errors are listed all at once and the process exits non-zero. The worker logs one `mint gauges` line

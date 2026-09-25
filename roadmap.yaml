@@ -68,6 +68,15 @@ phases:
       - { id: p1.19, repo: degent, title: "Web renders the advisory rules before payment (Validate) and in the member review queue (UI contract in services/mint/README.md)", status: todo, depends_on: [p1.18, p1.12] }
       - { id: p1.20, repo: degent, title: "Observability as files: Grafana dashboard + Loki alert rules (products/degent/ops) from degent-mint's JSON logs (order transition with time-in-status and pay->delivered, art review verdict, mint gauges); fields and runbook anchors checked against the code", status: done, doc: products/degent/ops/README.md, verify: "pnpm --filter @bsh/degent-mint test -- observability" }
       - { id: p1.21, repo: degent, title: "Ship degent-mint stdout to Loki as job=degent-mint, import the dashboard and load the alert rules in the deployment", status: todo, depends_on: [p1.20] }
+      - { id: p1.34, repo: degent, title: "MINT_MODE=readonly: site + Register reads only, writes 503 mint_not_open, no worker/signer/parent; web \"Minting opens soon\", /mint and /review explainers, Club lookup by address, signet banner", status: done, doc: docs/SERVER.md, verify: "pnpm --filter @bsh/degent-mint test -- readonly" }
+      - { id: p1.35, repo: degent, title: "Single-host server release: compose.server.yaml, Caddy edge (mint.degent.club app, apex 301, signet beta), bootstrap.sh, deploy.sh, deploy workflow (GHCR, sshpass, smoke tests)", status: done, doc: docs/SERVER.md, verify: "pnpm test:root" }
+      - { id: p1.36, repo: degent, title: "Signet beta at signet.degent.club (read-only until the parentless mint, ADR-0010, lands; then SIGNET_MINT_MODE=full)", status: in_progress, doc: docs/SERVER.md, depends_on: [p1.35] }
+      - { id: p1.37, repo: null, title: "Owner: DNS A records degent.club, mint.degent.club, signet.degent.club -> 170.75.173.105 (AAAA optional)", status: done, owner_action: true, doc: docs/SERVER.md }
+      - { id: p1.38, repo: null, title: "Owner: repository secret SERVER_PASSWORD; optional DEPLOY_KNOWN_HOSTS from the first run's summary", status: in_progress, owner_action: true, doc: docs/SERVER.md }
+      - { id: p1.39, repo: null, title: "Owner: change the shared ubuntu password (then update SERVER_PASSWORD) and add an SSH key", status: todo, owner_action: true, doc: docs/SERVER.md }
+      - { id: p1.40, repo: degent, title: "Server follow-ups: SQLite backups for data/*-mint (backup.sh timer), pin the host key by default, key-only deploy user path (WITH_DEPLOY_KEY)", status: todo, doc: docs/SERVER.md, depends_on: [p1.35] }
+      - { id: p1.41, repo: degent, title: "Mainnet launch limits: MAX_PAID_ORDERS_PER_DAY=25 and the web \"Beta: minting uses real bitcoin; unaudited\" acknowledgement (env plumbing + behaviour with the parentless redesign)", status: todo, doc: docs/SERVER.md }
+      - { id: p1.42, repo: degent, title: "Own nodes before mainnet minting at volume (pruned bitcoind + esplora + ord) instead of public mempool.space / ordinals.com", status: todo, doc: docs/SERVER.md }
   - id: p2
     name: Register and collection API
     exit: "Anyone can verify membership and the blockspace claim from a node and the published query."

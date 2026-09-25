@@ -1,0 +1,1 @@
+# APEX_REDIRECT=false: the apex is not served here (and gets no certificate).

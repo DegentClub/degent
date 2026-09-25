@@ -51,6 +51,9 @@ WORKDIR /app
 COPY --from=build --chown=root:root /out/dist ./dist
 COPY --from=build --chown=root:root /out/data ./data
 COPY --from=build --chown=root:root /out/package.json /out/env.schema.json ./
+# Release bundle for the single-host server (docs/SERVER.md): deploy.sh unpacks /app/deploy of the tag it deploys.
+COPY --chown=root:root products/degent/deploy/compose.server.yaml /app/deploy/compose.server.yaml
+COPY --chown=root:root products/degent/deploy/server/caddy /app/deploy/caddy
 RUN mkdir -p /var/lib/degent-mint/content && chown -R node:node /var/lib/degent-mint
 VOLUME ["/var/lib/degent-mint"]
 USER node

@@ -60,7 +60,7 @@ jobs:
           base="origin/${{ github.base_ref }}"
           status=0
           for f in $(git diff --name-only --diff-filter=M "$base"...HEAD -- 'contracts/openapi/*.yaml' 'contracts/openapi/*.yml' 'contracts/openapi/*.json'); do
-            mkdir -p /tmp/base/$(dirname "$f")
+            mkdir -p "/tmp/base/$(dirname "$f")"
             git show "$base:$f" > "/tmp/base/$f"
             echo "::group::oasdiff $f"
             docker run --rm -v /tmp/base:/base -v "$PWD":/head tufin/oasdiff breaking "/base/$f" "/head/$f" --fail-on ERR || status=1

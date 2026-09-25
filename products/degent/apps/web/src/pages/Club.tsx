@@ -10,6 +10,7 @@ import { Alert, Badge, Button, ExternalLink, Mono, Panel, errorText } from '../c
 import { NotAHolderError, signInAsHolder, type HolderSession } from '../lib/holderSession';
 import { CtaLink, GoldFrame, SiteLink, useDocumentMeta } from '../site/components';
 import type { WalletId } from '../services/types';
+import { MintCta, useMintMode } from '../site/mintMode';
 
 const SHOW = 24;
 
@@ -21,14 +22,21 @@ export function Club() {
   const [error, setError] = useState<string | null>(null);
   const [numbers, setNumbers] = useState<number[] | null>(null);
   const [members, setMembers] = useState<RegisterMember[]>([]);
+  // Read-only mint (no sign-in): look holdings up by address instead (public Register read).
+  const { readonly } = useMintMode();
+  const [lookup, setLookup] = useState('');
+  const [looked, setLooked] = useState<string | null>(null);
+  const holderAddress = session?.address ?? looked;
   useDocumentMeta({ title: 'The Club · degent.club', description: 'The holders’ area of the Decentralized Gentlemen Club.' });
 
   useEffect(() => {
-    if (!session) return;
+    if (!holderAddress) return;
     let alive = true;
+    setNumbers(null);
+    setMembers([]);
     (async () => {
       try {
-        const h = await services.mintApi.getHolder(session.address);
+        const h = await services.mintApi.getHolder(holderAddress);
         if (!alive) return;
         setNumbers(h.degents);
         const list = await Promise.all(h.degents.slice(0, SHOW).map((n) => services.mintApi.getRegisterMember(n).catch(() => null)));
@@ -40,7 +48,7 @@ export function Club() {
     return () => {
       alive = false;
     };
-  }, [session, services]);
+  }, [holderAddress, services]);
 
   const signIn = async (id: WalletId) => {
     setBusy(id);
@@ -64,7 +72,63 @@ export function Club() {
         <p className="lede">Sign in with the wallet that holds your Degent: one signed message, no transaction, no fees.</p>
       </div>
 
-      {!session ? (
+      {readonly ? (
+        <>
+          <Panel title="Look up a wallet" kicker="Read-only">
+            <p>Sign-in opens with minting. Meanwhile, paste an ordinals (taproot) address to see the Degents the Register shows there.</p>
+            <form
+              className="row"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const a = lookup.trim();
+                setError(null);
+                if (!/^(bc1p|tb1p|bcrt1p)[02-9ac-hj-np-z]{20,90}$/.test(a)) {
+                  setError('That does not look like a taproot (ordinals) address.');
+                  return;
+                }
+                setLooked(a);
+              }}
+            >
+              <label className="sr-only" htmlFor="club-lookup">
+                Ordinals address
+              </label>
+              <input id="club-lookup" className="input mono" value={lookup} onChange={(e) => setLookup(e.target.value)} placeholder="bc1p…" autoComplete="off" spellCheck={false} />
+              <Button type="submit">Look up</Button>
+            </form>
+            <div aria-live="polite">{error ? <Alert tone="bad" title="Could not look that up">{error}</Alert> : null}</div>
+          </Panel>
+          {looked ? (
+            <section aria-labelledby="yours-title">
+              <h2 id="yours-title">Degents at this address {numbers ? <Badge tone="good">{numbers.length}</Badge> : null}</h2>
+              <p className="small">
+                <Mono wrap>{looked}</Mono>
+              </p>
+              {numbers === null ? (
+                <p className="muted" role="status">
+                  Reading the Register…
+                </p>
+              ) : numbers.length === 0 ? (
+                <p>The Register shows no Degent at this address right now.</p>
+              ) : (
+                <ul className="frame-grid frame-grid--compact" aria-label="Degents at this address">
+                  {members.map((m) => (
+                    <li key={m.n}>
+                      <SiteLink to={`/collection/${m.n}`} className="frame-card" aria-label={`Degent #${m.n}`}>
+                        <GoldFrame src={m.contentUrl} alt={`Degent #${m.n}`} size="sm" />
+                        <span className="frame-card__caption mono">DEGENT #{m.n}</span>
+                      </SiteLink>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          ) : null}
+          <Panel title="Join the club" kicker="Members decide">
+            <p>New Degents join by the members’ vote once minting opens.</p>
+            <MintCta>Mint a Degent</MintCta>
+          </Panel>
+        </>
+      ) : !session ? (
         <Panel title="Sign in with Bitcoin">
           <ul className="wallets" aria-label="Wallets">
             {services.wallets.list().map((w) => (

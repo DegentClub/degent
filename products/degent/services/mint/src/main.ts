@@ -23,16 +23,17 @@ async function main(): Promise<void> {
   const argRole = process.argv[2];
   const cfg = loadConfig(argRole ? { ...process.env, MINT_ROLE: argRole } : process.env);
   const rt = buildRuntime(cfg, log);
-  const runWorker = cfg.role !== 'api';
+  // Read-only mode never starts the worker (config refuses MINT_ROLE=worker there).
+  const runWorker = cfg.role !== 'api' && cfg.mode === 'full' && rt.worker !== null;
   if (runWorker) await initialiseParent(rt, cfg, log).catch((e) => log.error('parent initialisation failed', { error: String(e) }));
   const fetch =
     cfg.role === 'worker'
       ? (req: Request) => (new URL(req.url).pathname === '/v1/health' && req.method === 'GET' ? rt.app.fetch(req) : new Response('not found', { status: 404 }))
       : rt.app.fetch;
   const server = serve({ fetch, port: cfg.port, hostname: cfg.host });
-  log.info('degent-mint listening', { role: cfg.role, network: cfg.settings.network, host: cfg.host, port: cfg.port, collectionAddress: rt.signer.collectionAddress() });
+  log.info('degent-mint listening', { role: cfg.role, mode: cfg.mode, network: cfg.settings.network, host: cfg.host, port: cfg.port, collectionAddress: rt.signer?.collectionAddress() ?? null });
   const stop = new AbortController();
-  const worker = runWorker ? rt.worker.run(cfg.workerIntervalMs, stop.signal) : Promise.resolve();
+  const worker = runWorker && rt.worker ? rt.worker.run(cfg.workerIntervalMs, stop.signal) : Promise.resolve();
   const shutdown = (sig: string) => {
     log.info('shutting down', { signal: sig });
     stop.abort();

@@ -9,7 +9,7 @@ import { bytesToHex } from '@noble/hashes/utils.js';
 import { p2tr } from '@scure/btc-signer';
 import { addressToScript, buildHalfSignedReveal, buildResignedRescue, commitAddress, networkParams } from '@bsh/inscription';
 import { signBip322Simple } from '@bsh/identity';
-import type { AuthVerifyResponse, CreateOrderResponse, Order, RescueResponse, Tier, VoteChoice, VotesResponse } from '@bsh/degent-mint-sdk';
+import type { AuthVerifyResponse, CreateOrderResponse, MintMode, Order, RescueResponse, Tier, VoteChoice, VotesResponse } from '@bsh/degent-mint-sdk';
 import { DEFAULT_APPROVAL_QUORUM, DEFAULT_CONFIG, DEFAULT_DECLINE_QUORUM, DEFAULT_REVIEW_SLA_SECONDS, GALLERY_SIZE, MAX_UPLOAD_BYTES, sha256Hex, voteReference, voteStatement } from '@bsh/degent-mint-sdk';
 import { ApprovalService } from '../../src/application/approval-service.js';
 import { RegisterService } from '../../src/application/register-service.js';
@@ -82,6 +82,8 @@ export interface HarnessOptions {
   roster?: RosterMember[];
   /** Leave the telegram channel unconfigured (503 channel_unavailable). */
   noTelegram?: boolean;
+  /** MINT_MODE for the HTTP app (default full). */
+  mode?: MintMode;
   /** Structured log sink for OrderService + worker (default: silent). */
   log?: Logger;
 }
@@ -194,6 +196,7 @@ export function makeHarness(opts: HarnessOptions = {}) {
     corsOrigins: opts.corsOrigins ?? ['https://degent.club'],
     rateLimit: opts.rateLimit ?? { windowMs: 60_000, max: 10_000 },
     clientIp: (c) => c.req.header('x-test-ip') ?? '127.0.0.1',
+    ...(opts.mode ? { mode: opts.mode } : {}),
   });
   const broadcasters = { standard: new FakeBroadcaster('standard', chain), block: new FakeBroadcaster('block', chain) };
   const worker = new MintWorker({ orders, store, content, reveals, chain, parents, signer, broadcasters, clock, ...(opts.log ? { log: opts.log } : {}) });
