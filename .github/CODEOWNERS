@@ -13,7 +13,6 @@
 /contracts/asyncapi/degent-mint.yaml    @DegentClub/team-degent
 /contracts/openapi/degent-atelier.yaml  @DegentClub/team-degent
 /contracts/openapi/degent-mint.yaml     @DegentClub/team-degent
-/products/degent/apps/web/              @DegentClub/team-degent
 /products/degent/packages/market/       @DegentClub/team-degent
 /products/degent/packages/mint-sdk/     @DegentClub/team-degent
 /products/degent/services/atelier/      @DegentClub/team-degent

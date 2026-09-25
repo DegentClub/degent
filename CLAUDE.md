@@ -9,7 +9,7 @@ and the catalog tool come from `DegentClub/scribbit`, vendored as a git submodul
 
 | Path | What lives there |
 |---|---|
-| `products/degent/apps/web/` | `@bsh/degent-web`: the mint front end (React + Vite) |
+| (website) | The degent.club site, mint front end included, lives in [DegentClub/degent.club](https://github.com/DegentClub/degent.club) and vendors this repo as a submodule for `@bsh/degent-mint-sdk` |
 | `products/degent/services/mint/` | `@bsh/degent-mint`: order state machine, art review, policy signer, lane broadcaster |
 | `products/degent/packages/mint-sdk/` | `@bsh/degent-mint-sdk`: mint rules, domain types, typed API client |
 | `contracts/` | Contracts **this product provides**: `openapi/degent-mint.yaml`, `asyncapi/degent-mint.yaml`. Platform contracts are at `deps/scribbit/contracts/` |
@@ -52,7 +52,6 @@ pnpm install                 # once
 pnpm check                   # validate manifests + boundaries + typecheck + tests (what CI runs)
 pnpm catalog                 # regenerate catalog/catalog.json
 pnpm --filter @bsh/catalog-tool run codeowners --org DegentClub   # regenerate .github/CODEOWNERS
-pnpm --filter @bsh/degent-web dev        # run the degent.club mint front end
 pnpm --filter @bsh/degent-mint dev       # run the mint service (in-memory adapters, regtest-safe)
 ```
 

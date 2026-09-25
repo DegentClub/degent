@@ -13,7 +13,7 @@ a tier.
 
 | Path | Package | Kind |
 |---|---|---|
-| `apps/web` | `@bsh/degent-web` | app (React + Vite) |
+| (website) | `@bsh/degent-web` | app in [DegentClub/degent.club](https://github.com/DegentClub/degent.club) (`apps/web`) |
 | `services/mint` | `@bsh/degent-mint` | service (Hono, ports and adapters) |
 | `packages/mint-sdk` | `@bsh/degent-mint-sdk` | library (rules, tiers, lane/queue maths, types, API client) |
 | `packages/market` | `@bsh/degent-market` | library (seller 0x83 listings, padded buyer purchases, ordinal FIFO simulator) |
@@ -46,6 +46,5 @@ dependency and contract graph instead of reading package.json files.
 ```bash
 pnpm --filter "./products/degent/**" typecheck
 pnpm --filter "./products/degent/**" test
-pnpm --filter @bsh/degent-web build && pnpm --filter @bsh/degent-web e2e
 pnpm validate && pnpm lint:boundaries && pnpm catalog --check
 ```

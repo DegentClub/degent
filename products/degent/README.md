@@ -33,7 +33,7 @@ signs or broadcasts.
 
 | Component | Package | Kind | Path | What it does |
 |---|---|---|---|---|
-| `degent-web` | `@bsh/degent-web` | app | [`apps/web`](apps/web) | Mint front end: any wallet, create, validate, preview, quote, pay, track, rescue |
+| `degent-web` | `@bsh/degent-web` | app | [DegentClub/degent.club](https://github.com/DegentClub/degent.club) `apps/web` | The website and mint front end (separate repo; vendors this one as a submodule) |
 | `degent-mint` | `@bsh/degent-mint` | service | [`services/mint`](services/mint) | Order state machine, automated art review, parent co-signing, lane broadcaster |
 | `degent-mint-sdk` | `@bsh/degent-mint-sdk` | library | [`packages/mint-sdk`](packages/mint-sdk) | Mint rules (three tiers, lane-by-weight, block-lane packing, content validation), domain types, typed API client |
 | `degent-market` | `@bsh/degent-market` | library | [`packages/market`](packages/market) | Non-custodial marketplace txs: seller 0x83 listings, buyer purchases with padding inputs so the inscription lands with the buyer (ordinal FIFO proved in tests) |
@@ -45,7 +45,7 @@ from the `deps/scribbit` submodule (DegentClub/scribbit, pinned commit). Live, g
 
 ## Contracts
 
-- `contracts/openapi/degent-mint.yaml`: HTTP API (provided by `degent-mint` and `degent-mint-sdk`, consumed by `degent-web`).
+- `contracts/openapi/degent-mint.yaml`: HTTP API (provided by `degent-mint` and `degent-mint-sdk`, consumed by `degent-web` in DegentClub/degent.club).
 - `contracts/asyncapi/degent-mint.yaml`: `degent.mint.*` order events (provided by `degent-mint`); must stay
   compatible with the platform-owned topic in `deps/scribbit/contracts/asyncapi/platform-events.yaml`
   (asserted in `services/mint/test/contract.test.ts`).
@@ -54,10 +54,8 @@ from the `deps/scribbit` submodule (DegentClub/scribbit, pinned commit). Live, g
 ## Where to start
 
 ```bash
-pnpm --filter @bsh/degent-web dev     # front end
 pnpm --filter @bsh/degent-mint dev    # service, in-memory adapters, regtest-safe
 pnpm --filter "./products/degent/**" test
-pnpm --filter @bsh/degent-web e2e     # real headless Chromium, screenshots in apps/web/docs/screenshots
 ```
 
 - Changing **rules** (sizes, MIME types, tiers): `packages/mint-sdk/src/rules.ts`; front end and service both use it.

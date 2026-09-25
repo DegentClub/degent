@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-25T22:21:46.794Z",
+  "generatedAt": "2026-09-25T23:26:06.177Z",
   "schema": "schemas/component.schema.json",
   "components": [
     {
@@ -200,49 +200,8 @@
         "docs": "products/degent/packages/mint-sdk/README.md"
       },
       "dependents": [
-        "degent-mint",
-        "degent-web"
+        "degent-mint"
       ]
-    },
-    {
-      "name": "degent-web",
-      "package": "@bsh/degent-web",
-      "kind": "app",
-      "product": "degent",
-      "owner": "team-degent",
-      "summary": "degent.club website - home, certified collection gallery with on-chain lightbox, the Atelier (AI or your own art to exact mint bytes), comic, blog, club sign-in, and the non-custodial mint at /mint.",
-      "lifecycle": "beta",
-      "depends_on": [
-        "@bsh/inscription",
-        "@bsh/wallet-kit",
-        "@bsh/degent-mint-sdk"
-      ],
-      "consumes": [
-        "contracts/openapi/degent-mint.yaml",
-        "contracts/openapi/degent-atelier.yaml"
-      ],
-      "docs": "./README.md",
-      "commands": {
-        "build": "build",
-        "dev": "dev",
-        "test": "test",
-        "typecheck": "typecheck"
-      },
-      "path": "products/degent/apps/web",
-      "version": "0.1.0",
-      "scripts": {
-        "build": "tsx scripts/gen-exhibit.ts && vite build",
-        "dev": "vite",
-        "e2e": "tsx scripts/gen-exhibit.ts && vite build && node e2e/demo.e2e.mjs",
-        "gen:exhibit": "tsx scripts/gen-exhibit.ts",
-        "preview": "vite preview",
-        "test": "vitest run",
-        "typecheck": "tsc --noEmit -p ."
-      },
-      "files": {
-        "docs": "products/degent/apps/web/README.md"
-      },
-      "dependents": []
     },
     {
       "name": "edge",
@@ -376,8 +335,7 @@
         "docs": "deps/scribbit/platform/inscription/README.md"
       },
       "dependents": [
-        "degent-mint",
-        "degent-web"
+        "degent-mint"
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
@@ -557,9 +515,7 @@
       "files": {
         "docs": "deps/scribbit/platform/wallet-kit/README.md"
       },
-      "dependents": [
-        "degent-web"
-      ],
+      "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
         "commit": "73ed01f5eb84b2ebacf2722600090324147b1540",
@@ -580,14 +536,12 @@
         "degent-atelier",
         "degent-market",
         "degent-mint",
-        "degent-mint-sdk",
-        "degent-web"
+        "degent-mint-sdk"
       ],
       "owners": [
         "team-degent"
       ],
       "kinds": {
-        "app": 1,
         "library": 2,
         "service": 2
       }
@@ -648,9 +602,7 @@
       "providers": [
         "degent-atelier"
       ],
-      "consumers": [
-        "degent-web"
-      ]
+      "consumers": []
     },
     {
       "path": "contracts/openapi/degent-mint.yaml",
@@ -661,8 +613,7 @@
         "degent-mint-sdk"
       ],
       "consumers": [
-        "degent-atelier",
-        "degent-web"
+        "degent-atelier"
       ]
     },
     {
@@ -730,16 +681,6 @@
       "type": "consumes"
     },
     {
-      "from": "degent-web",
-      "to": "contracts/openapi/degent-atelier.yaml",
-      "type": "consumes"
-    },
-    {
-      "from": "degent-web",
-      "to": "contracts/openapi/degent-mint.yaml",
-      "type": "consumes"
-    },
-    {
       "from": "degent-atelier",
       "to": "edge",
       "type": "depends_on"
@@ -757,21 +698,6 @@
     {
       "from": "degent-mint",
       "to": "inscription",
-      "type": "depends_on"
-    },
-    {
-      "from": "degent-web",
-      "to": "degent-mint-sdk",
-      "type": "depends_on"
-    },
-    {
-      "from": "degent-web",
-      "to": "inscription",
-      "type": "depends_on"
-    },
-    {
-      "from": "degent-web",
-      "to": "wallet-kit",
       "type": "depends_on"
     },
     {

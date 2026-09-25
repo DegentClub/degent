@@ -1,0 +1,28 @@
+{
+  "number": 2709,
+  "id": "f3bb4f2e06066623d57db84a2ff1f9e68f035212a931e0c5861823703b0e9363i0",
+  "name": "Degent #2709",
+  "tier": "fullblock",
+  "lane": "block",
+  "contentBytes": 3954190,
+  "revealWeightWU": 3977543,
+  "revealVsize": 994386,
+  "blockWeightLimitWU": 4000000,
+  "blockFraction": 0.99438575,
+  "feeRate": null,
+  "facts": {
+    "timestamp": null,
+    "height": null,
+    "feeSats": null,
+    "address": null,
+    "contentType": null
+  },
+  "estimated": true,
+  "links": {
+    "ordinals": "https://ordinals.com/inscription/f3bb4f2e06066623d57db84a2ff1f9e68f035212a931e0c5861823703b0e9363i0",
+    "ordiscan": "https://ordiscan.com/inscription/f3bb4f2e06066623d57db84a2ff1f9e68f035212a931e0c5861823703b0e9363i0",
+    "magicEden": "https://magiceden.io/ordinals/item-details/f3bb4f2e06066623d57db84a2ff1f9e68f035212a931e0c5861823703b0e9363i0",
+    "xray": "https://block.space/xray/f3bb4f2e06066623d57db84a2ff1f9e68f035212a931e0c5861823703b0e9363",
+    "theater": null
+  }
+}

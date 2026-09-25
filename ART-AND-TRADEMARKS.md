@@ -28,7 +28,7 @@ Where the code draws or checks these, the **code** is Apache-2.0 but the **desig
 In particular, `products/degent/services/atelier/src/assets/` renders the frame and placard: you may read, run,
 modify and redistribute that code under Apache-2.0, but images it produces that carry the Degent frame and placard
 may not be published, sold, inscribed or minted as Degents or under our marks. Screenshots under
-`products/degent/apps/web/docs/screenshots/` show artwork and are for documenting the software only.
+the website repo's `apps/web/docs/screenshots/` ([DegentClub/degent.club](https://github.com/DegentClub/degent.club)) show artwork and are for documenting the software only.
 
 ## Forks
 

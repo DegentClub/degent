@@ -28,7 +28,7 @@ other than what they were shown is our highest severity, whatever its CVSS score
 | 1 | `products/degent/packages/market` | listing/purchase transactions, sat ordering (FIFO), seller SIGHASH_SINGLE|ANYONECANPAY |
 | 2 | `products/degent/services/mint` | half-signed reveal handling, parent insertion, policy signer, lanes, reveal vault, rescue |
 | 3 | `products/degent/packages/mint-sdk` | rules, tiers, quotes and the typed client the front end trusts |
-| 4 | `products/degent/apps/web` | what the browser builds and asks the wallet to sign, the recovery bundle |
+| 4 | the website ([DegentClub/degent.club](https://github.com/DegentClub/degent.club), `apps/web`) | what the browser builds and asks the wallet to sign, the recovery bundle |
 | 5 | `products/degent/services/atelier` | provider credentials, quotas and cost caps, content handed to the mint |
 
 Platform code (`deps/scribbit`: inscription, wallet-kit, signer, ledger, identity, edge) is reported in [DegentClub/scribbit](https://github.com/DegentClub/scribbit/security/advisories/new), even when you found it through degent.club; say so in the report and we coordinate the pin bump here.

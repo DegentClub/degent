@@ -17,7 +17,7 @@ loop. This repository holds the product; the shared platform comes from
 
 | Repository | What it is |
 |---|---|
-| **DegentClub/degent** (this repo) | `degent-web` (mint front end), `degent-mint` (mint service), `degent-mint-sdk` (rules, types, API client), their contracts, ADR-0002 |
+| **DegentClub/degent** (this repo) | `degent-mint` (mint service), `degent-mint-sdk` (rules, types, API client), their contracts, ADR-0002 |
 | [DegentClub/scribbit](https://github.com/DegentClub/scribbit) | The platform: `@bsh/inscription`, `@bsh/wallet-kit`, `@bsh/events`, `@bsh/edge`, …, the catalog tool, scribb.it |
 | [DegentClub/blockspace](https://github.com/DegentClub/blockspace) | block.space: explorer, fee Meter, certification |
 
@@ -28,10 +28,8 @@ Humans start here and at [`products/degent/README.md`](products/degent/README.md
 
 The whole degent.club site, mint included, in demo mode (simulated wallet, mint service, chain, Atelier and ord
 data; no bitcoin moves and the page makes no third-party requests):
-**https://degentclub.github.io/degent/** (once Pages is enabled). It is built and deployed by
-[`.github/workflows/pages.yml`](.github/workflows/pages.yml), which stays idle until the owner sets
-Settings → Pages → Source to "GitHub Actions" and the repository variable `PAGES_ENABLED=true`.
-Locally: `VITE_DEMO_DEFAULT=1 pnpm --filter @bsh/degent-web exec vite build --base /degent/`.
+The website (React + Vite, the mint front end included) moved to **[DegentClub/degent.club](https://github.com/DegentClub/degent.club)**,
+which vendors this repo as a pinned submodule for `@bsh/degent-mint-sdk`.
 
 ## Quickstart
 
@@ -40,7 +38,6 @@ git clone --recurse-submodules https://github.com/DegentClub/degent.git   # or: 
 corepack enable                        # pnpm version comes from package.json "packageManager"
 pnpm install
 pnpm check                             # validate manifests + boundaries + typecheck + tests (what CI runs)
-pnpm --filter @bsh/degent-web dev      # degent.club mint front end
 pnpm --filter @bsh/degent-mint dev     # mint service with in-memory adapters (regtest-safe)
 ```
 
@@ -50,7 +47,6 @@ runs the platform's tests at the pinned commit (they live in the workspace throu
 ## Layout
 
 ```
-products/degent/apps/web/          @bsh/degent-web        mint front end (React + Vite)
 products/degent/services/mint/     @bsh/degent-mint       order state machine, art review, policy signer, lanes
 products/degent/packages/mint-sdk/ @bsh/degent-mint-sdk   rules, domain types, typed API client
 contracts/openapi/degent-mint.yaml     HTTP API of degent-mint (provided here)
@@ -78,7 +74,7 @@ The catalog tool treats the submodule's packages as **external** components: `ca
 
 ## Contracts
 
-- `contracts/openapi/degent-mint.yaml`: provided by `degent-mint` and `degent-mint-sdk`, consumed by `degent-web`.
+- `contracts/openapi/degent-mint.yaml`: provided by `degent-mint` and `degent-mint-sdk`, consumed by the website ([DegentClub/degent.club](https://github.com/DegentClub/degent.club)).
 - `contracts/asyncapi/degent-mint.yaml`: `degent.mint.order.{status}` events, provided by `degent-mint`. The shared
   topic is owned by the platform (`deps/scribbit/contracts/asyncapi/platform-events.yaml`); a test in
   `products/degent/services/mint/test/contract.test.ts` asserts this contract stays compatible with it.
