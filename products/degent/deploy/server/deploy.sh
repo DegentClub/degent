@@ -188,7 +188,8 @@ do_deploy() {
   local unhealthy="${UNHEALTHY:-compose up failed}" prev_rel fail_logs
   # Capture the failing containers' own output so a health failure is diagnosable from the workflow log
   # (we cannot SSH in interactively). Bounded so the JSON result stays small.
-  fail_logs="$(compose_in "$rel" logs --no-color --tail=40 mint-mainnet-api mint-signet-api 2>&1 | tail -c 3500 || true)"
+  fail_logs="$( { compose_in "$rel" logs --no-color --tail=20 mint-mainnet-api mint-signet-api web-mainnet web-signet caddy 2>&1; \
+                  compose_in "$rel" ps --format 'table {{.Name}}\t{{.State}}\t{{.Status}}' 2>&1; } | tail -c 3500 || true)"
   prev_rel="$(state_get release)"
   if [ -n "$cur_m" ] && [ -n "$cur_s" ] && [ -n "$prev_rel" ] && [ -d "$RELEASES/$prev_rel" ]; then
     log "rolling back to mainnet $cur_m, signet $cur_s"
