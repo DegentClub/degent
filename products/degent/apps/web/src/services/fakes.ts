@@ -54,8 +54,10 @@ import type {
 } from './types';
 import {
   StudioApiError,
+  type Appeal,
   type ArtworkList,
   type ArtworkStatus,
+  type HouseReview,
   type AutomatedReview,
   type RoyaltyRecord,
   type StudioApi,
@@ -66,6 +68,7 @@ import {
 } from './studioApi';
 import { classifyAddress, scureNetwork } from '../lib/funding';
 import { payoutAddressKind, payoutMessage, PAYOUT_MESSAGE_TEMPLATE } from '../lib/studioSession';
+import { createFakeSite, type FakeSite, type FakeSiteOptions, type FakeSiteState } from './fakeSite';
 
 const enc = new TextEncoder();
 const sha256Hex = (b: Uint8Array) => hex.encode(sha256(b));
@@ -281,6 +284,8 @@ export interface FakeStudioHooks {
   artist(address: string): StudioArtist | undefined;
   content(id: string): Uint8Array | undefined;
   recordRoyalty(rec: Omit<RoyaltyRecord, 'artist' | 'recordedAt'>): void;
+  /** The house decides a `reviewing` artwork (ADR-0012: resolves an open appeal: approve grants, reject denies). */
+  houseReview?(id: string, decision: 'approve' | 'reject', reasons?: string[]): StudioArtwork;
 }
 
 /** Royalty split the fake mint applies (ADR-0007 §5: 10% of the mint price to the artist). */
@@ -397,6 +402,7 @@ export function createFakeMintApi(
     const art = opts.studio?.artwork(artworkId);
     if (!art) throw new Error(`404 artwork_not_found: no artwork ${artworkId}`);
     if (art.status !== 'approved' || !art.contentSha256) throw new Error(`422 artwork_not_mintable: artwork ${artworkId} is ${art.status}`);
+    if (art.soldOut) throw new Error(`409 artwork_not_mintable: artwork ${artworkId} is sold out`);
     const artist = opts.studio?.artist(art.artist);
     if (!artist?.payoutAddress) throw new Error('422 artist_payout_missing: the artist has not proven a payout address');
     const bytes = opts.studio?.content(artworkId);
@@ -887,6 +893,8 @@ export interface FakeStudioState {
   uploadTokens: Map<string, string>;
   challenges: Map<string, { address: string; message: string; expiresAt: number; used: boolean }>;
   polls: Map<string, number>;
+  /** ADR-0012 §6: notification targets and the (never re-shown) webhook secret, per artist. */
+  notify: Map<string, { webhookUrl: string | null; telegramChatId: string | null; secret: string | null }>;
 }
 
 export interface FakeStudio extends StudioApi {
@@ -906,12 +914,14 @@ export interface DemoArtworkSeed {
   artist: keyof typeof DEMO_ARTISTS;
   featured: boolean;
   seed: number;
+  /** A limited edition (ADR-0012); absent = open edition. */
+  maxEditions?: number;
 }
 
 export const DEMO_ARTWORKS: readonly DemoArtworkSeed[] = [
   { id: 'art_demo_chairman', title: 'The Chairman', description: 'Pepe presides. Tuxedo by Savile Row, bowtie by decree.', artist: 'ada', featured: true, seed: 1 },
   { id: 'art_demo_martini', title: 'Martini Hour', description: 'Shaken, framed, placarded DEGENT.', artist: 'bram', featured: false, seed: 2 },
-  { id: 'art_demo_regen', title: 'Regen at Dawn', description: 'A gentleman at first light, REGEN on the plaque.', artist: 'ada', featured: false, seed: 3 },
+  { id: 'art_demo_regen', title: 'Regen at Dawn', description: 'A gentleman at first light, REGEN on the plaque.', artist: 'ada', featured: false, seed: 3, maxEditions: 25 },
 ];
 
 /** Taproot identity address of a demo artist (what they sign in with). */
@@ -944,6 +954,11 @@ function studioConfig(network: Network): StudioConfig {
     payoutMessageTemplate: PAYOUT_MESSAGE_TEMPLATE,
     payoutAddressKinds: ['p2wpkh', 'p2tr'],
     visionReview: 'claude',
+    maxEditionsLimit: 10_000,
+    featuredRankMax: 1000,
+    appealMessageMaxChars: 1000,
+    appealsPerArtwork: 3,
+    notifyChannels: ['webhook', 'telegram'],
   };
 }
 
@@ -961,6 +976,7 @@ export function createFakeStudioApi(log: CallLog = [], opts: FakeStudioOptions):
     uploadTokens: new Map(),
     challenges: new Map(),
     polls: new Map(),
+    notify: new Map(),
   };
   const dataUrls = new Map<string, string>();
   let seq = 0;
@@ -979,7 +995,12 @@ export function createFakeStudioApi(log: CallLog = [], opts: FakeStudioOptions):
   };
   const withCounts = (a: StudioArtist): StudioArtist => {
     const mine = [...st.artworks.values()].filter((w) => w.artist === a.address);
-    return { ...a, artworks: { total: mine.length, approved: mine.filter((w) => w.status === 'approved').length } };
+    const n = st.notify.get(a.address);
+    return {
+      ...a,
+      artworks: { total: mine.length, approved: mine.filter((w) => w.status === 'approved').length },
+      notify: { webhookUrl: n?.webhookUrl ?? null, telegramChatId: n?.telegramChatId ?? null, webhookSecretSet: !!n?.secret },
+    };
   };
   const subOf = (token: string | undefined): string => {
     if (!token) return err(401, 'unauthorized', 'A studio session is required.');
@@ -987,12 +1008,41 @@ export function createFakeStudioApi(log: CallLog = [], opts: FakeStudioOptions):
     if (!s || s.expiresAt <= now()) return err(401, 'unauthorized', 'The studio session is missing, invalid or expired.');
     return s.address;
   };
-  const view = (w: StudioArtwork): StudioArtwork => ({
-    ...w,
-    mintedEditions: st.royalties.filter((r) => r.artworkId === w.id).length,
-    review: w.review ? { ...w.review } : null,
-    timeline: [...w.timeline],
-  });
+  /** The wire view: ADR-0012 edition facts always; appeals only for the owner (`owner` true). */
+  const view = (w: StudioArtwork, owner = false): StudioArtwork => {
+    const minted = st.royalties.filter((r) => r.artworkId === w.id).length;
+    const max = w.maxEditions ?? null;
+    const { appeals, ...rest } = w;
+    return {
+      ...rest,
+      maxEditions: max,
+      mintedEditions: minted,
+      soldOut: max !== null && minted >= max,
+      featuredRank: w.featuredRank ?? null,
+      review: w.review ? { ...w.review } : null,
+      timeline: [...w.timeline],
+      ...(owner ? { appeals: (appeals ?? []).map((a) => ({ ...a })) } : {}),
+    };
+  };
+  const tokenSub = (token: string | undefined): string | null => {
+    try {
+      return token ? subOf(token) : null;
+    } catch {
+      return null;
+    }
+  };
+  const validMax = (v: unknown): v is number | null | undefined =>
+    v === undefined || v === null || (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 10_000);
+  /** House verdict on a reviewing artwork; resolves the open appeal with the same reasons. */
+  const decide = (w: StudioArtwork, decision: 'approve' | 'reject', reasons: string[]): StudioArtwork => {
+    const house: HouseReview = { decision, reasons, reviewerId: 'key_house', at: iso() };
+    const appeals = (w.appeals ?? []).map((a) =>
+      a.status === 'open' ? { ...a, status: decision === 'approve' ? ('granted' as const) : ('denied' as const), resolvedAt: house.at, resolution: house } : a,
+    );
+    const resolved: StudioArtwork = { ...w, needsHuman: false, appeals, review: { automated: w.review?.automated ?? null, house, reviewedAt: house.at } };
+    st.artworks.set(w.id, resolved);
+    return push(resolved, decision === 'approve' ? 'approved' : 'rejected', decision === 'approve' ? 'The house approved it' : reasons[0]);
+  };
   const push = (w: StudioArtwork, status: ArtworkStatus, detail?: string): StudioArtwork => {
     const at = iso();
     const next: StudioArtwork = {
@@ -1036,6 +1086,7 @@ export function createFakeStudioApi(log: CallLog = [], opts: FakeStudioOptions):
         },
         featured: d.featured,
         featuredAt: d.featured ? at : null,
+        ...(d.maxEditions ? { maxEditions: d.maxEditions } : {}),
         contentUrl: `/v1/artworks/${d.id}/content`,
         timeline: [
           { status: 'submitted', at },
@@ -1101,7 +1152,10 @@ export function createFakeStudioApi(log: CallLog = [], opts: FakeStudioOptions):
   const api: FakeStudio = {
     state: st,
     hooks: {
-      artwork: (id) => st.artworks.get(id),
+      artwork: (id) => {
+        const w = st.artworks.get(id);
+        return w ? view(w) : undefined;
+      },
       artist: (address) => st.artists.get(address),
       content: (id) => {
         const w = st.artworks.get(id);
@@ -1112,6 +1166,11 @@ export function createFakeStudioApi(log: CallLog = [], opts: FakeStudioOptions):
         if (!w) return;
         if (st.royalties.some((r) => r.orderId === rec.orderId)) return;
         st.royalties.push({ ...rec, artist: w.artist, recordedAt: iso() });
+      },
+      houseReview(id, decision, reasons = []) {
+        const w = st.artworks.get(id);
+        if (!w || w.status !== 'reviewing') throw new StudioApiError(409, 'illegal_transition', `Artwork ${id} is not under review.`);
+        return view(decide(w, decision, reasons), true);
       },
     },
     async getConfig() {
@@ -1177,9 +1236,39 @@ export function createFakeStudioApi(log: CallLog = [], opts: FakeStudioOptions):
         }
         next = { ...next, payoutAddress: req.payout.address, payoutVerifiedAt: iso() };
       }
+      let secretOnce: string | null = null;
+      if (req.notify !== undefined) {
+        const cur = st.notify.get(sub) ?? { webhookUrl: null, telegramChatId: null, secret: null };
+        let n = { ...cur };
+        if (req.notify === null) n = { webhookUrl: null, telegramChatId: null, secret: null };
+        else {
+          const { webhookUrl, telegramChatId, rotateWebhookSecret } = req.notify;
+          if (webhookUrl !== undefined) {
+            if (webhookUrl !== null) {
+              const why = fakeWebhookProblem(webhookUrl, network);
+              if (why) return err(422, 'validation_failed', `notify.webhookUrl: ${why}`);
+            }
+            n.webhookUrl = webhookUrl;
+            if (webhookUrl === null) n.secret = null;
+          }
+          if (telegramChatId !== undefined) {
+            if (telegramChatId !== null && !/^(-?[0-9]{1,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$/.test(telegramChatId)) {
+              return err(422, 'validation_failed', 'notify.telegramChatId must be a numeric chat id or @channel.');
+            }
+            n.telegramChatId = telegramChatId;
+          }
+          if (n.webhookUrl && (!n.secret || rotateWebhookSecret)) {
+            secretOnce = `whsec_${base64url.encode(schnorr.utils.randomSecretKey()).replace(/=+$/, '')}`;
+            n.secret = secretOnce;
+          } else if (rotateWebhookSecret && !n.webhookUrl) {
+            return err(422, 'validation_failed', 'There is no webhook to rotate a secret for.');
+          }
+        }
+        st.notify.set(sub, n);
+      }
       next.updatedAt = iso();
       st.artists.set(sub, next);
-      return withCounts(next);
+      return { ...withCounts(next), ...(secretOnce ? { notifyWebhookSecret: secretOnce } : {}) };
     },
     async getMyRoyalties(token, page = 1, pageSize = 24) {
       log.push('studio.getMyRoyalties');
@@ -1212,11 +1301,15 @@ export function createFakeStudioApi(log: CallLog = [], opts: FakeStudioOptions):
       }
       const page = query.page ?? 1;
       const pageSize = query.pageSize ?? 24;
+      const rank = (w: StudioArtwork) => (w.featured && typeof w.featuredRank === 'number' ? w.featuredRank : Number.POSITIVE_INFINITY);
+      const me = tokenSub(token);
       const all = [...st.artworks.values()]
         .filter((w) => w.status === status && (artist === undefined || w.artist === artist))
-        .sort((x, y) => Number(y.featured) - Number(x.featured) || (x.createdAt < y.createdAt ? 1 : x.createdAt > y.createdAt ? -1 : 0));
+        .map((w) => view(w, me !== null && me === w.artist))
+        .filter((w) => query.available === undefined || w.soldOut === !query.available)
+        .sort((x, y) => rank(x) - rank(y) || Number(y.featured) - Number(x.featured) || (x.createdAt < y.createdAt ? 1 : x.createdAt > y.createdAt ? -1 : 0));
       const start = (page - 1) * pageSize;
-      const list: ArtworkList = { items: all.slice(start, start + pageSize).map(view), page, pageSize, total: all.length };
+      const list: ArtworkList = { items: all.slice(start, start + pageSize), page, pageSize, total: all.length };
       return list;
     },
     async getArtwork(id, token) {
@@ -1235,17 +1328,9 @@ export function createFakeStudioApi(log: CallLog = [], opts: FakeStudioOptions):
       if (w.status === 'reviewing' && w.needsHuman && opts.houseResolvesAfterPolls !== undefined) {
         const n = (st.polls.get(id) ?? 0) + 1;
         st.polls.set(id, n);
-        if (n >= opts.houseResolvesAfterPolls) {
-          const resolved: StudioArtwork = {
-            ...w,
-            needsHuman: false,
-            review: { automated: w.review?.automated ?? null, house: { decision: 'approve', reasons: [], reviewerId: 'key_house', at: iso() }, reviewedAt: iso() },
-          };
-          st.artworks.set(id, resolved);
-          return view(push(resolved, 'approved', 'The house approved it'));
-        }
+        if (n >= opts.houseResolvesAfterPolls) return view(decide(w, 'approve', []), tokenSub(token) === w.artist);
       }
-      return view(w);
+      return view(w, tokenSub(token) === w.artist);
     },
     async createArtwork(token, req) {
       log.push('studio.createArtwork');
@@ -1254,6 +1339,7 @@ export function createFakeStudioApi(log: CallLog = [], opts: FakeStudioOptions):
       if (req.description && req.description.length > config.descriptionMaxChars) return err(422, 'validation_failed', 'description is too long');
       const v = validateContentMeta({ contentType: req.contentType, contentLength: req.contentLength }, DEGENT_RULES_CONFIG);
       if (!v.ok) return err(422, 'validation_failed', v.reasons.join(' '));
+      if (!validMax(req.maxEditions)) return err(422, 'validation_failed', 'maxEditions must be an integer 1-10000, or null for an open edition.');
       const id = `art_${hex.encode(sha256(enc.encode(`art|${sub}|${++seq}|${now()}`))).slice(0, 24)}`;
       const at = iso();
       const w: StudioArtwork = {
@@ -1274,11 +1360,12 @@ export function createFakeStudioApi(log: CallLog = [], opts: FakeStudioOptions):
         timeline: [{ status: 'submitted', at }],
         createdAt: at,
         updatedAt: at,
+        maxEditions: req.maxEditions ?? null,
       };
       st.artworks.set(id, w);
       const uploadToken = base64url.encode(schnorr.utils.randomSecretKey()).replace(/=+$/, '');
       st.uploadTokens.set(id, uploadToken);
-      return { artwork: view(w), uploadToken };
+      return { artwork: view(w, true), uploadToken };
     },
     async uploadContent(id, uploadToken, bytes) {
       log.push('studio.uploadContent');
@@ -1292,7 +1379,7 @@ export function createFakeStudioApi(log: CallLog = [], opts: FakeStudioOptions):
       st.contents.set(sha, bytes);
       const withBytes: StudioArtwork = { ...w, contentSha256: sha };
       st.artworks.set(id, withBytes);
-      return view(review(withBytes, bytes));
+      return view(review(withBytes, bytes), true);
     },
     async getContent(id) {
       log.push('studio.getContent');
@@ -1319,10 +1406,60 @@ export function createFakeStudioApi(log: CallLog = [], opts: FakeStudioOptions):
       if (w.artist !== sub) return err(403, 'forbidden', 'Not your artwork.');
       if (w.status !== 'approved') return err(409, 'illegal_transition', `Only approved artworks can be delisted (this one is ${w.status}).`);
       dataUrls.delete(id);
-      return view(push(w, 'delisted', 'Delisted by the artist'));
+      return view(push(w, 'delisted', 'Delisted by the artist'), true);
+    },
+    async setEditions(id, token, maxEditions) {
+      log.push('studio.setEditions');
+      const sub = subOf(token);
+      const w = st.artworks.get(id);
+      if (!w) return err(404, 'not_found', `No artwork ${id}`);
+      if (w.artist !== sub) return err(403, 'forbidden', 'Not your artwork.');
+      if (w.status === 'delisted') return err(409, 'conflict', 'A delisted artwork’s edition cap cannot change.');
+      if (!validMax(maxEditions) || maxEditions === undefined) return err(422, 'validation_failed', 'maxEditions must be an integer 1-10000, or null for an open edition.');
+      const minted = st.royalties.filter((r) => r.artworkId === id).length;
+      if (maxEditions !== null && maxEditions < minted) {
+        throw new StudioApiError(409, 'conflict', `${minted} editions are already minted; the cap cannot go below that.`, { mintedEditions: minted });
+      }
+      const next: StudioArtwork = { ...w, maxEditions, updatedAt: iso() };
+      st.artworks.set(id, next);
+      return view(next, true);
+    },
+    async appeal(id, token, message) {
+      log.push('studio.appeal');
+      const sub = subOf(token);
+      const w = st.artworks.get(id);
+      if (!w) return err(404, 'not_found', `No artwork ${id}`);
+      if (w.artist !== sub) return err(403, 'forbidden', 'Not your artwork.');
+      const text = typeof message === 'string' ? message.trim() : '';
+      if (text.length < 1 || text.length > 1000) return err(422, 'validation_failed', 'The appeal message must be 1-1000 characters.');
+      const appeals = w.appeals ?? [];
+      if (appeals.some((a) => a.status === 'open')) throw new StudioApiError(409, 'conflict', 'This artwork already has an open appeal.', { appeals: appeals.length, max: 3 });
+      if (appeals.length >= 3) throw new StudioApiError(409, 'conflict', 'This artwork has used all 3 of its appeals.', { appeals: appeals.length, max: 3 });
+      if (w.status !== 'rejected') return err(409, 'illegal_transition', `Only a rejected artwork can be appealed (this one is ${w.status}).`);
+      const appeal: Appeal = { id: `${id}:appeal:${appeals.length + 1}`, artworkId: id, artist: sub, message: text, status: 'open', createdAt: iso(), resolvedAt: null, resolution: null };
+      const withAppeal: StudioArtwork = { ...w, needsHuman: true, appeals: [...appeals, appeal] };
+      st.artworks.set(id, withAppeal);
+      const next = push(withAppeal, 'reviewing', 'appeal');
+      return { appeal: { ...appeal }, artwork: view(next, true) };
     },
   };
   return api;
+}
+
+/** A stand-in for `@bsh/notify`'s validateWebhookTarget: https, no credentials, no localhost / private literals. */
+export function fakeWebhookProblem(url: string, network: Network): string | null {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return 'not a URL';
+  }
+  const local = network === 'regtest';
+  if (u.protocol !== 'https:' && !(local && u.protocol === 'http:')) return 'must be https';
+  if (u.username || u.password) return 'must not embed credentials';
+  const host = u.hostname.replace(/^\[|\]$/g, '');
+  if (!local && (/^(localhost|127\.|10\.|192\.168\.|169\.254\.|::1$|0\.0\.0\.0)/.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host))) return 'must not point at a private or local address';
+  return null;
 }
 
 // ------------------------------------------------------------------ bundle
@@ -1334,9 +1471,13 @@ export interface FakeServicesOptions {
   studio?: Omit<FakeStudioOptions, 'network'>;
   wallet?: FakeWalletOptions;
   images?: FakeImageOptions | ImageTools;
+  /** The block.space certificate and ord fakes (4,112 demo members by default). */
+  site?: Omit<FakeSiteOptions, 'network' | 'log'>;
 }
 
 export interface FakeServices extends Services {
+  site: FakeSite;
+  siteState: FakeSiteState;
   studio: FakeStudio;
   log: CallLog;
   chainState: FakeChainState;
@@ -1351,10 +1492,15 @@ export function createFakeServices(o: FakeServicesOptions = {}): FakeServices {
   const studio = createFakeStudioApi(log, { network, ...(o.studio ?? {}) });
   const mintApi = createFakeMintApi(log, { network, chain: chain.state, studio: studio.hooks, ...(o.mint ?? {}) });
   const images = o.images && 'encode' in o.images ? o.images : createFakeImages(o.images as FakeImageOptions | undefined);
+  const site = createFakeSite({ network, log, ...(o.site ?? {}) });
   return {
     mode: 'demo',
     mintApi,
     studio,
+    certify: site.certify,
+    ord: site.ord,
+    site,
+    siteState: site.state,
     wallets: createFakeWallets(log, o.wallet),
     chain,
     inscription: createFakeInscription(log),

@@ -10,8 +10,10 @@ import { browserStore, loadRecovery, type KeyValueStore } from './lib/recovery';
 import { browserSessionStore } from './lib/studioSession';
 import { isMintRoute, useRoute } from './lib/router';
 import { errorText } from './components/ui';
-import { Header } from './components/Header';
 import { Link } from './components/Link';
+import { SiteHeader } from './components/SiteHeader';
+import { BackToTop, SiteFooter, SocialRail } from './components/SiteChrome';
+import { SiteProvider } from './flow/site';
 import { ProgressNav } from './components/ProgressNav';
 import { Welcome } from './screens/Welcome';
 import { Connect } from './screens/Connect';
@@ -25,6 +27,12 @@ import { ArtworkPage } from './screens/Artwork';
 import { Studio } from './screens/Studio';
 import { StudioUpload } from './screens/StudioUpload';
 import { StudioRoyalties } from './screens/StudioRoyalties';
+import { Home } from './screens/Home';
+import { Collection } from './screens/Collection';
+import { MintProcess } from './screens/MintProcess';
+import { About, Comic, Manifesto } from './screens/SitePages';
+import { Blog, BlogPostPage } from './screens/Blog';
+import { ArtistPage } from './screens/Artist';
 
 export interface AppProps {
   app: AppConfig;
@@ -81,7 +89,9 @@ export function App({ app, services, store = browserStore(), sessionStore = brow
 
   // Move focus to the new step's / page's heading for keyboard and screen-reader users.
   const firstRender = useRef(true);
-  const routeKey = route.name === 'artwork' ? `artwork:${route.id}` : route.name;
+  // Page identity for focus management: the lightbox and paging inside a page do not move focus to the h1.
+  const routeKey =
+    route.name === 'artwork' ? `artwork:${route.id}` : route.name === 'artist' ? `artist:${route.address}` : route.name === 'blog-post' ? `blog:${route.slug}` : route.name;
   useEffect(() => {
     if (firstRender.current) {
       firstRender.current = false;
@@ -100,72 +110,83 @@ export function App({ app, services, store = browserStore(), sessionStore = brow
 
   return (
     <MintContext.Provider value={ctx}>
-      <a className="skip" href="#main">
-        Skip to content
-      </a>
-      {services.mode === 'demo' ? (
-        <div className="demo-ribbon" role="note">
-          <strong>DEMO</strong> — simulated wallet, server and chain. No bitcoin moves. Remove <code>?demo=1</code> for
-          the real mint.
-        </div>
-      ) : null}
-      <Header />
-      {mint ? <ProgressNav /> : null}
-      <main id="main" ref={mainRef} className="main">
-        {state.error ? (
-          <div className="alert alert--bad" role="alert">
-            <p className="alert__title">Something needs your attention</p>
-            <div className="alert__body">{state.error}</div>
+      <SiteProvider>
+        <a className="skip" href="#main" onClick={(e) => {
+          // The hash router owns the fragment: move focus instead of navigating.
+          e.preventDefault();
+          mainRef.current?.querySelector<HTMLElement>('h1')?.focus();
+        }}>
+          Skip to content
+        </a>
+        {services.mode === 'demo' ? (
+          <div className="demo-ribbon" role="note">
+            <strong>DEMO</strong> — simulated wallet, server, chain and certificate. No bitcoin moves. Remove <code>?demo=1</code> for
+            the real site.
           </div>
         ) : null}
-        {mint && state.step === 'welcome' && <Welcome />}
-        {mint && state.step === 'connect' && <Connect />}
-        {mint && state.step === 'create' && <Create />}
-        {mint && state.step === 'validate' && <Validate />}
-        {mint && state.step === 'quote' && <QuoteScreen />}
-        {mint && state.step === 'pay' && <Pay />}
-        {mint && state.step === 'track' && <Track />}
-        {route.name === 'gallery' && <Gallery page={route.page} artist={route.artist} />}
-        {route.name === 'artwork' && <ArtworkPage id={route.id} />}
-        {route.name === 'studio' && (
-          <StudioProvider>
-            <Studio />
-          </StudioProvider>
-        )}
-        {route.name === 'studio-upload' && (
-          <StudioProvider>
-            <StudioUpload />
-          </StudioProvider>
-        )}
-        {route.name === 'studio-royalties' && (
-          <StudioProvider>
-            <StudioRoyalties />
-          </StudioProvider>
-        )}
-        {route.name === 'not-found' && (
-          <div className="screen">
-            <div className="screen-heading">
-              <p className="kicker">404</p>
-              <h1 tabIndex={-1}>No such room in the club.</h1>
-              <p className="lede">
-                <code className="mono">{route.path}</code> is not a page here. Try the <Link to={{ name: 'gallery', page: 1, artist: null }}>gallery</Link>, the{' '}
-                <Link to={{ name: 'mint', artworkId: null }}>mint</Link> or the <Link to={{ name: 'studio' }}>studio</Link>.
-              </p>
-            </div>
-          </div>
-        )}
-      </main>
-      <footer className="footer">
-        <p>
-          The Decentralized Gentlemen Club · non-custodial by design: your one-time reveal key stays with you (in your
-          recovery bundle, never on our server), the server only ever holds a half-signed transaction that pays{' '}
-          <em>you</em>, and artists are paid by minters directly, in the funding transaction.
-        </p>
-        <p className="muted small">
-          Network: <span className="mono">{app.network}</span>
-          {services.mode === 'demo' ? ' · demo mode' : ''}
-        </p>
-      </footer>
+        <SiteHeader />
+        <SocialRail />
+        <div className="container">
+          {mint ? <ProgressNav /> : null}
+          <main id="main" ref={mainRef} className="main">
+            {state.error && (mint || route.name.startsWith('studio') || route.name === 'artwork') ? (
+              <div className="alert alert--bad" role="alert">
+                <p className="alert__title">Something needs your attention</p>
+                <div className="alert__body">{state.error}</div>
+              </div>
+            ) : null}
+            {mint && state.step === 'welcome' && <Welcome />}
+            {mint && state.step === 'connect' && <Connect />}
+            {mint && state.step === 'create' && <Create />}
+            {mint && state.step === 'validate' && <Validate />}
+            {mint && state.step === 'quote' && <QuoteScreen />}
+            {mint && state.step === 'pay' && <Pay />}
+            {mint && state.step === 'track' && <Track />}
+            {route.name === 'home' && <Home />}
+            {route.name === 'collection' && <Collection page={route.page} perPage={route.perPage} item={route.item} />}
+            {route.name === 'mint-process' && <MintProcess />}
+            {route.name === 'comic' && <Comic />}
+            {route.name === 'about' && <About />}
+            {route.name === 'manifesto' && <Manifesto />}
+            {route.name === 'blog' && <Blog />}
+            {route.name === 'blog-post' && <BlogPostPage slug={route.slug} />}
+            {route.name === 'artist' && <ArtistPage address={route.address} />}
+            {route.name === 'gallery' && <Gallery page={route.page} artist={route.artist} available={route.available} />}
+            {route.name === 'artwork' && <ArtworkPage id={route.id} />}
+            {route.name === 'studio' && (
+              <StudioProvider>
+                <Studio />
+              </StudioProvider>
+            )}
+            {route.name === 'studio-upload' && (
+              <StudioProvider>
+                <StudioUpload />
+              </StudioProvider>
+            )}
+            {route.name === 'studio-royalties' && (
+              <StudioProvider>
+                <StudioRoyalties />
+              </StudioProvider>
+            )}
+            {route.name === 'not-found' && (
+              <div className="screen">
+                <div className="screen-heading">
+                  <p className="kicker">404</p>
+                  <h1 tabIndex={-1}>No such room in the club.</h1>
+                  <p className="lede">
+                    <code className="mono">{route.path}</code> is not a page here. Try <Link to={{ name: 'home' }}>home</Link>, the{' '}
+                    <Link to={{ name: 'collection', page: 1, perPage: null, item: null }}>collection</Link>, the{' '}
+                    <Link to={{ name: 'gallery', page: 1, artist: null }}>gallery</Link>, the <Link to={{ name: 'mint', artworkId: null }}>mint</Link> or
+                    the <Link to={{ name: 'studio' }}>studio</Link>.
+                  </p>
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+        <SiteFooter />
+        <BackToTop />
+      </SiteProvider>
     </MintContext.Provider>
   );
 }

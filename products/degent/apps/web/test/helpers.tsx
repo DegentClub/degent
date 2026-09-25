@@ -20,6 +20,9 @@ export function testApp(over: Partial<AppConfig> = {}): AppConfig {
     ordContentUrl: 'https://ord.test',
     pollIntervalMs: 10,
     galleryPageSize: 12,
+    certifyUrl: 'https://certify.test',
+    collectionSlug: 'degents',
+    comicInscriptionId: null,
     demo: true,
     ...over,
   };
@@ -107,7 +110,9 @@ export function renderApp(
   const sessionStore = opts.sessionStore ?? memoryStore();
   const vault = opts.vault ?? createKeyVault();
   const app = opts.app ?? testApp();
-  if (opts.hash !== undefined) window.location.hash = opts.hash;
+  // `#/` is the Home page since the site rebuild (p6.1); the mint wizard lives at `#/mint`, which is where
+  // most tests start. Pass `hash: '#/'` for Home.
+  window.location.hash = opts.hash ?? '#/mint';
   const utils = render(
     <App app={app} services={services} store={store} sessionStore={sessionStore} vault={vault} {...(opts.initial ? { initial: opts.initial } : {})} />,
   );

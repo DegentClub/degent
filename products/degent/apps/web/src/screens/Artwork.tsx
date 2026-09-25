@@ -6,9 +6,12 @@ import { Link } from '../components/Link';
 import { RulesPills } from '../components/RulesPills';
 import { ScreenHeading } from '../components/ScreenHeading';
 import { Alert, Badge, Button, Fact, Mono, Panel, errorText } from '../components/ui';
+import { SoldOutBadge } from '../components/Editions';
 import { navigate } from '../lib/router';
 import { formatBytesExact, formatSize, formatTimestamp, shortHash } from '../lib/format';
-import type { StudioArtwork, StudioPublicArtist } from '../services/studioApi';
+import { editionsOf, type StudioArtwork, type StudioPublicArtist } from '../services/studioApi';
+
+const ARTIST_ADDRESS = /^(?:(?:bc1|tb1|bcrt1)[02-9ac-hj-np-z]{6,87}|[13mn2][1-9A-HJ-NP-Za-km-z]{25,34})$/;
 
 export function ArtworkPage({ id }: { id: string }) {
   const { services, state, dispatch } = useMint();
@@ -40,8 +43,9 @@ export function ArtworkPage({ id }: { id: string }) {
   }, [services, id]);
 
   const tier = artwork && state.config ? tierForSize(artwork.contentLength, state.config) : null;
-  const editions = artwork && typeof artwork.mintedEditions === 'number' ? artwork.mintedEditions : null;
-  const mintable = artwork?.status === 'approved';
+  const e = artwork ? editionsOf(artwork) : { minted: null, max: null, soldOut: false };
+  const editions = e.minted;
+  const mintable = artwork?.status === 'approved' && !e.soldOut;
 
   const mint = () => {
     if (!artwork) return;
@@ -60,7 +64,11 @@ export function ArtworkPage({ id }: { id: string }) {
         <>
           <ScreenHeading
             step={artwork.featured ? 'Featured Degent' : 'Degent'}
-            title={artwork.title}
+            title={
+              <>
+                {artwork.title} <SoldOutBadge artwork={artwork} />
+              </>
+            }
             lede={artwork.description ?? undefined}
           />
           <div className="artwork">
@@ -74,12 +82,18 @@ export function ArtworkPage({ id }: { id: string }) {
                       <span className="mono">{shortHash(artwork.artist, 6)}</span>
                     </Link>
                     {artist ? <span className="small muted"> · {artist.artworks} in the gallery</span> : null}
+                    {ARTIST_ADDRESS.test(artwork.artist) ? (
+                      <span className="small">
+                        {' '}
+                        · <Link to={{ name: 'artist', address: artwork.artist }}>Artist page</Link>
+                      </span>
+                    ) : null}
                   </Fact>
                   <Fact label="Edition">
                     {editions !== null ? (
                       <span data-testid="editions">
                         {editions === 0 ? 'Not minted yet' : `${editions} minted`}
-                        {typeof artwork.maxEditions === 'number' ? ` of ${artwork.maxEditions}` : ' · open edition'}
+                        {e.max !== null ? ` of ${e.max}${e.soldOut ? ' · sold out' : ''}` : ' · open edition'}
                       </span>
                     ) : (
                       <span className="muted">Open edition</span>
@@ -102,7 +116,11 @@ export function ArtworkPage({ id }: { id: string }) {
                     Mint this Degent
                   </Button>
                 </div>
-                {!mintable ? (
+                {!mintable && e.soldOut ? (
+                  <p className="small muted">
+                    This edition is sold out: {e.minted} of {e.max} minted. The artist can raise the cap; you cannot mint another until they do.
+                  </p>
+                ) : !mintable ? (
                   <p className="small muted">This piece is {artwork.status}; only approved Degents can be minted.</p>
                 ) : (
                   <p className="small muted">

@@ -14,8 +14,12 @@ import type {
   SubmitRevealRequest,
 } from '@bsh/degent-mint-sdk';
 import type { StudioApi } from './studioApi';
+import type { CertifyApi } from './certifyApi';
+import type { OrdApi } from './ordApi';
 
 export type { StudioApi } from './studioApi';
+export type { CertifyApi } from './certifyApi';
+export type { OrdApi } from './ordApi';
 
 // ---------------------------------------------------------------- studio artworks in mint orders (plan §3.1)
 
@@ -311,6 +315,10 @@ export interface Services {
   mintApi: MintApi;
   /** The Artist Studio (ADR-0007): gallery, sign-in, artworks, royalties. */
   studio: StudioApi;
+  /** block.space collection certification: the ONE source of every count on the site (site spec). */
+  certify: CertifyApi;
+  /** ord reads for the collection lightbox (owner, timestamp, fee) and member images. */
+  ord: OrdApi;
   wallets: WalletService;
   chain: ChainApi;
   inscription: InscriptionOps;

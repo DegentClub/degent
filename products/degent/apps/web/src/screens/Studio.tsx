@@ -9,6 +9,7 @@ import { formatTimestamp, shortHash } from '../lib/format';
 import { LegacyPayoutError, payoutAddressKind, payoutMessage } from '../lib/studioSession';
 import type { ArtworkStatus, StudioArtwork } from '../services/studioApi';
 import type { WalletId } from '../services/types';
+import { AppealBadge, AppealForm, EditionsEditor, NotifySettings } from './StudioExtras';
 
 const KIND_LABEL = { p2tr: 'Taproot', p2wpkh: 'Native SegWit', legacy: 'Legacy', unknown: 'Unrecognised' } as const;
 
@@ -112,6 +113,9 @@ export function Studio() {
       setDelisting(null);
     }
   };
+
+  /** After the editions editor or the appeal form update one artwork, patch it into the list in place. */
+  const patchMine = (w: StudioArtwork) => setMine((cur) => (cur ? cur.map((x) => (x.id === w.id ? w : x)) : cur));
 
   const candidates = wallet
     ? [
@@ -244,6 +248,10 @@ export function Studio() {
             </div>
           </Panel>
 
+          <Panel>
+            <NotifySettings />
+          </Panel>
+
           <Panel title="Your Degents" kicker="What you have hung">
             <div className="row">
               <Link to={{ name: 'studio-upload' }} className="btn btn--primary">
@@ -264,6 +272,7 @@ export function Studio() {
                     <div className="mine__body">
                       <p className="mine__title">
                         {w.status === 'approved' ? <Link to={{ name: 'artwork', id: w.id }}>{w.title}</Link> : w.title} <StatusPill artwork={w} />
+                        <AppealBadge artwork={w} />
                       </p>
                       <p className="small muted">
                         <Mono>{w.id}</Mono> · {formatTimestamp(w.createdAt)}
@@ -279,6 +288,8 @@ export function Studio() {
                           ))}
                         </ul>
                       ) : null}
+                      {w.status === 'approved' ? <EditionsEditor artwork={w} onChanged={patchMine} /> : null}
+                      {w.status === 'rejected' ? <AppealForm artwork={w} onAppealed={patchMine} /> : null}
                     </div>
                     {w.status === 'approved' ? (
                       <Button variant="danger" busy={delisting === w.id} onClick={() => void delist(w.id)} aria-label={`Delist ${w.title}`}>

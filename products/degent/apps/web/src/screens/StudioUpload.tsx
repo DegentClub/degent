@@ -8,6 +8,7 @@ import { ScreenHeading } from '../components/ScreenHeading';
 import { Alert, Badge, Button, Fact, Mono, Panel, errorText, useObjectUrl } from '../components/ui';
 import { CheckList } from './Validate';
 import { StatusPill } from './Studio';
+import { CapField, parseCap } from './StudioExtras';
 import { formatBytesExact } from '../lib/format';
 import type { StudioArtwork } from '../services/studioApi';
 
@@ -28,6 +29,7 @@ export function StudioUpload() {
   const ids = { title: useId(), desc: useId(), file: useId() };
   const [title, setTitle] = useState('');
   const [desc, setDesc] = useState('');
+  const [cap, setCap] = useState('');
   const [picked, setPicked] = useState<Picked | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -58,10 +60,11 @@ export function StudioUpload() {
       ]
     : [];
   const localOk = checks.length > 0 && checks.every((c) => c.passed);
-  const canSubmit = !!session && !!picked && localOk && title.trim().length > 0 && title.length <= 80 && desc.length <= 500 && phase === 'idle';
+  const capParsed = parseCap(cap);
+  const canSubmit = !!session && !!picked && localOk && title.trim().length > 0 && title.length <= 80 && desc.length <= 500 && capParsed !== undefined && phase === 'idle';
 
   const submit = async () => {
-    if (!session || !picked) return;
+    if (!session || !picked || capParsed === undefined) return;
     setError(null);
     try {
       setPhase('declaring');
@@ -70,6 +73,7 @@ export function StudioUpload() {
         ...(desc.trim() ? { description: desc.trim() } : {}),
         contentType: picked.contentType,
         contentLength: picked.bytes.length,
+        ...(capParsed !== null ? { maxEditions: capParsed } : {}),
       });
       setPhase('uploading');
       const reviewed = await services.studio.uploadContent(created.artwork.id, created.uploadToken, picked.bytes);
@@ -141,6 +145,7 @@ export function StudioUpload() {
           </label>
           <textarea id={ids.desc} maxLength={500} rows={3} value={desc} onChange={(e) => setDesc(e.currentTarget.value)} disabled={phase !== 'idle'} />
         </div>
+        <CapField value={cap} onChange={setCap} disabled={phase !== 'idle'} />
         <div className="field">
           <label htmlFor={ids.file} className="label">
             Image (JPEG recommended; PNG, WebP, AVIF, GIF accepted)

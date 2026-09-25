@@ -1,7 +1,7 @@
 {
   "$schema": "schemas/roadmap.schema.json",
   "version": 1,
-  "updated": "2026-09-24",
+  "updated": "2026-09-25",
   "claim": {
     "text": "Anyone can mint an artist's Degent from degent.club; the artist is paid 10% of the mint price on chain inside the minter's own funding transaction; the house never holds either party's keys or money",
     "measure": "A signet mint of an artwork order whose funding transaction pays the artist output and the club output, whose reveal is co-signed by the policy signer, and whose block.space attestation lists the artist and edition",
@@ -321,7 +321,8 @@
           "id": "p4.3",
           "repo": "degent",
           "title": "Site counts and artist pages read from the attestation",
-          "status": "todo",
+          "status": "done",
+          "verify": "pnpm --filter @bsh/degent-web test  # test/site.test.tsx, test/certify.test.ts",
           "depends_on": [
             "p4.1"
           ]
@@ -404,8 +405,9 @@
           "id": "p6.1",
           "repo": "degent",
           "title": "Site rebuild per products/degent/docs/site-spec.md: collection, gallery, comic, mint process, blog, artist pages",
-          "status": "todo",
-          "doc": "products/degent/docs/site-spec.md"
+          "status": "done",
+          "doc": "products/degent/docs/site-spec.md",
+          "verify": "pnpm --filter @bsh/degent-web test && pnpm --filter @bsh/degent-web typecheck && pnpm --filter @bsh/degent-web build && pnpm --filter @bsh/degent-web e2e"
         },
         {
           "id": "p6.2",

@@ -251,3 +251,136 @@ describe('Artist Studio: my artworks and royalties', () => {
     expect(screen.getByRole('button', { name: 'Submit for review' })).toBeDisabled();
   });
 });
+
+describe('Artist Studio: edition caps (ADR-0012)', () => {
+  it('declares a cap on upload, and the editions editor raises it and refuses to lower it below what is minted', async () => {
+    const { services } = await signedInStudio();
+    await uploadPiece('Limited Run', pngFile(21));
+    await userEvent.type(screen.getByLabelText(/Edition cap/), '3');
+    const submit = screen.getByRole('button', { name: 'Submit for review' });
+    await waitFor(() => expect(submit).toBeEnabled());
+    await userEvent.click(submit);
+    const verdict = await screen.findByTestId('verdict');
+    expect(verdict).toHaveTextContent('Hanging');
+    const wallet = await services.wallets.connect('unisat', 'mainnet');
+    const mine = [...services.studioState.artworks.values()].find((w) => w.artist === wallet.ordinals.address && w.title === 'Limited Run')!;
+    expect(mine.maxEditions).toBe(3);
+
+    await userEvent.click(screen.getByRole('link', { name: 'Back to the studio' }));
+    const item = await screen.findByTestId(`mine-${mine.id}`);
+    const editor = within(item).getByRole('form', { name: `Edition cap for ${mine.title}` });
+    expect(within(editor).getByLabelText('Edition cap')).toHaveValue('3');
+
+    // Mint it to the cap: 3 royalty records make it sold out.
+    for (let i = 0; i < 3; i++) {
+      services.studio.hooks.recordRoyalty({ orderId: `ord_${i}`, artworkId: mine.id, minterAddress: null, royaltySats: 1000, fundingTxid: `${i}`.repeat(64).slice(0, 64), vout: 1, at: new Date().toISOString() });
+    }
+
+    // Lowering below what is minted is refused, with the minted count named.
+    await userEvent.clear(within(editor).getByLabelText('Edition cap'));
+    await userEvent.type(within(editor).getByLabelText('Edition cap'), '2');
+    await userEvent.click(within(editor).getByRole('button', { name: 'Save cap' }));
+    expect(await within(item).findByText(/cap cannot go below that/)).toBeInTheDocument();
+    expect(services.studioState.artworks.get(mine.id)!.maxEditions).toBe(3);
+
+    // Raising it (or opening it) succeeds.
+    await userEvent.clear(within(editor).getByLabelText('Edition cap'));
+    await userEvent.type(within(editor).getByLabelText('Edition cap'), '10');
+    await userEvent.click(within(editor).getByRole('button', { name: 'Save cap' }));
+    await within(item).findByText('saved', { exact: false });
+    expect(services.studioState.artworks.get(mine.id)!.maxEditions).toBe(10);
+  });
+
+  it('an empty cap is an open edition; an out-of-range cap is refused client-side', async () => {
+    const { services } = await signedInStudio();
+    await uploadPiece('Open Run', pngFile(22));
+    expect(screen.getByLabelText(/Edition cap/)).toHaveValue('');
+    await userEvent.type(screen.getByLabelText(/Edition cap/), '0');
+    expect(screen.getByRole('button', { name: 'Submit for review' })).toBeDisabled();
+    expect(screen.getByText(/Enter a whole number from 1 to 10,000/)).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText(/Edition cap/));
+    const submit = screen.getByRole('button', { name: 'Submit for review' });
+    await waitFor(() => expect(submit).toBeEnabled());
+    await userEvent.click(submit);
+    await screen.findByTestId('verdict');
+    const wallet = await services.wallets.connect('unisat', 'mainnet');
+    const mine = [...services.studioState.artworks.values()].find((w) => w.artist === wallet.ordinals.address && w.title === 'Open Run')!;
+    expect(mine.maxEditions).toBeNull();
+  });
+});
+
+describe('Artist Studio: appeals (ADR-0012)', () => {
+  async function rejectedPiece() {
+    const r = await signedInStudio({ studio: { reviewScenario: 'reject' } });
+    await uploadPiece('No Bowtie Again', pngFile(23));
+    await userEvent.click(screen.getByRole('button', { name: 'Submit for review' }));
+    await screen.findByTestId('verdict');
+    const wallet = await r.services.wallets.connect('unisat', 'mainnet');
+    const mine = [...r.services.studioState.artworks.values()].find((w) => w.artist === wallet.ordinals.address && w.title === 'No Bowtie Again')!;
+    await userEvent.click(screen.getByRole('link', { name: 'Back to the studio' }));
+    const item = await screen.findByTestId(`mine-${mine.id}`);
+    return { ...r, mine, item };
+  }
+
+  it('sends an appeal to the house and shows it as open', async () => {
+    const { services, mine, item } = await rejectedPiece();
+    await userEvent.click(within(item).getByRole('button', { name: 'Appeal to the house' }));
+    await userEvent.type(within(item).getByLabelText(/Why does this piece meet the rules/), 'It has a placard that says DEGEN.');
+    await userEvent.click(within(item).getByRole('button', { name: 'Send appeal' }));
+    expect(await within(item).findByText('Appeal open')).toBeInTheDocument();
+    expect(services.studioState.artworks.get(mine.id)!.appeals).toHaveLength(1);
+    expect(services.studioState.artworks.get(mine.id)!.appeals![0]!.message).toBe('It has a placard that says DEGEN.');
+  });
+
+  it('at most 3 appeals per artwork; the 4th is refused (409 conflict)', async () => {
+    const { services, mine } = await rejectedPiece();
+    // Drive the appeal/decision cycle through the studio API directly (already covered via the UI above).
+    const wallet = await services.wallets.connect('unisat', 'mainnet');
+    const session = await apiSignIn(services, wallet);
+    for (let i = 0; i < 3; i++) {
+      await services.studio.appeal(mine.id, session.token, `Appeal number ${i + 1}, please reconsider.`);
+      services.studio.hooks.houseReview!(mine.id, 'reject', ['Still no bowtie.']);
+    }
+    await expect(services.studio.appeal(mine.id, session.token, 'One more time, please.')).rejects.toMatchObject({ status: 409, code: 'conflict' });
+  });
+});
+
+describe('Artist Studio: notification settings (ADR-0012)', () => {
+  it('sets a webhook, shows the signing secret once, and the state line reflects it afterwards', async () => {
+    await signedInStudio();
+    expect(screen.getByRole('heading', { level: 3, name: 'Notifications' })).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText(/Webhook URL/), 'https://example.com/degent-hook');
+    await userEvent.click(screen.getByRole('button', { name: 'Save notifications' }));
+    const alert = await screen.findByText('Your webhook signing secret: shown once');
+    const secretBox = within(alert.closest('.alert')!).getByLabelText('Webhook signing secret');
+    expect((secretBox as HTMLTextAreaElement).value.length).toBeGreaterThan(10);
+    expect(screen.getByTestId('notify-state')).toHaveTextContent('https://example.com/degent-hook');
+    expect(screen.getByTestId('notify-state')).toHaveTextContent('signing secret set');
+
+    await userEvent.click(screen.getByRole('button', { name: 'I have stored it, hide it' }));
+    expect(screen.queryByText('Your webhook signing secret: shown once')).not.toBeInTheDocument();
+
+    // Rotating shows a new one-time secret again.
+    await userEvent.click(screen.getByRole('button', { name: 'Rotate webhook secret' }));
+    expect(await screen.findByText('Your webhook signing secret: shown once')).toBeInTheDocument();
+  });
+
+  it('turning notifications off clears the webhook and does not show a secret', async () => {
+    const { services } = await signedInStudio();
+    await userEvent.type(screen.getByLabelText(/Webhook URL/), 'https://example.com/degent-hook');
+    await userEvent.click(screen.getByRole('button', { name: 'Save notifications' }));
+    await screen.findByText('Your webhook signing secret: shown once');
+    await userEvent.click(screen.getByRole('button', { name: 'Turn notifications off' }));
+    await waitFor(() => expect(screen.getByTestId('notify-state')).toHaveTextContent('Webhook: off'));
+    expect(screen.queryByText('Your webhook signing secret: shown once')).not.toBeInTheDocument();
+    const wallet = await services.wallets.connect('unisat', 'mainnet');
+    expect(services.studioState.artists.get(wallet.ordinals.address)!.notify?.webhookUrl ?? null).toBeNull();
+  });
+
+  it('refuses a non-https webhook URL', async () => {
+    await signedInStudio();
+    await userEvent.type(screen.getByLabelText(/Webhook URL/), 'http://example.com/hook');
+    await userEvent.click(screen.getByRole('button', { name: 'Save notifications' }));
+    expect(await screen.findByText('Notifications were not saved')).toBeInTheDocument();
+  });
+});

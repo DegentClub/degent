@@ -36,6 +36,14 @@ export interface StudioConfig {
   payoutMessageTemplate: string;
   payoutAddressKinds: Array<'p2wpkh' | 'p2tr'>;
   visionReview: 'claude' | 'none';
+  /** ADR-0012 (optional: older studios omit them). Largest accepted `maxEditions`. */
+  maxEditionsLimit?: number;
+  featuredRankMax?: number;
+  appealMessageMaxChars?: number;
+  /** Appeals allowed per artwork over its lifetime. */
+  appealsPerArtwork?: number;
+  /** `webhook` always; `telegram` when the studio has a bot. */
+  notifyChannels?: string[];
 }
 
 export interface ChallengeResponse {
@@ -54,6 +62,13 @@ export interface VerifyRequest {
   address: string;
 }
 
+/** Where the studio notifies the artist (ADR-0012 §6). The secret itself is never returned again. */
+export interface ArtistNotify {
+  webhookUrl: string | null;
+  telegramChatId: string | null;
+  webhookSecretSet: boolean;
+}
+
 export interface StudioArtist {
   address: string;
   network: Network;
@@ -63,6 +78,13 @@ export interface StudioArtist {
   artworks: { total: number; approved: number };
   joinedAt: string;
   updatedAt: string;
+  /** ADR-0012; optional (older studios omit it). */
+  notify?: ArtistNotify;
+  /**
+   * The webhook signing secret: ONLY in the `PUT /v1/artists/me` response that generated it (first webhook or
+   * `rotateWebhookSecret`). Shown to the artist once, never stored by the app.
+   */
+  notifyWebhookSecret?: string;
 }
 
 export interface SessionResponse {
@@ -72,9 +94,20 @@ export interface SessionResponse {
   artist: StudioArtist;
 }
 
+export interface NotifyUpdate {
+  /** https URL; null clears it (and deletes the secret); omitted = unchanged. */
+  webhookUrl?: string | null;
+  /** Numeric chat id or @channel; null clears it. */
+  telegramChatId?: string | null;
+  /** Generate a new signing secret (returned once). */
+  rotateWebhookSecret?: boolean;
+}
+
 export interface UpdateArtistRequest {
   displayName?: string | null;
   payout?: { address: string; signature: string };
+  /** Null clears both targets. */
+  notify?: NotifyUpdate | null;
 }
 
 export interface StudioPublicArtist {
@@ -111,6 +144,25 @@ export interface ArtworkReview {
   reviewedAt: string;
 }
 
+export type AppealStatus = 'open' | 'granted' | 'denied';
+
+/** A rejected artwork's appeal to a human (ADR-0012 §5). Shown to the owner only. */
+export interface Appeal {
+  id: string;
+  artworkId: string;
+  artist: string;
+  message: string;
+  status: AppealStatus;
+  createdAt: string;
+  resolvedAt: string | null;
+  resolution: HouseReview | null;
+}
+
+export interface AppealResponse {
+  appeal: Appeal;
+  artwork: StudioArtwork;
+}
+
 export interface ArtworkEvent {
   status: ArtworkStatus;
   at: string;
@@ -138,10 +190,33 @@ export interface StudioArtwork {
   timeline: ArtworkEvent[];
   createdAt: string;
   updatedAt: string;
-  /** Editions minted so far. Not in the contract yet (plan §3.7); shown when the API supplies it. */
+  /** Editions minted so far (royalty records; ADR-0012). Optional: older studios omit it. */
   mintedEditions?: number;
-  /** Edition cap, when the artist set one (plan §3.7). */
+  /** Edition cap (1-10000); null or absent = open edition (ADR-0012). */
   maxEditions?: number | null;
+  /** The cap is reached; the mint refuses new orders (ADR-0012). */
+  soldOut?: boolean;
+  /** House curation order, lower first (ADR-0012 §4). */
+  featuredRank?: number | null;
+  /** The artist's appeals, oldest first (owner only). */
+  appeals?: Appeal[];
+}
+
+/**
+ * Edition facts read defensively (every field is optional on the wire): `soldOut` from the studio when it
+ * says so, else derived from `mintedEditions >= maxEditions`.
+ */
+export function editionsOf(w: Pick<StudioArtwork, 'mintedEditions' | 'maxEditions' | 'soldOut'>): { minted: number | null; max: number | null; soldOut: boolean } {
+  const minted = typeof w.mintedEditions === 'number' && Number.isSafeInteger(w.mintedEditions) && w.mintedEditions >= 0 ? w.mintedEditions : null;
+  const max = typeof w.maxEditions === 'number' && Number.isSafeInteger(w.maxEditions) && w.maxEditions >= 1 ? w.maxEditions : null;
+  const soldOut = w.soldOut === true || (max !== null && minted !== null && minted >= max);
+  return { minted, max, soldOut };
+}
+
+/** The newest appeal on an artwork, if any. */
+export function latestAppeal(w: Pick<StudioArtwork, 'appeals'>): Appeal | null {
+  const list = Array.isArray(w.appeals) ? w.appeals : [];
+  return list.length > 0 ? list[list.length - 1]! : null;
 }
 
 export interface CreateArtworkRequest {
@@ -149,6 +224,8 @@ export interface CreateArtworkRequest {
   description?: string;
   contentType: string;
   contentLength: number;
+  /** 1-10000; omitted or null = open edition (ADR-0012). */
+  maxEditions?: number | null;
 }
 
 export interface CreateArtworkResponse {
@@ -167,6 +244,8 @@ export interface ArtworkList {
 export interface ArtworkQuery {
   status?: ArtworkStatus;
   artist?: string;
+  /** true: only mintable (not sold out); false: only sold out (ADR-0012). */
+  available?: boolean;
   page?: number;
   pageSize?: number;
 }
@@ -181,6 +260,8 @@ export interface RoyaltyRecord {
   vout: number;
   at: string;
   recordedAt: string;
+  /** The edition number the mint assigned (ADR-0012; optional). */
+  edition?: number;
 }
 
 export interface RoyaltiesResponse {
@@ -220,6 +301,10 @@ export interface StudioApi {
   contentUrl(id: string): string;
   /** DELETE /v1/artworks/{id}: the artist delists an approved artwork. */
   delist(id: string, token: string): Promise<StudioArtwork>;
+  /** PUT /v1/artworks/{id}/editions: set, raise, open (null) or lower (not below minted) the cap. */
+  setEditions(id: string, token: string, maxEditions: number | null): Promise<StudioArtwork>;
+  /** POST /v1/artworks/{id}/appeal: ask the house to look at a rejection again. */
+  appeal(id: string, token: string, message: string): Promise<AppealResponse>;
 }
 
 export class StudioApiError extends Error {
@@ -300,7 +385,12 @@ export function createStudioApi(opts: { baseUrl: string; fetch?: FetchLike }): S
     getMyRoyalties: (token, page, pageSize) => call('GET', `/v1/artists/me/royalties${q({ page, pageSize })}`, undefined, token),
     getArtist: (address) => call('GET', `/v1/artists/${encodeURIComponent(address)}`),
     listArtworks: (query, token) =>
-      call('GET', `/v1/artworks${q({ status: query.status, artist: query.artist, page: query.page, pageSize: query.pageSize })}`, undefined, token),
+      call(
+        'GET',
+        `/v1/artworks${q({ status: query.status, artist: query.artist, available: query.available === undefined ? undefined : String(query.available), page: query.page, pageSize: query.pageSize })}`,
+        undefined,
+        token,
+      ),
     getArtwork: (id, token) => call('GET', `/v1/artworks/${encodeURIComponent(id)}`, undefined, token),
     createArtwork: (token, req) => call('POST', '/v1/artworks', { json: req }, token),
     uploadContent: (id, uploadToken, bytes) => call('PUT', `/v1/artworks/${encodeURIComponent(id)}/content`, { bytes }, uploadToken),
@@ -316,5 +406,7 @@ export function createStudioApi(opts: { baseUrl: string; fetch?: FetchLike }): S
     },
     contentUrl: (id) => `${base}/v1/artworks/${encodeURIComponent(id)}/content`,
     delist: (id, token) => call('DELETE', `/v1/artworks/${encodeURIComponent(id)}`, undefined, token),
+    setEditions: (id, token, maxEditions) => call('PUT', `/v1/artworks/${encodeURIComponent(id)}/editions`, { json: { maxEditions } }, token),
+    appeal: (id, token, message) => call('POST', `/v1/artworks/${encodeURIComponent(id)}/appeal`, { json: { message } }, token),
   };
 }

@@ -4,9 +4,11 @@ import { Frame } from '../components/Frame';
 import { Link } from '../components/Link';
 import { ScreenHeading } from '../components/ScreenHeading';
 import { Alert, Badge, Panel } from '../components/ui';
+import { SoldOutBadge } from '../components/Editions';
 import { shortHash } from '../lib/format';
 import type { ArtworkList, StudioArtwork } from '../services/studioApi';
 import { errorText } from '../components/ui';
+import { navigate, type Route } from '../lib/router';
 
 export function GalleryCard({ artwork, src }: { artwork: StudioArtwork; src: string }) {
   return (
@@ -17,13 +19,21 @@ export function GalleryCard({ artwork, src }: { artwork: StudioArtwork; src: str
           <span className="gallery__title">{artwork.title}</span>
           <span className="gallery__artist mono">{shortHash(artwork.artist, 6)}</span>
           {artwork.featured ? <Badge tone="brass">Featured</Badge> : null}
+          <SoldOutBadge artwork={artwork} />
         </span>
       </Link>
     </li>
   );
 }
 
-export function Gallery({ page, artist }: { page: number; artist: string | null }) {
+/** All / mintable / sold-out (ADR-0012 `available` filter, `GET /v1/artworks?available=`). */
+const AVAILABILITY: ReadonlyArray<{ key: 'all' | 'available' | 'sold-out'; label: string; available: boolean | undefined }> = [
+  { key: 'all', label: 'All', available: undefined },
+  { key: 'available', label: 'Available to mint', available: true },
+  { key: 'sold-out', label: 'Sold out', available: false },
+];
+
+export function Gallery({ page, artist, available }: { page: number; artist: string | null; available?: boolean }) {
   const { services, app } = useMint();
   const [data, setData] = useState<ArtworkList | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -34,13 +44,16 @@ export function Gallery({ page, artist }: { page: number; artist: string | null 
     setData(null);
     setError(null);
     services.studio
-      .listArtworks({ status: 'approved', page, pageSize, ...(artist ? { artist } : {}) })
+      .listArtworks({ status: 'approved', page, pageSize, ...(artist ? { artist } : {}), ...(available !== undefined ? { available } : {}) })
       .then((d) => alive && setData(d))
       .catch((e) => alive && setError(errorText(e)));
     return () => {
       alive = false;
     };
-  }, [services, page, pageSize, artist]);
+  }, [services, page, pageSize, artist, available]);
+
+  const routeFor = (a: boolean | undefined): Route => ({ name: 'gallery', page: 1, artist, ...(a !== undefined ? { available: a } : {}) });
+  const pageRouteFor = (p: number): Route => ({ name: 'gallery', page: p, artist, ...(available !== undefined ? { available } : {}) });
 
   const total = data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / pageSize));
@@ -59,6 +72,18 @@ export function Gallery({ page, artist }: { page: number; artist: string | null 
           </>
         }
       />
+      <div className="row gallery__filter" role="group" aria-label="Filter by availability">
+        {AVAILABILITY.map((f) => (
+          <Link
+            key={f.key}
+            to={routeFor(f.available)}
+            className={['btn', 'btn--sm', (available === f.available ? 'btn--secondary' : 'btn--ghost')].join(' ')}
+            aria-current={available === f.available ? 'true' : undefined}
+          >
+            {f.label}
+          </Link>
+        ))}
+      </div>
       {error ? <Alert tone="bad" title="The gallery could not be loaded">{error}</Alert> : null}
       {!data && !error ? <p className="muted" role="status">Fetching the walls…</p> : null}
       {data ? (
@@ -74,7 +99,7 @@ export function Gallery({ page, artist }: { page: number; artist: string | null 
           {pages > 1 ? (
             <nav className="pager" aria-label="Gallery pages">
               {page > 1 ? (
-                <Link to={{ name: 'gallery', page: page - 1, artist }} className="btn btn--ghost" rel="prev">
+                <Link to={pageRouteFor(page - 1)} className="btn btn--ghost" rel="prev">
                   Previous
                 </Link>
               ) : (
@@ -87,14 +112,14 @@ export function Gallery({ page, artist }: { page: number; artist: string | null 
                       {n}
                     </span>
                   ) : (
-                    <Link key={n} to={{ name: 'gallery', page: n, artist }} className="pager__page" aria-label={`Page ${n}`}>
+                    <Link key={n} to={pageRouteFor(n)} className="pager__page" aria-label={`Page ${n}`}>
                       {n}
                     </Link>
                   ),
                 )}
               </span>
               {page < pages ? (
-                <Link to={{ name: 'gallery', page: page + 1, artist }} className="btn btn--ghost" rel="next">
+                <Link to={pageRouteFor(page + 1)} className="btn btn--ghost" rel="next">
                   Next
                 </Link>
               ) : (

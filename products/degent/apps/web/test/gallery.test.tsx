@@ -27,6 +27,8 @@ describe('Gallery (#/gallery)', () => {
       expect(item.querySelector('.frame')).not.toBeNull();
     }
     expect(screen.getByText('Showing 1–3 of 3')).toBeInTheDocument();
+    // The site navigation lives in the slide-out menu (site spec): open it, the Gallery entry is current.
+    await userEvent.click(screen.getByRole('button', { name: 'Menu' }));
     expect(screen.getByRole('navigation', { name: 'Site' }).querySelector('a[aria-current="page"]')).toHaveTextContent('Gallery');
     expect(services.log.filter((l) => l === 'studio.listArtworks')).toHaveLength(1);
   });
@@ -53,6 +55,35 @@ describe('Gallery (#/gallery)', () => {
     expect(screen.getByText(/Showing the work of/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('link', { name: 'All artists' }));
     expect(await screen.findByText('Showing 1–3 of 3')).toBeInTheDocument();
+  });
+
+  it('an artwork at its edition cap shows a sold-out badge and the ?available filter (ADR-0012)', async () => {
+    const services = fakes();
+    const regen = DEMO_ARTWORKS[2]!; // maxEditions: 25
+    for (let i = 0; i < 25; i++) {
+      services.studio.hooks.recordRoyalty({ orderId: `ord_${i}`, artworkId: regen.id, minterAddress: null, royaltySats: 1000, fundingTxid: `${i}`.repeat(64).slice(0, 64), vout: 1, at: new Date().toISOString() });
+    }
+    renderApp(services, { hash: '#/gallery' });
+    const list = await screen.findByRole('list', { name: 'Gallery' });
+    const item = within(list).getByText('Regen at Dawn').closest('li')!;
+    expect(within(item).getByText('Sold out')).toBeInTheDocument();
+
+    // ?available=1: only mintable pieces (excludes the sold-out one).
+    await userEvent.click(screen.getByRole('link', { name: 'Available to mint' }));
+    expect(window.location.hash).toBe('#/gallery?available=1');
+    await screen.findByText('Showing 1–2 of 2');
+    expect(screen.queryByText('Regen at Dawn')).not.toBeInTheDocument();
+
+    // ?available=0: only sold-out pieces.
+    await userEvent.click(screen.getByRole('link', { name: 'Sold out' }));
+    expect(window.location.hash).toBe('#/gallery?available=0');
+    await screen.findByText('Showing 1–1 of 1');
+    expect(screen.getByText('Regen at Dawn')).toBeInTheDocument();
+
+    // Back to all.
+    await userEvent.click(screen.getByRole('link', { name: 'All' }));
+    expect(window.location.hash).toBe('#/gallery');
+    await screen.findByText('Showing 1–3 of 3');
   });
 });
 
@@ -102,6 +133,21 @@ describe('Artwork page (#/gallery/:id)', () => {
   it('a shared #/mint/:artworkId link loads the artwork into the wizard', async () => {
     renderApp(fakes(), { hash: `#/mint/${DEMO_ARTWORKS[2]!.id}` });
     expect(await screen.findByTestId('selected-artwork')).toHaveTextContent('Regen at Dawn');
+  });
+
+  it('a sold-out edition disables Mint and explains why (ADR-0012)', async () => {
+    const services = fakes();
+    const regen = DEMO_ARTWORKS[2]!; // maxEditions: 25
+    for (let i = 0; i < 25; i++) {
+      services.studio.hooks.recordRoyalty({ orderId: `ord_${i}`, artworkId: regen.id, minterAddress: null, royaltySats: 1000, fundingTxid: `${i}`.repeat(64).slice(0, 64), vout: 1, at: new Date().toISOString() });
+    }
+    renderApp(services, { hash: `#/gallery/${regen.id}` });
+    expect(await screen.findByRole('heading', { level: 1, name: /Regen at Dawn/ })).toBeInTheDocument();
+    expect(screen.getByText('Sold out')).toBeInTheDocument();
+    expect(screen.getByTestId('editions')).toHaveTextContent('25 minted of 25 · sold out');
+    const mint = screen.getByRole('button', { name: 'Mint this Degent' });
+    expect(mint).toBeDisabled();
+    expect(screen.getByText(/This edition is sold out: 25 of 25 minted/)).toBeInTheDocument();
   });
 
   it('says so when the artwork does not exist, and 404s unknown routes', async () => {

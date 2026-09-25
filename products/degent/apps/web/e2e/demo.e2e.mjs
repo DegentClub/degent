@@ -1,10 +1,15 @@
 /**
- * Real-browser e2e for the mint front end (`pnpm --filter @bsh/degent-web e2e`).
+ * Real-browser e2e for the degent.club web app (`pnpm --filter @bsh/degent-web e2e`).
  *
  * Builds nothing itself: run after `vite build` (the script does both via package.json). Serves
  * `vite preview` on a free port, drives the `?demo=1` flow through every screen in headless
  * Chromium at 1280 px and 400 px, fails on any console error / page error / horizontal overflow,
  * and saves full-page screenshots to docs/screenshots/<width>-<nn>-<screen>.png.
+ *
+ * The walk (site rebuild, p6.1): Home -> #/collection (grid + lightbox) -> #/mint-process ->
+ * #/comic -> #/about -> #/manifesto -> #/blog (+ the example post) -> #/gallery -> an artwork ->
+ * its #/artists/:address page -> the Artist Studio (sign in, prove payout, set a notification
+ * webhook) -> the mint wizard at #/mint through to delivery.
  *
  * Browser: playwright-core (no bundled browsers). Set CHROMIUM_PATH, else /opt/pw-browsers/chromium
  * (a file, or a directory searched for chrome / headless_shell).
@@ -104,9 +109,104 @@ async function runViewport(browser, url, width) {
     saved.push(file);
   };
   const h1 = (re) => page.getByRole('heading', { level: 1, name: re }).waitFor({ timeout: 15_000 });
+  const openNav = async () => {
+    await page.getByRole('button', { name: 'Menu' }).click();
+    return page.getByRole('navigation', { name: 'Site' });
+  };
 
+  // `#/` is Home since the site rebuild (p6.1): hero, live meters, the collection card, the comic, the banner.
   await page.goto(`${url}/?demo=1`);
   await page.getByText('DEMO', { exact: true }).waitFor();
+  await h1(/Decentralized Gentlemen Club/);
+  await page.locator('[data-testid="collection-card"]').waitFor();
+  await shot('home');
+
+  // #/collection: hero, collection card, the paged grid and the lightbox (site spec §1-4).
+  (await openNav()).getByRole('link', { name: 'The Collection' }).click();
+  await h1(/^The Collection$/);
+  await page.getByText(/^Showing 1–20 of 4,112$/).waitFor();
+  await page.locator('.degent-grid li').first().waitFor();
+  await shot('collection');
+
+  await page.getByRole('link', { name: /^DEGENT #1(,|$)/ }).click();
+  await page.getByRole('dialog').getByRole('heading', { name: 'DEGENT #1' }).waitFor();
+  const lightboxImg = page.locator('.lightbox__art img');
+  await lightboxImg.waitFor();
+  check(await lightboxImg.evaluate((img) => img.complete && img.naturalWidth > 0), 'lightbox image did not decode');
+  await page.getByText('Inscription ID').waitFor();
+  await shot('collection-lightbox');
+  await page.keyboard.press('Escape');
+  await page.getByRole('dialog').waitFor({ state: 'detached' });
+
+  // #/mint-process: the four rule cards and the "Did you know?" callout (site spec §mint process).
+  (await openNav()).getByRole('link', { name: 'Mint Process' }).click();
+  await h1(/^Minting Rules$/);
+  check((await page.locator('.rulecard').count()) === 4, 'expected four minting-rule cards');
+  await page.getByRole('heading', { name: 'Did you know?' }).waitFor();
+  await shot('mint-process');
+
+  // #/comic (footer Quick Links: no hamburger entry for it).
+  await page.getByRole('contentinfo').getByRole('link', { name: 'The Comic' }).click();
+  await h1(/This is Gentlemen/);
+  await shot('comic');
+
+  // #/about, #/manifesto: TODO(copy) placeholders (site spec: copy not captured, never invented).
+  (await openNav()).getByRole('link', { name: 'About' }).click();
+  await h1(/^About$/);
+  await page.getByText('TODO(copy)').waitFor();
+  await shot('about');
+
+  (await openNav()).getByRole('link', { name: 'Manifesto' }).click();
+  await h1(/^Manifesto$/);
+  await page.getByText('TODO(copy)').waitFor();
+  await shot('manifesto');
+
+  // #/blog "Degent Chronicles": the example post from content/blog/*.md.
+  (await openNav()).getByRole('link', { name: 'Blog' }).click();
+  await h1(/Chronicles/);
+  await page.getByText('Example post', { exact: true }).waitFor();
+  await shot('blog');
+  await page.locator('.postcard__link').first().click();
+  await h1(/how a Degent Chronicle is written/);
+  await shot('blog-post');
+
+  (await openNav()).getByRole('link', { name: 'Gallery' }).click();
+  await h1(/hung by their makers/);
+  await page.getByText('Showing 1–3 of 3').waitFor();
+  const frames = page.locator('.gallery .frame__img');
+  check((await frames.count()) === 3, 'expected three framed artworks');
+  for (const img of await frames.all()) check(await img.evaluate((el) => el.complete && el.naturalWidth > 0), 'gallery image did not decode');
+  await shot('gallery');
+
+  await page.getByRole('link', { name: /The Chairman by/ }).click();
+  await h1(/The Chairman/);
+  await page.getByRole('button', { name: 'Mint this Degent' }).waitFor();
+  check((await page.locator('.pills .pill').count()) === 5, 'expected five rule pills');
+  await shot('artwork');
+
+  // #/artists/:address: joins the studio profile, the certified members and the studio artworks.
+  await page.getByRole('link', { name: 'Artist page' }).click();
+  await h1(/Ada|bc1/);
+  await page.getByTestId('artist-certified').waitFor();
+  await shot('artist');
+
+  (await openNav()).getByRole('link', { name: 'Studio' }).click();
+  await h1(/Membership is earned by making/);
+  await page.getByRole('button', { name: 'Connect UniSat' }).click();
+  await page.getByRole('button', { name: 'Sign in with Bitcoin' }).waitFor();
+  await page.getByRole('button', { name: 'Sign in with Bitcoin' }).click();
+  await page.getByRole('heading', { name: 'Your profile' }).waitFor();
+  await page.getByRole('button', { name: 'Prove & save payout address' }).click();
+  await page.getByText('✓ Proven').waitFor();
+  // ADR-0012: notification settings, with the one-time webhook signing secret.
+  await page.getByLabel(/Webhook URL/).fill('https://example.com/degent-hook');
+  await page.getByRole('button', { name: 'Save notifications' }).click();
+  await page.getByText('Your webhook signing secret: shown once').waitFor();
+  await shot('studio');
+
+  // The mint wizard still lives at #/mint (header "Mint" button); no studio artwork was picked, so it
+  // opens on the plain wizard welcome screen.
+  await page.getByRole('link', { name: 'Mint', exact: true }).click();
   await page.getByText('3 waiting').waitFor();
   for (const t of ['Standard Degent', 'Large Degent', 'Full Block Degent']) await page.getByRole('heading', { level: 2, name: t }).waitFor();
   await shot('welcome');
@@ -158,29 +258,6 @@ async function runViewport(browser, url, width) {
   const onChain = page.getByRole('img', { name: 'The inscription as rendered from the chain' });
   check(await onChain.evaluate((img) => img.complete && img.naturalWidth > 0), 'on-chain image did not decode');
   await shot('delivered');
-
-  // The Open Studio (ADR-0007): gallery, one artwork, the studio signed in with the fake wallet.
-  await page.getByRole('navigation', { name: 'Site' }).getByRole('link', { name: 'Gallery' }).click();
-  await h1(/hung by their makers/);
-  await page.getByText('Showing 1–3 of 3').waitFor();
-  const frames = page.locator('.gallery .frame__img');
-  check((await frames.count()) === 3, 'expected three framed artworks');
-  for (const img of await frames.all()) check(await img.evaluate((el) => el.complete && el.naturalWidth > 0), 'gallery image did not decode');
-  await shot('gallery');
-
-  await page.getByRole('link', { name: /The Chairman by/ }).click();
-  await h1(/The Chairman/);
-  await page.getByRole('button', { name: 'Mint this Degent' }).waitFor();
-  check((await page.locator('.pills .pill').count()) === 5, 'expected five rule pills');
-  await shot('artwork');
-
-  await page.getByRole('navigation', { name: 'Site' }).getByRole('link', { name: 'Studio' }).click();
-  await h1(/Membership is earned by making/);
-  await page.getByRole('button', { name: 'Sign in with Bitcoin' }).click();
-  await page.getByRole('heading', { name: 'Your profile' }).waitFor();
-  await page.getByRole('button', { name: 'Prove & save payout address' }).click();
-  await page.getByText('✓ Proven').waitFor();
-  await shot('studio');
 
   await context.close();
   check(problems.length === 0, `${width}px: browser problems:\n  ${problems.join('\n  ')}`);
