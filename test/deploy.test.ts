@@ -10,7 +10,7 @@
  *   - the NixOS web module and the container serve the same Caddy site body.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, globSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -311,6 +311,28 @@ describe('Dockerfiles', () => {
   it('the web image ships the shared Caddy site body', () => {
     expect(deploy('web.Dockerfile')).toContain('products/degent/deploy/web-site.caddy');
     expect(deploy('Caddyfile')).toMatch(/import web-site\.caddy/);
+  });
+
+  it("the mint image's manifest layer copies every @bsh workspace dependency's package.json", () => {
+    // The build runs `pnpm install --frozen-lockfile --filter "@bsh/degent-mint..."` against only the
+    // package.json files copied first. Missing one (e.g. @bsh/notify) fails the install, so this keeps
+    // the Dockerfile's COPY list in step with the service's dependency closure.
+    const repoRoot = root;
+    const nameToDir = new Map<string, string>();
+    for (const g of ['deps/scribbit/platform/*', 'products/degent/{packages,services}/*']) {
+      for (const dir of globSync(g, { cwd: repoRoot })) {
+        const pj = join(repoRoot, dir, 'package.json');
+        if (existsSync(pj)) nameToDir.set(JSON.parse(readFileSync(pj, 'utf8')).name, dir);
+      }
+    }
+    const mintPkg = JSON.parse(readFileSync(join(repoRoot, 'products/degent/services/mint/package.json'), 'utf8'));
+    const bshDeps = Object.keys({ ...mintPkg.dependencies, ...mintPkg.devDependencies }).filter((d) => d.startsWith('@bsh/'));
+    const dockerfile = deploy('mint.Dockerfile');
+    for (const dep of bshDeps) {
+      const dir = nameToDir.get(dep);
+      expect(dir, `no workspace dir for ${dep}`).toBeDefined();
+      expect(dockerfile, `mint.Dockerfile must COPY ${dir}/package.json`).toContain(`${dir}/package.json`);
+    }
   });
 });
 

@@ -25,6 +25,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY deps/scribbit/platform/inscription/package.json deps/scribbit/platform/inscription/
 COPY deps/scribbit/platform/identity/package.json deps/scribbit/platform/identity/
 COPY deps/scribbit/platform/events/package.json deps/scribbit/platform/events/
+COPY deps/scribbit/platform/notify/package.json deps/scribbit/platform/notify/
 COPY products/degent/packages/mint-sdk/package.json products/degent/packages/mint-sdk/
 COPY products/degent/services/mint/package.json products/degent/services/mint/
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
