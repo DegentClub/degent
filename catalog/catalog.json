@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-24T02:43:33.664Z",
+  "generatedAt": "2026-09-25T21:39:54.255Z",
   "schema": "schemas/component.schema.json",
   "components": [
     {
@@ -33,7 +33,7 @@
       "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
+        "commit": "743221e5e6d16e2b4b966f971f4011cad61e0977",
         "root": "deps/scribbit"
       }
     },
@@ -344,11 +344,12 @@
         "degent-mint",
         "degent-studio",
         "ledger",
+        "plane",
         "signer"
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
+        "commit": "743221e5e6d16e2b4b966f971f4011cad61e0977",
         "root": "deps/scribbit"
       }
     },
@@ -386,7 +387,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
+        "commit": "743221e5e6d16e2b4b966f971f4011cad61e0977",
         "root": "deps/scribbit"
       }
     },
@@ -421,7 +422,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
+        "commit": "743221e5e6d16e2b4b966f971f4011cad61e0977",
         "root": "deps/scribbit"
       }
     },
@@ -454,7 +455,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
+        "commit": "743221e5e6d16e2b4b966f971f4011cad61e0977",
         "root": "deps/scribbit"
       }
     },
@@ -515,7 +516,7 @@
       "dependents": [],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
+        "commit": "743221e5e6d16e2b4b966f971f4011cad61e0977",
         "root": "deps/scribbit"
       }
     },
@@ -542,10 +543,12 @@
       "files": {
         "docs": "deps/scribbit/platform/mesh/README.md"
       },
-      "dependents": [],
+      "dependents": [
+        "plane"
+      ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
+        "commit": "743221e5e6d16e2b4b966f971f4011cad61e0977",
         "root": "deps/scribbit"
       }
     },
@@ -579,7 +582,67 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
+        "commit": "743221e5e6d16e2b4b966f971f4011cad61e0977",
+        "root": "deps/scribbit"
+      }
+    },
+    {
+      "name": "plane",
+      "package": "@bsh/plane",
+      "kind": "service",
+      "product": "platform",
+      "owner": "team-platform",
+      "summary": "Open, minimal spend-authorization plane for our agents - FlashyOS's five checks, verdicts and signed single-use SpendAuthorizations, independent of their plane.",
+      "lifecycle": "experimental",
+      "depends_on": [
+        "@bsh/edge",
+        "@bsh/mesh"
+      ],
+      "provides": [
+        "deps/scribbit/contracts/openapi/plane.yaml"
+      ],
+      "consumes": [
+        "deps/scribbit/contracts/openapi/ledger.yaml"
+      ],
+      "stores": [
+        "sqlite:plane",
+        "memory:plane-api-keys",
+        "memory:plane-rate-limits"
+      ],
+      "secrets": [
+        "services/plane/authz-private-key",
+        "services/plane/api-keys",
+        "services/plane/ledger-api-key"
+      ],
+      "env_schema": "./env.schema.json",
+      "slo": {
+        "availability": "99.9",
+        "p95_ms": 150
+      },
+      "runbook": "./RUNBOOK.md",
+      "docs": "./README.md",
+      "commands": {
+        "dev": "dev",
+        "test": "test",
+        "typecheck": "typecheck"
+      },
+      "path": "deps/scribbit/platform/plane",
+      "version": "0.1.0",
+      "scripts": {
+        "dev": "tsx watch src/main.ts",
+        "start": "tsx src/main.ts",
+        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p ."
+      },
+      "files": {
+        "env_schema": "deps/scribbit/platform/plane/env.schema.json",
+        "runbook": "deps/scribbit/platform/plane/RUNBOOK.md",
+        "docs": "deps/scribbit/platform/plane/README.md"
+      },
+      "dependents": [],
+      "external": {
+        "repo": "https://github.com/DegentClub/scribbit.git",
+        "commit": "743221e5e6d16e2b4b966f971f4011cad61e0977",
         "root": "deps/scribbit"
       }
     },
@@ -634,7 +697,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
+        "commit": "743221e5e6d16e2b4b966f971f4011cad61e0977",
         "root": "deps/scribbit"
       }
     },
@@ -669,7 +732,7 @@
       ],
       "external": {
         "repo": "https://github.com/DegentClub/scribbit.git",
-        "commit": "09bd9d7473d0c4847bd7edae9be8035816335609",
+        "commit": "743221e5e6d16e2b4b966f971f4011cad61e0977",
         "root": "deps/scribbit"
       }
     }
@@ -710,6 +773,7 @@
         "ledger",
         "mesh",
         "notify",
+        "plane",
         "signer",
         "wallet-kit"
       ],
@@ -718,7 +782,7 @@
       ],
       "kinds": {
         "library": 7,
-        "service": 2
+        "service": 3
       }
     },
     "scribbit": {
@@ -831,8 +895,18 @@
         "ledger"
       ],
       "consumers": [
-        "degent-mint"
+        "degent-mint",
+        "plane"
       ]
+    },
+    {
+      "path": "deps/scribbit/contracts/openapi/plane.yaml",
+      "kind": "openapi",
+      "exists": true,
+      "providers": [
+        "plane"
+      ],
+      "consumers": []
     },
     {
       "path": "deps/scribbit/contracts/openapi/signer.yaml",
@@ -899,6 +973,11 @@
     {
       "from": "degent-web",
       "to": "contracts/openapi/degent-mint.yaml",
+      "type": "consumes"
+    },
+    {
+      "from": "plane",
+      "to": "deps/scribbit/contracts/openapi/ledger.yaml",
       "type": "consumes"
     },
     {
@@ -987,6 +1066,16 @@
       "type": "depends_on"
     },
     {
+      "from": "plane",
+      "to": "edge",
+      "type": "depends_on"
+    },
+    {
+      "from": "plane",
+      "to": "mesh",
+      "type": "depends_on"
+    },
+    {
       "from": "signer",
       "to": "edge",
       "type": "depends_on"
@@ -1039,6 +1128,11 @@
     {
       "from": "ledger",
       "to": "deps/scribbit/contracts/openapi/ledger.yaml",
+      "type": "provides"
+    },
+    {
+      "from": "plane",
+      "to": "deps/scribbit/contracts/openapi/plane.yaml",
       "type": "provides"
     },
     {
