@@ -1,0 +1,178 @@
+# Signet staging stack for degent.club (SKRYBITDEV-PD.1-adjacent: exercises the
+# real Open Studio services end to end against the fleet's *signet* Bitcoin
+# endpoints -- never mainnet, never the private-signet stack's mine/fund tooling).
+#
+# Usage (from the repo root, so the build context resolves the pnpm workspace +
+# deps/scribbit submodule):
+#
+#   git submodule update --init --recursive
+#   cp deploy/.env.example deploy/.env       # fill in values; see DEPLOY.md
+#   docker compose -f deploy/compose.signet.yml --env-file deploy/.env config   # validate
+#   docker compose -f deploy/compose.signet.yml --env-file deploy/.env up -d --build
+#
+# What this brings up: rabbitmq (the platform event bus), the three degent Open
+# Studio services (mint, studio, atelier) and the web app, each built from this
+# repo's own Dockerfiles. It does NOT bring up the platform signer or ledger --
+# those are shared platform services (DegentClub/scribbit) that in staging/prod
+# run on the fleet; point SIGNER_URL / LEDGER_URL at them (see .env.example and
+# docs/fleet-handoff.md). Running them locally too is possible with scribbit's own
+# `deploy/compose.yml` (see /home/user/scribbit/DEPLOY.md) on the same Docker
+# network -- not wired here to keep this repo's compose file self-contained.
+#
+# Storage: every service here uses node:sqlite (DATABASE_PATH is a single file),
+# not Postgres -- there is no Postgres dependency in the actual application config
+# surface (see each service's env.schema.json). Each gets its own named volume
+# under /data (db file + content-addressed blob dir).
+
+name: degent-signet
+
+services:
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    restart: unless-stopped
+    ports:
+      - "${RABBITMQ_AMQP_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672" # http://localhost:15672
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-degent}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  mint:
+    build:
+      context: ..
+      dockerfile: deploy/docker/mint.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "${MINT_PORT:-8787}:8787"
+    environment:
+      NETWORK: signet
+      HOST: 0.0.0.0
+      PORT: 8787
+      DATABASE_PATH: /data/mint.sqlite3
+      CONTENT_DIR: /data/content
+      # Fleet signet endpoints (INFRA-165 Fleet API / `fleet dev connect btc-signet`
+      # `fleet dev connect indexer-signet` resolve the current URLs) -- never
+      # hardcode IPs here; see docs/fleet-handoff.md.
+      ESPLORA_URL: ${SIGNET_ESPLORA_URL:-}
+      ORD_URL: ${SIGNET_ORD_URL:-}
+      LIBRE_RPC_URL: ${SIGNET_LIBRE_RPC_URL:-}
+      LIBRE_RPC_USER: ${SIGNET_LIBRE_RPC_USER:-}
+      LIBRE_RPC_PASS: ${SIGNET_LIBRE_RPC_PASS:-}
+      SLIPSTREAM_URL: ${SLIPSTREAM_URL:-}
+      SLIPSTREAM_API_KEY: ${SLIPSTREAM_API_KEY:-}
+      PARENT_INSCRIPTION_ID: ${MINT_PARENT_INSCRIPTION_ID:-}
+      PARENT_OUTPOINT: ${MINT_PARENT_OUTPOINT:-}
+      PARENT_VALUE_SATS: ${MINT_PARENT_VALUE_SATS:-10000}
+      COLLECTION_ADDRESS: ${MINT_COLLECTION_ADDRESS:-}
+      REVEAL_ENCRYPTION_KEY: ${MINT_REVEAL_ENCRYPTION_KEY:-}
+      # Remote policy signer (platform/signer in DegentClub/scribbit) -- a shared
+      # service, not built by this compose file. See docs/fleet-handoff.md.
+      SIGNER: remote
+      SIGNER_URL: ${SIGNER_URL:-}
+      SIGNER_API_KEY: ${MINT_SIGNER_API_KEY:-}
+      SIGNER_KEY_ID: ${MINT_SIGNER_KEY_ID:-degent-parent}
+      CORS_ORIGINS: ${WEB_ORIGIN:-http://localhost:8080}
+      STUDIO_URL: http://studio:8790
+      STUDIO_API_KEY: ${MINT_STUDIO_API_KEY:-}
+      # Platform ledger (platform/ledger in DegentClub/scribbit) -- also shared;
+      # not built by this compose file.
+      LEDGER_URL: ${LEDGER_URL:-}
+      LEDGER_API_KEY: ${MINT_LEDGER_API_KEY:-}
+      ROYALTY_BPS: ${ROYALTY_BPS:-1000}
+      CLUB_FEE_BPS_STANDARD: ${CLUB_FEE_BPS_STANDARD:-1000}
+      CLUB_FEE_BPS_LARGE: ${CLUB_FEE_BPS_LARGE:-1000}
+      CLUB_FEE_BPS_FULLBLOCK: ${CLUB_FEE_BPS_FULLBLOCK:-1000}
+      SERVICE_FEE_ADDRESS: ${SERVICE_FEE_ADDRESS:-}
+      MINT_ADMIN_API_KEYS_JSON: ${MINT_ADMIN_API_KEYS_JSON:-}
+      ART_REVIEW_API_KEY: ${ART_REVIEW_API_KEY:-}
+      AMQP_URL: amqp://${RABBITMQ_USER:-degent}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+    volumes:
+      - mint-data:/data
+
+  studio:
+    build:
+      context: ..
+      dockerfile: deploy/docker/studio.Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${STUDIO_PORT:-8790}:8790"
+    environment:
+      NETWORK: signet
+      HOST: 0.0.0.0
+      PORT: 8790
+      PUBLIC_BASE_URL: ${STUDIO_PUBLIC_BASE_URL:-https://studio.degent.club}
+      DATABASE_PATH: /data/studio.sqlite3
+      CONTENT_DIR: /data/content
+      SIWB_DOMAIN: ${STUDIO_SIWB_DOMAIN:-}
+      SIWB_URI: ${STUDIO_SIWB_URI:-}
+      SESSION_SIGNING_KEY: ${STUDIO_SESSION_SIGNING_KEY:-}
+      SESSION_PREVIOUS_KEYS: ${STUDIO_SESSION_PREVIOUS_KEYS:-}
+      API_KEYS: ${STUDIO_API_KEYS:-}
+      VISION_REVIEW_API_KEY: ${VISION_REVIEW_API_KEY:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      CORS_ORIGINS: ${WEB_ORIGIN:-http://localhost:8080}
+    volumes:
+      - studio-data:/data
+
+  atelier:
+    build:
+      context: ..
+      dockerfile: deploy/docker/atelier.Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${ATELIER_PORT:-8788}:8788"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8788
+      PUBLIC_BASE_URL: ${ATELIER_PUBLIC_BASE_URL:-https://atelier.degent.club}
+      ATELIER_MODE: ${ATELIER_MODE:-fake}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      HTTP_PROVIDER_URL: ${HTTP_PROVIDER_URL:-}
+      HTTP_PROVIDER_API_KEY: ${HTTP_PROVIDER_API_KEY:-}
+      VISION_REVIEW_API_KEY: ${VISION_REVIEW_API_KEY:-}
+      DATABASE_PATH: /data/atelier.sqlite3
+      CONTENT_DIR: /data/content
+      CORS_ORIGINS: ${WEB_ORIGIN:-http://localhost:8080}
+      GLOBAL_DAILY_COST_CENTS: ${ATELIER_GLOBAL_DAILY_COST_CENTS:-2000}
+    volumes:
+      - atelier-data:/data
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/docker/web.Dockerfile
+      args:
+        VITE_NETWORK: signet
+        VITE_MINT_API_URL: ${VITE_MINT_API_URL:-http://localhost:8787}
+        VITE_STUDIO_API_URL: ${VITE_STUDIO_API_URL:-http://localhost:8790}
+        VITE_ESPLORA_URL: ${SIGNET_ESPLORA_URL:-}
+        VITE_EXPLORER_URL: ${VITE_EXPLORER_URL:-https://explore.block.space}
+        VITE_ORD_URL: ${SIGNET_ORD_URL:-}
+        VITE_CERTIFY_URL: ${VITE_CERTIFY_URL:-https://certify.block.space}
+        VITE_COLLECTION_SLUG: ${VITE_COLLECTION_SLUG:-degents}
+        VITE_POLL_MS: ${VITE_POLL_MS:-}
+        VITE_GALLERY_PAGE_SIZE: ${VITE_GALLERY_PAGE_SIZE:-}
+        VITE_COMIC_INSCRIPTION_ID: ${VITE_COMIC_INSCRIPTION_ID:-}
+    restart: unless-stopped
+    depends_on:
+      - mint
+      - studio
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+
+volumes:
+  rabbitmq-data:
+  mint-data:
+  studio-data:
+  atelier-data:
