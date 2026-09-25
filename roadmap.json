@@ -312,10 +312,11 @@
           "id": "p4.2",
           "repo": "blockspace",
           "title": "Attestation carries the royalty funding txid and vout from collection.minted",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "p3.9"
-          ]
+          ],
+          "verify": "DegentClub/blockspace ADR-0013; pnpm --filter @bsh/blockspace-certify test"
         },
         {
           "id": "p4.3",
@@ -424,10 +425,11 @@
           "id": "p6.2",
           "repo": "platform",
           "title": "scribb.it MCP order tools over the ledger so agents can mint a Degent",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "p3.10"
-          ]
+          ],
+          "verify": "DegentClub/scribbit scribbit-mcp order tools + @bsh/plane"
         },
         {
           "id": "p6.3",
