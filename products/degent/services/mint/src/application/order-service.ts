@@ -37,7 +37,7 @@ import {
 } from '@bsh/degent-mint-sdk';
 import { addressKind, checkRecipientAddress } from '../domain/address.js';
 import { DomainError, conflict, invalid, notFound } from '../domain/errors.js';
-import { IN_FLIGHT, WAITING_FOR_LANE, isArtworkOrder, toPublicOrder, type LedgerRecordState, type OrderRecord, type RoyaltyReportState } from '../domain/order.js';
+import { hasConfirmedReveal, IN_FLIGHT, WAITING_FOR_LANE, isArtworkOrder, toPublicOrder, type LedgerRecordState, type OrderRecord, type RoyaltyReportState } from '../domain/order.js';
 import { attributionFor, computeQuote, inscriptionContent, type ArtworkQuoteInput } from '../domain/quote.js';
 import { retryDelayMs } from '../domain/royalty.js';
 import { transition as checkTransition } from '../domain/state-machine.js';
@@ -530,9 +530,41 @@ export class OrderService {
     return this.d.editions.consume(r.artworkId!, r.id, r.quote.edition, now);
   }
 
+  /**
+   * Release the artwork edition this order holds back to the pool — an active reservation (quote expired,
+   * commit never funded) or an already-consumed one (security review item 11: `rescue_available` / `expired`
+   * / `failed`, or a funding tx observed dropped, must not burn the edition forever when the mint never
+   * actually delivered it). Refuses in two cases:
+   *
+   *  - `hasConfirmedReveal(r)`: this order's own reveal (parent-linked, or a self-rescue of it) already
+   *    confirmed on chain. A real inscription exists, so the assignment is permanent and correct.
+   *  - The artist WAS paid (`r.royaltyPaid` set) in a funding transaction that could STILL be reported:
+   *    `reportRoyalty` keeps retrying such orders from every status up to and including `rescue_available`
+   *    until the funding confirms, so the studio would still be told about — and count — that payment. This
+   *    is checked against the chain right now rather than trusted from the stored flag alone: if that same
+   *    funding transaction has since vanished (evicted/replaced, the same condition `releaseVanishedFunding`
+   *    watches for), `reportRoyalty`'s own confirmation gate (`worker.ts`) can never fire for it either, so
+   *    there is nothing left to double-count and the release is safe. A reservation that never produced a
+   *    royalty at all (`royaltyPaid` stayed null — short/missing artist output, or the number was lost to
+   *    another order before payment) was, by construction, never counted by the studio either way.
+   *
+   * Idempotent (releaseHeld no-ops once the reservation is gone) and safe under the artwork's reservation
+   * lock; a released edition can be re-assigned to a new order.
+   */
   async releaseEdition(r: OrderRecord): Promise<void> {
-    if (!isArtworkOrder(r)) return;
-    await this.d.editions.release(r.artworkId!, r.id);
+    if (!isArtworkOrder(r) || hasConfirmedReveal(r)) return;
+    if (r.royaltyPaid != null && (await this.fundingStillReportable(r))) return;
+    await this.d.editions.releaseHeld(r.artworkId!, r.id);
+  }
+
+  /** Could `reportRoyalty` still report this order's funding transaction? Defaults to yes when unsure. */
+  private async fundingStillReportable(r: OrderRecord): Promise<boolean> {
+    if (!r.commitOutpoint || !this.d.chain) return true;
+    try {
+      return (await this.d.chain.getTx(r.commitOutpoint.txid)) !== null;
+    } catch {
+      return true; // chain unreachable: assume it could still land, don't release on a guess
+    }
   }
 
   /**

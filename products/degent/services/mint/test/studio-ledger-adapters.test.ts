@@ -229,6 +229,25 @@ describe.each([
     expect(await e.consume('art', 'nope', 3, t(5))).toBeNull(); // held by o4
   });
 
+  it('releaseHeld force-drops a reservation whether active or consumed (security review item 11); idempotent; the number is reusable', async () => {
+    const e = new MetaEditionStore(make());
+    await e.reserve('art', 'o1', t(900), t0);
+    await e.releaseHeld('art', 'o1'); // active reservation: dropped, unlike a no-reservation case this is not a no-op
+    expect(await e.reservation('art', 'o1')).toBeNull();
+    await e.releaseHeld('art', 'o1'); // idempotent: nothing left to release
+    expect(await e.reserve('art', 'o2', t(900), t(1))).toBe(1); // number 1 is free again
+
+    expect(await e.consume('art', 'o2', 1, t(2))).toBe(1);
+    expect(await e.consumedCount('art')).toBe(1);
+    await e.release('art', 'o2'); // the plain release() refuses a consumed reservation
+    expect((await e.reservation('art', 'o2'))!.consumed).toBe(true);
+    await e.releaseHeld('art', 'o2'); // releaseHeld force-drops it anyway
+    expect(await e.reservation('art', 'o2')).toBeNull();
+    expect(await e.consumedCount('art')).toBe(0);
+    expect(await e.reserve('art', 'o3', t(900), t(3))).toBe(1); // reusable by a later order
+    expect(await e.releaseHeld('other', 'nope')).toBeUndefined(); // unknown artwork/order: harmless no-op
+  });
+
   it('expired reservations are released lazily; a late consume keeps the number unless another order holds it', async () => {
     const e = new MetaEditionStore(make());
     await e.reserve('art', 'late', t(900), t0);

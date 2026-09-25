@@ -109,6 +109,7 @@ export class MintWorker {
       await this.verifyAndDeliver();
       await this.watchRescues();
       await this.detectPayments();
+      await this.releaseVanishedFunding();
       await this.reportRoyalties();
       await this.expireUnpaid();
       await this.enqueuePaid();
@@ -159,8 +160,10 @@ export class MintWorker {
           : !scriptOk
             ? 'commit output pays a different script than the quoted commit address'
             : `commit output value ${out.value} != quoted ${r.quote.commitValueSats}`;
-        if (r.status === 'awaiting_payment') await this.move(r, 'failed', { detail, txid: tx.txid });
-        else this.log.warn('late commit does not match order', { orderId: r.id, detail });
+        if (r.status === 'awaiting_payment') {
+          const failed = await this.move(r, 'failed', { detail, txid: tx.txid });
+          await this.d.orders.releaseEdition(failed);
+        } else this.log.warn('late commit does not match order', { orderId: r.id, detail });
         return;
       }
       const paidAt = this.d.clock.now().toISOString();
@@ -215,16 +218,42 @@ export class MintWorker {
       patch: { paidAt, ...(edition !== null ? { edition } : {}), royaltyPaid, fundingRbf },
     });
     if (!check.ok) {
-      await this.move(paid, 'rescue_available', {
+      const rescued = await this.move(paid, 'rescue_available', {
         detail: `funding transaction does not pay the studio split: ${check.detail}; the parent will not be co-signed, self-rescue is available`,
       });
+      // Security review item 11: the artist was never paid in this funding tx (royaltyPaid is null whenever
+      // the artist's own output was short or missing), so the studio was never going to hear about this mint
+      // either way — safe to give the edition back to the pool now rather than burn it on a mint that will
+      // never be a collection reveal.
+      await this.d.orders.releaseEdition(rescued);
       return;
     }
     if (edition === null) {
-      await this.move(paid, 'rescue_available', {
+      const rescued = await this.move(paid, 'rescue_available', {
         detail: `edition ${q.edition} was released when the quote expired and taken by another order; the parent will not be co-signed, self-rescue is available`,
       });
+      await this.d.orders.releaseEdition(rescued); // no-op: this order never held a reservation to release
     }
+  }
+
+  /**
+   * Security review item 11 / plan follow-up: an artwork order's edition is consumed the moment its funding
+   * tx is SEEN (0-conf), before any confirmation (§3.3). If that exact commit transaction then disappears —
+   * evicted from the mempool, or replaced by full-RBF (the specific txid the order's reveal is bound to no
+   * longer exists at all) — before the order ever got as far as `revealing`, there is nothing left to reveal
+   * or self-rescue from that outpoint: waiting out the full `rescueAfterSeconds` timeout would just burn the
+   * edition for longer than necessary on a mint that was never going to happen. Checked for `paid`/`queued`
+   * only (not `revealing`, whose own broadcast-failure handling already deals with a bad commit outpoint).
+   */
+  private async releaseVanishedFunding(): Promise<void> {
+    await this.each('vanished-funding', ['paid', 'queued'], async (r) => {
+      if (!isArtworkOrder(r) || r.edition === undefined || !r.commitOutpoint) return;
+      if (await this.d.chain.getTx(r.commitOutpoint.txid)) return; // still there (mempool or confirmed)
+      const rescued = await this.move(r, 'rescue_available', {
+        detail: 'funding transaction dropped from the mempool without confirming; self-rescue is not possible for this commit, the edition reservation is released',
+      });
+      await this.d.orders.releaseEdition(rescued);
+    });
   }
 
   /** Plan §3.3: emit royalty.paid and post the record to the studio (retried with backoff, never blocking). */
@@ -353,9 +382,13 @@ export class MintWorker {
         }
         await this.d.parents.release(r.id);
       }
-      await this.move(r, 'rescue_available', {
+      const rescued = await this.move(r, 'rescue_available', {
         detail: `not revealed within ${this.s.collection.rescueAfterSeconds}s; self-rescue (no parent) is available`,
       });
+      // Security review item 11: releases the edition unless the artist was already paid in this order's
+      // funding tx (see releaseEdition) — covers a 0-conf funding tx that was seen but then never confirmed
+      // or was replaced, and the order simply timed out waiting for a reveal that could never happen.
+      await this.d.orders.releaseEdition(rescued);
     });
   }
 
@@ -436,7 +469,8 @@ export class MintWorker {
       await this.d.parents.release(r.id);
       if (e instanceof PolicyViolation) {
         // Refused and logged by the signer. The user's commit is intact: offer self-rescue.
-        await this.move(r, 'rescue_available', { detail: 'parent co-signature refused by policy; self-rescue available' });
+        const rescued = await this.move(r, 'rescue_available', { detail: 'parent co-signature refused by policy; self-rescue available' });
+        await this.d.orders.releaseEdition(rescued); // no-op when the artist was already paid (security review item 11)
         return false;
       }
       const error = e instanceof Error ? e.message : String(e);
@@ -516,7 +550,11 @@ export class MintWorker {
       if (!bytes) return; // ord has not indexed it yet
       const sha = sha256Hex(bytes);
       if (sha !== r.contentSha256) {
-        await this.move(r, 'failed', { detail: `ord content sha256 ${sha} != ${r.contentSha256}` });
+        const failed = await this.move(r, 'failed', { detail: `ord content sha256 ${sha} != ${r.contentSha256}` });
+        // No-op in practice: the reveal just confirmed (that is how we got to `confirmed` at all), so
+        // hasConfirmedReveal(failed) is already true and releaseEdition refuses. Called anyway for the
+        // invariant (security review item 11: release on rescue_available/expired/failed unless confirmed).
+        await this.d.orders.releaseEdition(failed);
         return;
       }
       await this.move(r, 'verified', { detail: 'ord content sha256 matches' });

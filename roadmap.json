@@ -88,10 +88,11 @@
           "id": "p1.4",
           "repo": "degent",
           "title": "Review corpus fixtures: zero false approvals, every rejection has a reason",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "p1.3"
-          ]
+          ],
+          "verify": "pnpm --filter @bsh/degent-studio test -- review-corpus"
         },
         {
           "id": "p1.5",
@@ -400,10 +401,21 @@
           "id": "p5.7",
           "repo": "degent",
           "title": "Release the reserved edition when a 0-conf funding tx never confirms (security review item 11)",
-          "status": "todo",
+          "status": "done",
           "doc": "docs/security-review-open-studio.md",
           "depends_on": [
             "p3.8"
+          ],
+          "verify": "pnpm --filter @bsh/degent-mint test -- edition-release"
+        },
+        {
+          "id": "p5.8",
+          "repo": "degent",
+          "title": "Confirmation-timeout policy for the revealed state: unwind an order whose funding tx is evicted after the reveal broadcast (security review follow-up)",
+          "status": "todo",
+          "doc": "docs/security-review-open-studio.md",
+          "depends_on": [
+            "p5.7"
           ]
         }
       ]

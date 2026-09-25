@@ -8,7 +8,11 @@ import { EditionsSoldOutError, type EditionReservation, type EditionStore, type 
 import type { OrderStore } from '../ports/order-store.js';
 
 interface EditionDoc {
-  /** orderId -> reservation. Consumed ones stay forever (they are the editions). */
+  /**
+   * orderId -> reservation. Consumed ones normally stay forever (they are the editions) — the one exception
+   * is `releaseHeld` (security review item 11), which force-drops a consumed reservation whose order never
+   * produced a confirmed reveal, freeing its number for a later order.
+   */
   reservations: Record<string, EditionReservation>;
 }
 
@@ -89,6 +93,14 @@ export class MetaEditionStore implements EditionStore {
     await this.locked(artworkId, async (doc, save) => {
       const mine = doc.reservations[orderId];
       if (!mine || mine.consumed) return;
+      delete doc.reservations[orderId];
+      await save();
+    });
+  }
+
+  async releaseHeld(artworkId: string, orderId: string): Promise<void> {
+    await this.locked(artworkId, async (doc, save) => {
+      if (!doc.reservations[orderId]) return;
       delete doc.reservations[orderId];
       await save();
     });

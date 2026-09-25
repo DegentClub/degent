@@ -2,7 +2,9 @@
  * Edition reservations per artwork (plan §3.4, §3.7; ADR-0012). An artwork order reserves the next
  * edition number at quote time for the quote's TTL; the reservation is consumed when the order reaches
  * `paid` (it becomes `Order.edition`), released when the quote expires, and an expired number may be handed
- * to a later order. Numbers are 1-based and never shared between two consumed reservations.
+ * to a later order. Numbers are 1-based and never shared between two consumed reservations. A consumed
+ * reservation can also be force-released (`releaseHeld`, security review item 11) when the order that
+ * consumed it never produces a confirmed reveal — see `OrderService.releaseEdition`.
  *
  * Edition caps (ADR-0012): `reserve` takes the artwork's `maxEditions` and refuses, inside the same
  * per-artwork critical section that picks the number, once active + consumed reservations reach it. That is
@@ -49,6 +51,14 @@ export interface EditionStore {
   consume(artworkId: string, orderId: string, edition: number, now: Date): Promise<number | null>;
   /** Drop an unconsumed reservation (quote expired). No-op otherwise. */
   release(artworkId: string, orderId: string): Promise<void>;
+  /**
+   * Force-drop the order's reservation whether it is still active or already consumed (security review item
+   * 11: a griefing 0-conf funding tx that never confirms must not burn the edition forever). No-op when the
+   * order holds no reservation. Idempotent and safe under the artwork's per-artwork lock; the freed number can
+   * be reserved by a later order. Callers must never call this once a real inscription exists for the order
+   * (see `hasConfirmedReveal` in `domain/order.ts`) — this store has no way to check that itself.
+   */
+  releaseHeld(artworkId: string, orderId: string): Promise<void>;
   reservation(artworkId: string, orderId: string): Promise<EditionReservation | null>;
   /** Editions consumed so far for the artwork (the studio's "editions minted"). */
   consumedCount(artworkId: string): Promise<number>;

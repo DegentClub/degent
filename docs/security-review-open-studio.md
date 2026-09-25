@@ -28,7 +28,7 @@
 | 8 | Order bearer tokens / IDOR | checked-and-safe (by contract) | Info |
 | 9 | Ledger/plane: idempotency, one tx settling two intents, plane fail-open | checked-and-safe / N/A | - |
 | 10 | Secrets: logging, webhook one-time secret, `SigningKey` redaction | checked-and-safe | - |
-| 11 | Follow-up (not fixed): edition burn on a funding tx that never confirms | documented, proposed patch | Medium |
+| 11 | Edition burn on a funding tx that never confirms | **fixed** (roadmap p5.7) | Medium |
 | 12 | Follow-up (not fixed): in-process locks assume a single mint replica | documented | Low/Info |
 
 ---
@@ -368,30 +368,72 @@ studio at order-creation time and is never re-uploaded by the minter (§3, §5 a
 
 ---
 
-## 11. Follow-up (documented, not fixed): edition permanently burned by a funding tx that never confirms
+## 11. Edition permanently burned by a funding tx that never confirms — **FIXED (roadmap p5.7)**
 
-**Severity: Medium. Not fixed in this change — larger than "small and local".**
+**Severity: Medium. Fixed.**
 
-Even after the §1b fix, `EditionStore.consume` is still called the moment a funding transaction is *seen* in the
-mempool (`detectArtworkPayment`, `worker.ts:204`), before any confirmation, and a consumed reservation is never
-released (`edition-store.ts` comment: "Consumed ones stay forever"). If that specific funding transaction never
-confirms — evicted for low fees, or replaced by the minter's own wallet — the edition number it consumed is gone
-forever, with no corresponding mint. On an artwork with `maxEditions` set, this is a real (if not cheap — the
-attacker/unlucky minter must actually construct and broadcast a transaction paying the commit output) way to grief
-an artist's limited-edition supply down without ever paying: repeat broadcasting-then-abandoning a slightly
-low-fee funding transaction against the same or several artworks. With the §1b fix, at least the artist is never
-*notified* of a payment that did not land, and no `mintedEditions` record is created for it — but the edition
-number itself is still burned at `paid`, before the studio ever sees it (the mint's own `EditionStore` is separate
-from the studio's `mintedEditions` counter).
+`EditionStore.consume` is called the moment a funding transaction is *seen* in the mempool
+(`detectArtworkPayment`, `worker.ts`), before any confirmation. Before this fix, a consumed reservation was
+never released (`edition-store.ts`'s own comment: "Consumed ones stay forever"), so if that specific funding
+transaction never confirmed — evicted for low fees, or replaced by the minter's own wallet — the edition
+number it consumed was gone forever, with no corresponding mint. On an artwork with `maxEditions` set this was
+a real (if not cheap) way to grief an artist's limited-edition supply down without ever paying: repeat
+broadcasting-then-abandoning a slightly low-fee funding transaction against the same or several artworks.
 
-**Proposed fix (not applied — needs a product decision, this is a behaviour change beyond a bug fix):**
-delay `consumeEdition` (and the `paid` transition for *artwork* orders specifically) until at least one
-confirmation, mirroring what this review's fix now does for royalty reporting, or add a background sweep that
-notices a `paid` artwork order whose `commitOutpoint` transaction disappeared from the chain (evicted, not just
-unconfirmed) and releases its edition back to the pool. The latter is more surgical (keeps the existing 0-conf UX
-for everyone) but needs a new worker step and a decision about how long to wait before declaring a payment
-"vanished" rather than "still pending." Either change affects the state machine / worker timing that dozens of
-existing tests encode, so it deserves its own ticket and review rather than folding into this one.
+### The fix
+
+`EditionStore` gained `releaseHeld(artworkId, orderId)` (`ports/edition-store.ts`, `adapters/edition-store.ts`):
+unlike `release`, it force-drops a reservation whether it is still active or already **consumed**, still
+inside the same per-artwork lock that `reserve`/`consume` use, so it is race-safe and idempotent. A freed
+number is reserved again by the very next order that asks (`reserve` always hands out the lowest free number).
+
+`OrderService.releaseEdition` (`application/order-service.ts`) is the single gate that decides whether a
+release may proceed. It refuses in two independent cases, either one is enough to keep the number taken:
+
+- **`hasConfirmedReveal(r)`** (`domain/order.ts`): this order's own reveal — parent-linked, or a self-rescue of
+  it, the check does not care which — has a `confirmed` entry in its timeline. A real inscription then exists
+  under this order, so the assignment is permanent and correct, however the order's status changes afterwards
+  (even `confirmed -> failed` on a later ord content-hash mismatch is still a real, confirmed child).
+- **The artist was paid in a funding transaction that could still be reported.** `reportRoyalty` keeps retrying
+  an order's royalty report from every status up to and including `rescue_available` until its funding
+  transaction confirms (security review p5.5's own fix). If `r.royaltyPaid` is set and that same funding
+  transaction is still visible on chain (`fundingStillReportable`, a live `chain.getTx` check, not the stale
+  stored flag alone), releasing the number now would let a second order be reported under the same edition
+  once *this* order's payment eventually confirms too — a double count. If that funding transaction has since
+  vanished (evicted/replaced — the same condition the worker watches for below), `reportRoyalty`'s own
+  confirmation gate can never fire for it either, so there is nothing left to double-count and the release is
+  safe despite `royaltyPaid` being set.
+
+`releaseEdition` is called after every worker transition into `rescue_available`, `expired` or `failed`
+(rescue timeout, policy-signer refusal, short/missing royalty or club output, the edition having been lost to
+a racing order, wrong commit value/script, and the ord content-hash-mismatch path from `confirmed`), and from
+a new worker step, `releaseVanishedFunding`: for artwork orders sitting in `paid`/`queued` (i.e. before they
+ever reached `revealing`) whose commit transaction has disappeared from the chain backend entirely — evicted,
+or replaced under full-RBF — there is nothing left to reveal or self-rescue from that outpoint, so the order
+moves straight to `rescue_available` and its edition is released, rather than waiting out the full
+`rescueAfterSeconds` timeout.
+
+### Studio double-count: confirmed safe, one narrow scope decision recorded
+
+The mint owns edition **reservations**; the studio owns **minted counts**, derived only from royalty records
+it was told about (ADR-0012 §2). A reservation that is released without ever having produced a royalty record
+was, by construction, never counted by the studio (`royaltyPaid` stayed null — short/missing artist output, or
+the number was lost to another order before payment) — releasing it cannot double-count anything, and no
+studio round-trip is needed to coordinate the release. Where the artist genuinely *was* paid, the
+`fundingStillReportable` chain check above prevents a release that could still lead to a second, later
+double-report. See `products/degent/services/mint/test/edition-release.test.ts` for the corresponding cases,
+including one that pairs a short-royalty release with a second order legitimately taking the freed number.
+
+**Scope decision, recorded rather than fixed:** an order whose funding transaction is fully valid (artist and
+club both paid, so `royaltyPaid` is set) but is evicted or replaced *after* its reveal already broadcast stays
+at `revealed` forever — it never reaches `rescue_available`/`expired`/`failed`, since the reveal itself can
+never confirm (bound to an outpoint that no longer exists) but nothing currently notices and unwinds that. This
+is the harder half of the original bug: solving it needs a confirmation-timeout policy for `revealed` itself
+(how long to wait before declaring a broadcast reveal permanently dead), which is a product decision, not a
+local fix, and touches worker timing that many existing tests encode — exactly the kind of change the original
+proposed fix flagged as needing its own ticket. Filed as a plan follow-up rather than folded into p5.7; the
+common, low-cost griefing case named in this item (a 0-conf sighting that is abandoned before the order is even
+dispatched) is fully fixed.
 
 ## 12. Follow-up (documented, not fixed): in-process locks assume a single mint/studio replica
 
@@ -407,6 +449,8 @@ process against the same database.
 
 ## Tests run
 
+Original review (p5.5, RBF/unconfirmed handling):
+
 ```
 pnpm --filter @bsh/degent-mint test        # 288/288 passed (19 files) — includes 1 new test + 6 updated tests
 pnpm --filter @bsh/degent-studio test      # 212/212 passed (15 files) — untouched by this review's fix
@@ -416,6 +460,15 @@ pnpm --filter @bsh/degent-mint typecheck   # clean
 The new/updated royalty-reporting tests were verified to **fail** against the pre-fix worker/order-service code
 (3 failures: the new test plus the two updated assertions that now require a confirmation) before the fix was
 applied, and to **pass** after.
+
+Follow-up (p5.7, item 11, edition release):
+
+```
+pnpm --filter @bsh/degent-mint test        # 296/296 passed (20 files) — 288 prior + 8 new: edition-release.test.ts
+                                            #   (6 tests) + one releaseHeld test in studio-ledger-adapters.test.ts,
+                                            #   run twice (memory + sqlite stores). No existing test needed to change.
+pnpm --filter @bsh/degent-mint typecheck   # clean
+```
 
 ## Files touched
 
@@ -432,6 +485,23 @@ applied, and to **pass** after.
   royalty records; "a policy refusal on an artwork order" seeds a confirmed funding tx.
 - `products/degent/services/mint/test/artwork-orders.test.ts` — "consumed editions count too" seeds a confirmed
   funding tx (the test is about the edition cap, not confirmation gating).
+
+Follow-up (p5.7, item 11):
+
+- `products/degent/services/mint/src/domain/order.ts` — new `hasConfirmedReveal`.
+- `products/degent/services/mint/src/ports/edition-store.ts` — new `EditionStore.releaseHeld`.
+- `products/degent/services/mint/src/adapters/edition-store.ts` — implements `releaseHeld`.
+- `products/degent/services/mint/src/application/order-service.ts` — `releaseEdition` now force-releases a
+  consumed reservation too, guarded by `hasConfirmedReveal` and a live chain check
+  (`fundingStillReportable`) on `royaltyPaid`.
+- `products/degent/services/mint/src/worker.ts` — `releaseEdition` called after every transition into
+  `rescue_available` / `expired` / `failed`; new `releaseVanishedFunding` step for `paid`/`queued` orders
+  whose commit transaction disappeared before ever reaching `revealing`.
+- `products/degent/services/mint/test/edition-release.test.ts` — new: the p5.7 scenarios (capped-2 artwork
+  with a dropped funding tx, short royalty, short club fee with the artist paid, a confirmed edition, and a
+  self-rescued edition).
+- `products/degent/services/mint/test/studio-ledger-adapters.test.ts` — new `releaseHeld` unit test on
+  `MetaEditionStore`.
 
 Nothing was committed or pushed, per the task brief.
 

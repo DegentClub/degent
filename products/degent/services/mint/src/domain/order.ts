@@ -66,6 +66,16 @@ export interface OrderRecord extends Omit<Order, 'queue'> {
 
 export const isArtworkOrder = (r: Pick<OrderRecord, 'artworkId'>): boolean => typeof r.artworkId === 'string' && r.artworkId.length > 0;
 
+/**
+ * True once this order's OWN reveal — parent-linked or a self-rescue of it, `confirmed` doesn't care which —
+ * has reached on-chain confirmation (security review item 11). A real inscription then exists under this
+ * order, so whatever edition it was assigned is permanently and correctly taken: it must never be handed to
+ * another order, however the order's status changes afterwards (e.g. `confirmed -> failed` on an ord content
+ * mismatch is still a real, confirmed child). Reads the timeline rather than the current status so the answer
+ * stays right no matter what happens next.
+ */
+export const hasConfirmedReveal = (r: Pick<OrderRecord, 'timeline'>): boolean => r.timeline.some((e) => e.status === 'confirmed');
+
 /** Public projection. Never includes the PSBT, raw hex or internal bookkeeping. */
 export function toPublicOrder(r: OrderRecord, queue: QueueInfo | null): Order {
   return {
