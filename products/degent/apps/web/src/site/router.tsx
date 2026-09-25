@@ -13,6 +13,7 @@ import { createContext, useCallback, useContext, useSyncExternalStore, type Anch
 export type Route =
   | { name: 'home' }
   | { name: 'collection'; n: number | null }
+  | { name: 'exhibit'; n: number | null }
   | { name: 'mint' }
   | { name: 'atelier' }
   | { name: 'comic' }
@@ -43,6 +44,11 @@ export function parseRoute(pathname: string): Route {
       const n = /^\d{1,6}$/.test(b) ? Number(b) : NaN;
       return Number.isInteger(n) && n >= 1 ? { name: 'collection', n } : { name: 'notfound', path };
     }
+    case 'exhibit': {
+      if (b === undefined) return { name: 'exhibit', n: null };
+      const n = /^\d{1,6}$/.test(b) ? Number(b) : NaN;
+      return Number.isInteger(n) && n >= 1 ? { name: 'exhibit', n } : { name: 'notfound', path };
+    }
     case 'blog':
       if (b === undefined) return { name: 'blog' };
       return SLUG.test(b) ? { name: 'post', slug: b } : { name: 'notfound', path };
@@ -67,6 +73,8 @@ export function routePath(r: Route): string {
       return '/';
     case 'collection':
       return r.n === null ? '/collection' : `/collection/${r.n}`;
+    case 'exhibit':
+      return r.n === null ? '/exhibit' : `/exhibit/${r.n}`;
     case 'how':
       return '/how-it-works';
     case 'post':

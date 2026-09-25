@@ -91,6 +91,12 @@ export const Icon = {
       <path d="M3 8l4 4 5-7 5 7 4-4-2 11H5z" />
     </I>
   ),
+  block: () => (
+    <I>
+      <rect x="4" y="4" width="16" height="16" rx="1.5" />
+      <path d="M4 15h13v5" />
+    </I>
+  ),
   chevronUp: () => (
     <I>
       <path d="M6 15l6-6 6 6" />

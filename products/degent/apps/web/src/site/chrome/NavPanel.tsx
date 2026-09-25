@@ -22,6 +22,7 @@ export function primaryNav(show: { about: boolean; manifesto: boolean }): NavIte
 }
 
 export const MORE_NAV: NavItem[] = [
+  { to: '/exhibit', label: 'Full Block Exhibit', icon: <Icon.block /> },
   { to: '/atelier', label: 'The Atelier', icon: <Icon.brush /> },
   { to: '/comic', label: 'The Comic', icon: <Icon.book /> },
   { to: '/club', label: 'The Club', icon: <Icon.crown /> },

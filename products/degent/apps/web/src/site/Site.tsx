@@ -19,6 +19,7 @@ import { Header } from './chrome/Header';
 import { Footer, Rail } from './chrome/Footer';
 import { Home } from './pages/Home';
 import { Collection } from './pages/Collection';
+import { Exhibit } from './pages/Exhibit';
 import { Atelier } from './pages/Atelier';
 import { Comic } from './pages/Comic';
 import { CopyPage } from './pages/Copy';
@@ -49,7 +50,7 @@ export function Site(props: SiteProps) {
 
 /** Pathname without the item number: moving between /collection and /collection/:n is not a page change. */
 function pageKey(r: Route): string {
-  return r.name === 'collection' ? 'collection' : r.name === 'post' ? `post:${r.slug}` : r.name;
+  return r.name === 'collection' || r.name === 'exhibit' ? r.name : r.name === 'post' ? `post:${r.slug}` : r.name;
 }
 
 function MintPage({ handoff, store, vault }: { handoff: MintHandoff | null; store: KeyValueStore | null; vault: KeyVault | undefined }) {
@@ -98,6 +99,9 @@ function Shell({ app, site, mint, mintStore, mintVault, atelierPollMs }: SitePro
       break;
     case 'collection':
       page = <Collection n={route.n} stats={stats} />;
+      break;
+    case 'exhibit':
+      page = <Exhibit n={route.n} />;
       break;
     case 'atelier':
       page = <Atelier {...(atelierPollMs ? { pollMs: atelierPollMs } : {})} />;

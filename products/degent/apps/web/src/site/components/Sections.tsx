@@ -137,6 +137,34 @@ export function ComicTeaser({ headingLevel = 2 }: { headingLevel?: 2 | 3 }) {
   );
 }
 
+/** "Full Block Exhibit" teaser: the museum rung of the learning ladder. */
+export function ExhibitTeaser({ headingLevel = 2 }: { headingLevel?: 2 | 3 }) {
+  const H = headingLevel === 2 ? 'h2' : 'h3';
+  return (
+    <section className="card exhibit-teaser" aria-labelledby="exhibit-teaser-h" data-testid="exhibit-teaser">
+      <div className="exhibit-teaser__text">
+        <Pill tone="gold">The Exhibit</Pill>
+        <H id="exhibit-teaser-h">A gentleman the size of a block</H>
+        <span className="rule" aria-hidden="true" />
+        <p>
+          A Full Block Degent is one artwork that fills nearly a whole Bitcoin block — ~3.9M of the 4,000,000 weight
+          units the chain allows. See it as a museum object, drawn to scale.
+        </p>
+        <div className="cta-row">
+          <Cta to="/exhibit" icon={<Icon.block />}>Enter the Exhibit</Cta>
+          <Cta to="/exhibit?kiosk=1" variant="dark">Kiosk mode</Cta>
+        </div>
+      </div>
+      <div className="exhibit-teaser__viz" aria-hidden="true">
+        <div className="exhibit-teaser__bar">
+          <span className="exhibit-teaser__fill" style={{ width: '99%' }} />
+          <span className="exhibit-teaser__cap">4,000,000 WU</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /** "Degen Minter" banner over the grid wall. */
 export function MinterBanner({ wall }: { wall: Array<Pick<CollectionItem, 'id' | 'number'>> }) {
   return (

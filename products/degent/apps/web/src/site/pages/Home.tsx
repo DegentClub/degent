@@ -6,7 +6,7 @@ import { provenance } from '../chrome/Meters';
 import { Link } from '../router';
 import { Icon } from '../components/Icons';
 import { Cta, DegentImage, Frame, Hero, SectionTitle } from '../components/ui';
-import { ComicTeaser, MinterBanner } from '../components/Sections';
+import { ComicTeaser, ExhibitTeaser, MinterBanner } from '../components/Sections';
 
 function StatTiles({ stats }: { stats: Async<CollectionStats> }) {
   const s = stats.status === 'ok' ? stats.value : null;
@@ -99,6 +99,7 @@ export function Home({ stats }: { stats: Async<CollectionStats> }) {
           </div>
         </section>
 
+        <ExhibitTeaser />
         <ComicTeaser />
       </div>
       <MinterBanner wall={items.slice(18, 30)} />
