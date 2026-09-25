@@ -185,22 +185,25 @@ do_deploy() {
   fi
 
   # Roll back to what ran before (if anything did).
-  local unhealthy="${UNHEALTHY:-compose up failed}" prev_rel
+  local unhealthy="${UNHEALTHY:-compose up failed}" prev_rel fail_logs
+  # Capture the failing containers' own output so a health failure is diagnosable from the workflow log
+  # (we cannot SSH in interactively). Bounded so the JSON result stays small.
+  fail_logs="$(compose_in "$rel" logs --no-color --tail=40 mint-mainnet-api mint-signet-api 2>&1 | tail -c 3500 || true)"
   prev_rel="$(state_get release)"
   if [ -n "$cur_m" ] && [ -n "$cur_s" ] && [ -n "$prev_rel" ] && [ -d "$RELEASES/$prev_rel" ]; then
     log "rolling back to mainnet $cur_m, signet $cur_s"
     export_tags "$cur_m" "$cur_s"
     # shellcheck disable=SC2046 # word splitting of the service list is intended
     if up "$RELEASES/$prev_rel" && wait_healthy "$RELEASES/$prev_rel" caddy $(services_for both); then
-      emit --arg action "$action" --arg tag "$tag" --arg u "$unhealthy" --arg m "$cur_m" --arg s "$cur_s" \
-        '{ok:false, action:$action, tag:$tag, error:("not healthy: " + $u), rolledBack:true, tags:{mainnet:$m, signet:$s}}'
+      emit --arg action "$action" --arg tag "$tag" --arg u "$unhealthy" --arg m "$cur_m" --arg s "$cur_s" --arg logs "$fail_logs" \
+        '{ok:false, action:$action, tag:$tag, error:("not healthy: " + $u), rolledBack:true, tags:{mainnet:$m, signet:$s}, logs:$logs}'
     else
-      emit --arg action "$action" --arg tag "$tag" --arg u "$unhealthy" \
-        '{ok:false, action:$action, tag:$tag, error:("not healthy: " + $u), rolledBack:false, rollbackFailed:true}'
+      emit --arg action "$action" --arg tag "$tag" --arg u "$unhealthy" --arg logs "$fail_logs" \
+        '{ok:false, action:$action, tag:$tag, error:("not healthy: " + $u), rolledBack:false, rollbackFailed:true, logs:$logs}'
     fi
   else
-    emit --arg action "$action" --arg tag "$tag" --arg u "$unhealthy" \
-      '{ok:false, action:$action, tag:$tag, error:("not healthy: " + $u), rolledBack:false, reason:"no previous release"}'
+    emit --arg action "$action" --arg tag "$tag" --arg u "$unhealthy" --arg logs "$fail_logs" \
+      '{ok:false, action:$action, tag:$tag, error:("not healthy: " + $u), rolledBack:false, reason:"no previous release", logs:$logs}'
   fi
   exit 1
 }
