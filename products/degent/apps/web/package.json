@@ -8,9 +8,10 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p .",
     "dev": "vite",
-    "build": "vite build",
+    "gen:exhibit": "tsx scripts/gen-exhibit.ts",
+    "build": "tsx scripts/gen-exhibit.ts && vite build",
     "preview": "vite preview",
-    "e2e": "vite build && node e2e/demo.e2e.mjs"
+    "e2e": "tsx scripts/gen-exhibit.ts && vite build && node e2e/demo.e2e.mjs"
   },
   "dependencies": {
     "@bsh/degent-mint-sdk": "workspace:*",
@@ -33,6 +34,7 @@
     "@vitejs/plugin-react": "^6.1.1",
     "jsdom": "^30.1.1",
     "playwright-core": "1.63.0",
+    "tsx": "^4.23.15",
     "typescript": "^5",
     "vite": "^8.3.0",
     "vitest": "^5.0.1"

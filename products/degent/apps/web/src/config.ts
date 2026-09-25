@@ -21,6 +21,8 @@ export interface AppConfig {
   copyReady: ReadonlySet<CopyPage>;
   /** Magic Eden collection page (the Buy button). */
   marketplaceUrl: string;
+  /** block.space base for the Transaction X-Ray and Block Theater tools (ADR-0008). */
+  blockspaceUrl: string;
   social: { x: string; telegram: string; instagram: string };
   /** Collection slug used on block.space and Magic Eden. */
   collectionSlug: string;
@@ -60,6 +62,7 @@ export interface EnvLike {
   VITE_COMIC_INSCRIPTION_ID?: string;
   VITE_COPY_READY?: string;
   VITE_MARKETPLACE_URL?: string;
+  VITE_BLOCKSPACE_URL?: string;
   VITE_X_URL?: string;
   VITE_TELEGRAM_URL?: string;
   VITE_INSTAGRAM_URL?: string;
@@ -108,6 +111,7 @@ export function readConfig(env: EnvLike, search: string): AppConfig {
     comicInscriptionId: INSCRIPTION_ID.test(env.VITE_COMIC_INSCRIPTION_ID ?? '') ? env.VITE_COMIC_INSCRIPTION_ID! : '',
     copyReady: parseCopyReady(env.VITE_COPY_READY),
     marketplaceUrl: env.VITE_MARKETPLACE_URL ?? 'https://magiceden.io/ordinals/marketplace/degentclub',
+    blockspaceUrl: trimSlash(env.VITE_BLOCKSPACE_URL ?? 'https://block.space'),
     social: {
       x: env.VITE_X_URL ?? 'https://x.com/degentclub',
       telegram: env.VITE_TELEGRAM_URL ?? 'https://t.me/+cneroYQ-0VpmM2Ix',

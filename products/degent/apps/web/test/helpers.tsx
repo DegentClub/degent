@@ -25,6 +25,7 @@ export function testApp(over: Partial<AppConfig> = {}): AppConfig {
     comicInscriptionId: '',
     copyReady: new Set(),
     marketplaceUrl: 'https://magiceden.io/ordinals/marketplace/degentclub',
+    blockspaceUrl: 'https://block.space',
     social: { x: 'https://x.com/degentclub', telegram: 'https://t.me/+cneroYQ-0VpmM2Ix', instagram: '' },
     collectionSlug: 'degents',
     ...over,

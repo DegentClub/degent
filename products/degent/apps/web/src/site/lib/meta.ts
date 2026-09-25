@@ -45,3 +45,28 @@ export function useDocumentMeta(m: DocMeta): void {
     applyMeta(m);
   }, [m.title, m.description, m.image, m.url]); // eslint-disable-line react-hooks/exhaustive-deps
 }
+
+const JSONLD_ID = 'jsonld-page';
+
+/** Inject a single page-scoped JSON-LD `<script>` (replaced on change, removed on unmount). */
+export function setJsonLd(data: unknown | null): void {
+  let el = document.head.querySelector<HTMLScriptElement>(`script#${JSONLD_ID}`);
+  if (data === null) {
+    el?.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement('script');
+    el.type = 'application/ld+json';
+    el.id = JSONLD_ID;
+    document.head.appendChild(el);
+  }
+  el.textContent = JSON.stringify(data);
+}
+
+export function useJsonLd(data: unknown | null): void {
+  useEffect(() => {
+    setJsonLd(data);
+    return () => setJsonLd(null);
+  }, [JSON.stringify(data)]); // eslint-disable-line react-hooks/exhaustive-deps
+}
