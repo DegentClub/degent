@@ -41,6 +41,12 @@ export const ALLOWLIST = [
     sha256: '3f8b78d0fefbd23dd4bb8fa71f5c16f13b34ae134db19d86d5b1ce9248be59b4',
     why: "REGTEST_DEV_REVEAL_KEY: ASCII 'degnt-mint-regtest-only-dev-key!'; config.ts refuses it off regtest",
   },
+  {
+    path: 'platform/identity/test/helpers.ts',
+    rule: 'bitcoin-wif',
+    sha256: '07d7f8ceabf89d345db86b041a59b94d72f9c4c964febb21e9bdb8b9a1c6348e',
+    why: 'BIP322_WIF test-signing key; same published BIP-322 test-vector value as the .gitleaks.toml entry, in a pre-split history path (platform lives in the deps/scribbit submodule now, ADR-0004)',
+  },
 ];
 
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
