@@ -22,6 +22,8 @@ pnpm --filter @bsh/degent-web e2e        # build + headless Chromium: every page
 | `/` | Home: hero wall, "The Decentralized Gentlemen Club", certified stat tiles, CTA Mint Now / Enter the Atelier, latest mints strip, comic teaser, Degen Minter banner | StatsService, membership list, mint `GET /v1/queue` |
 | `/collection` | Hero over the wall, collection card (certified numbers + computed 10K projection), gallery with the full pagination toolbar (per page, page select, first/prev/1 2 3 4 … N/next/last, go to), comic teaser, minter banner | membership list (certified items → bundled fallback) |
 | `/collection/:n` | Deep link: the lightbox (image, inscription id, address, content type/length, timestamp, block height, fee, View on Ordinals.com, Buy Item, prev/next, filmstrip, ←/→/Esc), per-item `<title>` / OpenGraph tags | OrdService (cached, neighbours prefetched) |
+| `/exhibit` | **Full Block Exhibit** (learning-ladder "Own"): gallery of the collection's Full Block Degents (content ≥ 3.5 MB, the SDK `fullblock` tier floor). Honest empty state when none are certified. `?kiosk=1` = full-screen auto-advancing plates (reduced-motion aware). `?format=json` = the index twin. See [ADR-0014](../../docs/adr/0014-full-block-exhibit.md) | membership list (certified → bundled), `@bsh/inscription` weight maths |
+| `/exhibit/:n` | One exhibit: a large plate, the **one-block visualization** (reveal weight to scale against the 4,000,000 WU block), on-chain facts, a museum placard, curatorial note + "why a full block is special" explainer, deep links to block.space X-Ray / Block Theater (ADR-0008), Ordinals, Ordiscan, Buy. Per-item `<title>` / OpenGraph / JSON-LD (`VisualArtwork`). `?format=json` = the item twin | OrdService + `@bsh/inscription` |
 | `/mint` | The eight-step mint (below). Stays mounted once visited, so browsing away mid-order keeps its in-memory state | mint service, wallet, esplora, ord |
 | `/atelier` | Generate with AI (brief, style chips, placard, tier with indicative cost, 1-4 variations → job polling → candidates in gold frames → finalize) or Bring your own art (picker + drag and drop, "use as-is" or "frame it for me"). Minting Rules checklist always visible and per candidate. "Mint this" → `/mint` | AtelierService (`contracts/openapi/degent-atelier.yaml`) |
 | `/comic` | "This is Gentlemen- The Comic" + reader: the on-chain comic from ord `/content/<id>` in a sandboxed iframe (`allow-scripts` only), View in Ordiscan | `VITE_COMIC_INSCRIPTION_ID` |
@@ -98,7 +100,22 @@ Then review the files and delete the placeholders.
 
 `/collection/:n` sets the document title, description and `og:*` tags on navigation. Scrapers that do not
 run JavaScript see only `index.html`'s defaults; per-item previews for them need a prerender or an edge
-rewrite of `index.html` (not included).
+rewrite of `index.html` (not included). `/exhibit/:n` additionally injects `VisualArtwork` JSON-LD.
+
+### Full Block Exhibit machine-native surface
+
+The build runs `scripts/gen-exhibit.ts` (a `tsx` step wired into `build` and `e2e`) before `vite build`. It
+reads the bundled manifest, computes each Full Block Degent's reveal weight/block-fraction with the **same**
+`@bsh/inscription` maths the pages use, and emits into `public/` (copied to `dist/`, git-ignored):
+
+- `exhibit/index.json` — every Full Block Degent with its on-chain facts and block-fraction (labelled
+  `source: "bundled", certified: false` for the static build; a live deployment regenerates it server-side);
+- `exhibit/<n>.json` — the per-item twin (also `/exhibit/<n>?format=json`, rendered by the app);
+- `llms.txt`, `sitemap.xml` — with the exhibit endpoints and item URLs.
+
+Shapes are pinned by `schemas/exhibit-{item,index}.schema.json` and asserted in `test/site/exhibit-json.test.ts`.
+Reveal weight/vsize/block-fraction are **estimated** from content length (`estimated: true`); content bytes,
+block height, timestamp, address and fee are recorded facts.
 
 ## The mint (`/mint`)
 
@@ -183,6 +200,7 @@ gets a "travels the block lane" warning there and again on Quote. Quote shows ti
 | `VITE_COMIC_INSCRIPTION_ID` | unset | Inscription id of the on-chain comic. Unset: placeholder cover |
 | `VITE_COPY_READY` | unset | Comma list of `manifesto,about` whose final copy has shipped. Others are hidden from navigation in production |
 | `VITE_MARKETPLACE_URL` | Magic Eden `ordinals/marketplace/degentclub` | The Buy button |
+| `VITE_BLOCKSPACE_URL` | `https://block.space` | block.space base for the Exhibit's Transaction X-Ray (`/xray/<revealTxid>`) and Block Theater (`/theater?block=<height>`) deep links (ADR-0008) |
 | `VITE_X_URL`, `VITE_TELEGRAM_URL`, `VITE_INSTAGRAM_URL` | x.com/degentclub, the Telegram invite, unset | Social links. Instagram is shown only when set (no verified handle in the spec) |
 | `VITE_NETWORK` | `mainnet` | `mainnet` \| `testnet` (testnet4) \| `signet` \| `regtest` |
 | `VITE_ESPLORA_URL` | mempool.space per network | Esplora-compatible API for UTXOs and broadcast |
@@ -214,9 +232,11 @@ check runs for real). TODO(copy) pages and draft blog posts are visible only in 
 | `src/site/services/types.ts` | Site ports: `StatsService`, `CollectionService`, `OrdService`, `NewsletterService`, `AtelierService` |
 | `src/site/services/real/*` | certification API, ord JSON, newsletter POST, Atelier HTTP client (contract) |
 | `src/site/services/fakes.ts`, `demoPainter.ts` | Site fakes and the demo canvas compositor |
-| `src/site/chrome/`, `components/`, `pages/` | Header, meters, menu, footer, newsletter; frames, pagination, lightbox; one file per page |
-| `src/site/lib/` | Pure helpers: pagination, stats/projection, front matter, markdown, rules checklist, handoff, JPEG padding, SIWB text, meta |
+| `src/site/chrome/`, `components/`, `pages/` | Header, meters, menu, footer, newsletter; frames, pagination, lightbox; one file per page (incl. `pages/Exhibit.tsx`: gallery, detail, one-block viz, kiosk, JSON twin) |
+| `src/site/lib/` | Pure helpers: pagination, stats/projection, front matter, markdown, rules checklist, handoff, JPEG padding, SIWB text, meta (+ JSON-LD), `exhibit.ts` (full-block filter + reveal-weight estimate + JSON twin shapes, all via `@bsh/inscription`/SDK) |
 | `src/content/blog/`, `src/data/collection.json` | Blog posts; bundled membership snapshot |
+| `schemas/exhibit-*.schema.json` | JSON Schemas for the exhibit index and per-item twins |
+| `scripts/gen-exhibit.ts` | Build step: emits `public/exhibit/*.json`, `llms.txt`, `sitemap.xml` (see "Full Block Exhibit machine-native surface") |
 | `scripts/import-wordpress.mjs` | WordPress export → markdown posts (local file only) |
 | `src/App.tsx` | The mint wizard (standalone or `embedded`; `handoff` prop) |
 | `src/services/types.ts` | Mint ports: `MintApi`, `WalletService` (now with `signMessage` + capabilities; 7 wallets incl. XCP, Horizon), `ChainApi`, `InscriptionOps`, `ImageTools` |
@@ -258,6 +278,13 @@ Site (`test/site/`):
   membership, Horizon ECDSA with the payment address, rejection, empty state.
 - `clients.test.ts` — Atelier HTTP client against the contract (session bearer, error codes + Retry-After, upload
   query, content by hash) and the ord JSON client (parsing, caching).
+- `exhibit.test.tsx` — `/exhibit` lists only full-block items (largest first, uncertified/demo label) and the honest
+  empty state when none qualify; `/exhibit/:n` plate, the one-block viz drawn to scale (fill width === weight/4,000,000),
+  real facts, placard, X-Ray/Theater/Ordinals/Buy deep links, `VisualArtwork` JSON-LD, per-item title; not-full-block
+  number handled; kiosk mode; `?format=json` twin; the retired live numbers never render.
+- `exhibit-json.test.ts` — the reveal-weight estimate equals `@bsh/inscription.estimateRevealWeight`; the viz fraction
+  is exactly weight/4,000,000; tier-floor classification; the index and per-item twins validated against the JSON
+  Schemas; configurable block.space base; theater/fee null until a height is known.
 
 Mint:
 

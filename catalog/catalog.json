@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-09-24T01:49:17.699Z",
+  "generatedAt": "2026-09-25T21:44:26.587Z",
   "schema": "schemas/component.schema.json",
   "components": [
     {
@@ -231,9 +231,10 @@
       "path": "products/degent/apps/web",
       "version": "0.1.0",
       "scripts": {
-        "build": "vite build",
+        "build": "tsx scripts/gen-exhibit.ts && vite build",
         "dev": "vite",
-        "e2e": "vite build && node e2e/demo.e2e.mjs",
+        "e2e": "tsx scripts/gen-exhibit.ts && vite build && node e2e/demo.e2e.mjs",
+        "gen:exhibit": "tsx scripts/gen-exhibit.ts",
         "preview": "vite preview",
         "test": "vitest run",
         "typecheck": "tsc --noEmit -p ."
