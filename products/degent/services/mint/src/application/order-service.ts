@@ -609,8 +609,12 @@ export class OrderService {
 
   /**
    * After a verified royalty output (plan §3.3): emit `degent.mint.royalty.paid` once and POST the record to
-   * the studio (retry with backoff, idempotent on orderId). Waits while the funding transaction is
-   * unconfirmed and RBF-signalling (`funding` is the current chain view in that case).
+   * the studio (retry with backoff, idempotent on orderId). Waits for a confirmation whenever the funding
+   * transaction was unconfirmed when the payment was first detected (`r.fundingRbf`; `funding` is the current
+   * chain view in that case): full-RBF is now standard relay/miner policy, so a mempool sighting alone -
+   * BIP125 opt-in or not - is not a safe basis for telling the studio, and through it the artist, that they
+   * were paid (security review p5.5). This never delays the order's own progress (paid/queued/reveal), only
+   * the royalty record and notification.
    */
   async reportRoyalty(r: OrderRecord, funding: ChainTx | null): Promise<OrderRecord> {
     if (!isArtworkOrder(r) || !r.royaltyPaid || !r.artistAddress) return r;
@@ -621,7 +625,7 @@ export class OrderService {
     if (st.reportedAt || st.gaveUp) return r;
     if (r.fundingRbf) {
       if (!funding) return r;
-      if (!funding.confirmed && funding.rbfSignalled) return r; // still replaceable: pending
+      if (!funding.confirmed) return r; // still unconfirmed and therefore still replaceable: pending
       r = await this.patch(r, { fundingRbf: false });
     }
     const now = this.now();

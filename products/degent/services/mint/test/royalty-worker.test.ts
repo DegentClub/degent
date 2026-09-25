@@ -50,7 +50,7 @@ describe('checkFundingOutputs (pure)', () => {
 });
 
 describe('worker: the studio split in the funding transaction', () => {
-  it('full payment: paid with royaltyPaid and the edition, queued, revealed; royalty.paid emitted; studio posted once', async () => {
+  it('full payment: paid with royaltyPaid and the edition, queued, revealed; royalty.paid emitted and posted once confirmed', async () => {
     const h = artHarness();
     const art = studioArtwork(h);
     const b = await browserArtworkToPayment(h, art.id);
@@ -62,7 +62,16 @@ describe('worker: the studio split in the funding transaction', () => {
     expect(o.status).toBe('revealed');
     expect(o.edition).toBe(1);
     expect(o.royaltyPaid).toEqual({ txid: b.commitTxid, vout: 1, sats: b.order.quote!.artistRoyaltySats });
-    // event
+    // The funding tx is still unconfirmed: full-RBF makes it replaceable whether or not it opted in
+    // (security review p5.5), so nothing is reported or posted to the studio yet.
+    expect(h.events.royaltyEvents).toHaveLength(0);
+    expect(h.studio!.royalties).toHaveLength(0);
+    await h.worker.tick();
+    expect(h.events.royaltyEvents).toHaveLength(0);
+    expect(h.studio!.royalties).toHaveLength(0);
+    // Once the funding transaction confirms, the report and the studio post go out.
+    h.chain.mine();
+    await h.worker.tick();
     const ev = h.events.royaltyEvents;
     expect(ev).toHaveLength(1);
     expect(ev[0]).toEqual({
@@ -88,6 +97,30 @@ describe('worker: the studio split in the funding transaction', () => {
     expect(h.events.royaltyEvents).toHaveLength(1);
     const rec = (await h.store.get(b.orderId))!;
     expect(rec.royaltyReport).toMatchObject({ reportedAt: expect.any(String), emittedAt: expect.any(String), attempts: 1, gaveUp: false });
+  });
+
+  it('security review p5.5: an unconfirmed, non-RBF-signalling funding tx must not be reported or posted (full-RBF makes it replaceable regardless)', async () => {
+    const h = artHarness();
+    const art = studioArtwork(h);
+    const b = await browserArtworkToPayment(h, art.id);
+    fundArtwork(h, b); // confirmed: false, rbf: false (default) - a plain, non-signalling 0-conf tx
+    await h.worker.tick();
+    let o = await getOrder(h, b.orderId);
+    expect(o.status).toBe('revealed'); // the reveal itself is unchanged: still bound to this exact commit outpoint
+    expect(o.royaltyPaid).toMatchObject({ vout: 1 });
+    expect(o.timeline.find((e) => e.status === 'paid')!.detail).toBe('commit seen in mempool (replaceable)');
+    // Nothing told the studio or the artist yet: the tx could still be replaced even without an RBF signal.
+    expect(h.events.royaltyEvents).toHaveLength(0);
+    expect(h.studio!.royalties).toHaveLength(0);
+    await h.worker.tick();
+    expect(h.events.royaltyEvents).toHaveLength(0);
+    expect(h.studio!.royalties).toHaveLength(0);
+    h.chain.mine();
+    await h.worker.tick();
+    expect(h.events.royaltyEvents).toHaveLength(1);
+    expect(h.studio!.royalties).toHaveLength(1);
+    o = await getOrder(h, b.orderId);
+    expect(o.status).toBe('confirmed');
   });
 
   it('the royalty output may sit at any index and be split: scripts are summed, address strings never used', async () => {
@@ -149,7 +182,7 @@ describe('worker: the studio split in the funding transaction', () => {
     expect((await getOrder(h, b.orderId)).status).toBe('rescue_available');
   });
 
-  it('short club fee -> rescue_available; the artist WAS paid, so royaltyPaid is recorded and reported', async () => {
+  it('short club fee -> rescue_available; the artist WAS paid, so royaltyPaid is recorded and reported once confirmed', async () => {
     const h = artHarness();
     const art = studioArtwork(h);
     const b = await browserArtworkToPayment(h, art.id);
@@ -159,6 +192,9 @@ describe('worker: the studio split in the funding transaction', () => {
     expect(o.status).toBe('rescue_available');
     expect(o.timeline.at(-1)!.detail).toMatch(/club fee short/);
     expect(o.royaltyPaid).toMatchObject({ vout: 1 });
+    expect(h.studio!.royalties).toHaveLength(0); // still unconfirmed
+    h.chain.mine();
+    await h.worker.tick();
     expect(h.studio!.royalties).toHaveLength(1);
     expect(h.broadcasters.standard.sent).toHaveLength(0);
   });
@@ -230,6 +266,7 @@ describe('worker: the studio split in the funding transaction', () => {
     const art = studioArtwork(h);
     const b = await browserArtworkToPayment(h, art.id);
     fundArtwork(h, b);
+    h.chain.mine(); // confirmed up front: this test is about the studio POST retry loop, not confirmation gating
     h.studio!.failPosts = 2;
     const rep = await h.worker.tick();
     expect(rep.transitions.map((t) => t.to)).toEqual(['paid', 'queued', 'revealing', 'revealed']);
@@ -280,6 +317,7 @@ describe('worker: the studio split in the funding transaction', () => {
     const art = studioArtwork(h);
     const b = await browserArtworkToPayment(h, art.id);
     fundArtwork(h, b);
+    h.chain.mine(); // confirmed up front: this test is about the studio's 409 response, not confirmation gating
     h.studio!.rejectPosts = 1;
     await h.worker.tick();
     h.clock.advance(3600);

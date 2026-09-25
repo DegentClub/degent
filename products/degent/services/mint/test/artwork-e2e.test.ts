@@ -135,6 +135,7 @@ describe('e2e: artwork order with royalty', () => {
     const m2 = await browserArtworkToPayment(h, c.id, { recipientSeed: 2 });
     const m3 = await browserArtworkToPayment(h, a.id, { recipientSeed: 3 });
     for (const m of [m1, m2, m3]) fundArtwork(h, m);
+    h.chain.mine(); // reported once confirmed (security review p5.5)
     await h.worker.tick();
     expect((await getOrder(h, m1.orderId)).edition).toBe(1);
     expect((await getOrder(h, m2.orderId)).edition).toBe(1);
@@ -192,7 +193,7 @@ describe('e2e: rescue after an outage leaves the artist paid (plan §3.8)', () =
     const h = artHarness();
     const art = studioArtwork(h);
     const b = await browserArtworkToPayment(h, art.id);
-    fundArtwork(h, b);
+    fundArtwork(h, b, { confirmed: true });
     h.settings.policy.bands.standard.maxFeeRate = 1.5;
     const rep = await h.worker.tick();
     expect(rep.transitions.map((t) => t.to)).toEqual(['paid', 'queued', 'revealing', 'rescue_available']);

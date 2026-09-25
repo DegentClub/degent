@@ -203,9 +203,14 @@ export class MintWorker {
     });
     const edition = await this.d.orders.consumeEdition(r, this.d.clock.now());
     const royaltyPaid = check.artist?.ok ? { txid: tx.txid, vout: check.artist.vouts[0]!, sats: check.artist.paidSats } : null;
-    const fundingRbf = !tx.confirmed && tx.rbfSignalled;
+    // Any unconfirmed funding tx is still replaceable: full-RBF is now standard relay/miner policy, so the
+    // BIP125 opt-in signal (`tx.rbfSignalled`) is no longer a reliable "this one is safe to report" test.
+    // Gate the royalty REPORT (event + studio POST, security-review p5.5) on confirmation whenever the tx was
+    // unconfirmed when we first saw it, regardless of whether it opted in. The `paid`/`queued`/reveal dispatch
+    // timing is unchanged (0-conf, as for every order) since the reveal is bound to this exact commit outpoint.
+    const fundingRbf = !tx.confirmed;
     const paid = await this.move(r, 'paid', {
-      detail: tx.confirmed ? 'commit confirmed' : fundingRbf ? 'commit seen in mempool (replaceable)' : 'commit seen in mempool',
+      detail: tx.confirmed ? 'commit confirmed' : 'commit seen in mempool (replaceable)',
       txid: tx.txid,
       patch: { paidAt, ...(edition !== null ? { edition } : {}), royaltyPaid, fundingRbf },
     });

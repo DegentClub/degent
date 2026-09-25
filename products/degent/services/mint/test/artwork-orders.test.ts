@@ -396,7 +396,7 @@ describe('edition caps (ADR-0012)', () => {
     const h = artHarness();
     const art = studioArtwork(h, { maxEditions: 2 });
     const paid = await browserArtworkToPayment(h, art.id, { recipientSeed: 1 });
-    fundArtwork(h, paid);
+    fundArtwork(h, paid, { confirmed: true });
     await h.worker.tick();
     expect((await getOrder(h, paid.orderId)).edition).toBe(1);
     expect(await h.editions.consumedCount(art.id)).toBe(1);

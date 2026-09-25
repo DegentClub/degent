@@ -55,7 +55,10 @@ export interface OrderRecord extends Omit<Order, 'queue'> {
   /** Parent outpoint this order's reveal spends (set while revealing / after). */
   parentOutpoint: { txid: string; vout: number } | null;
   // ---- Open Studio artwork orders (absent / undefined on plain orders and on rows written before Phase 3) ----
-  /** Funding tx was unconfirmed and RBF-signalling when the payment was detected; the royalty report waits for finality. */
+  /**
+   * Funding tx was unconfirmed when the payment was detected (whatever it signalled: full-RBF makes every
+   * unconfirmed tx replaceable in practice, security review p5.5); the royalty report waits for finality.
+   */
   fundingRbf?: boolean;
   royaltyReport?: RoyaltyReportState | null;
   ledger?: LedgerRecordState | null;

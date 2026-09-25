@@ -378,10 +378,11 @@
           "id": "p5.5",
           "repo": "degent",
           "title": "Security review: upload path, royalty verification, internal endpoints",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "p3.8"
-          ]
+          ],
+          "verify": "docs/security-review-open-studio.md; pnpm --filter @bsh/degent-mint test"
         },
         {
           "id": "p5.6",
@@ -392,6 +393,16 @@
           "depends_on": [
             "p5.1",
             "p5.3"
+          ]
+        },
+        {
+          "id": "p5.7",
+          "repo": "degent",
+          "title": "Release the reserved edition when a 0-conf funding tx never confirms (security review item 11)",
+          "status": "todo",
+          "doc": "docs/security-review-open-studio.md",
+          "depends_on": [
+            "p3.8"
           ]
         }
       ]
