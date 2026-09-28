@@ -15,8 +15,8 @@
     "@bsh/edge": "workspace:*",
     "@hono/node-server": "^2.1.1",
     "@noble/hashes": "^2.4.0",
-    "hono": "^4.13.8",
-    "sharp": "^0.34.5"
+    "hono": "^4.13.9",
+    "sharp": "^0.35.4"
   },
   "devDependencies": {
     "@types/node": "^22",
