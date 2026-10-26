@@ -13,10 +13,10 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
     "@bsh/edge": "workspace:*",
-    "@hono/node-server": "^2.1.1",
+    "@hono/node-server": "^2.1.5",
     "@noble/hashes": "^2.4.0",
-    "hono": "^4.13.8",
-    "sharp": "^0.34.5"
+    "hono": "^4.13.13",
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
     "@types/node": "^22",
@@ -24,7 +24,7 @@
     "ajv-formats": "^3.0.1",
     "tsx": "^4.23.15",
     "typescript": "^5",
-    "vitest": "^5.0.1",
+    "vitest": "^5.0.5",
     "yaml": "^2.9.1"
   }
 }
